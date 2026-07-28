@@ -1,195 +1,105 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { useEffect, useState, use } from 'react';
 
-export default function TestExecutionPage({ params }: { params: { projectId: string } }) {
-  const [testCases, setTestCases] = useState<any[]>([]);
+type TestCaseRow = {
+  id: string;
+  code: string;
+  title: string;
+  category: string;
+  priority: 'P1' | 'P2' | 'P3' | 'P4';
+  status: 'draft' | 'in_review' | 'approved';
+  expected_result?: string | null;
+};
+
+export default function TestCasesPage({ params }: { params: Promise<{ projectId: string }> }) {
+  const { projectId } = use(params);
+  const [testCases, setTestCases] = useState<TestCaseRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [generatingCodeId, setGeneratingCodeId] = useState<string | null>(null);
-  const [generatedCode, setGeneratedCode] = useState<{ [key: string]: string }>({});
-
-  // Fetch dữ liệu từ Supabase API
-  const fetchTestCases = async () => {
-    setLoading(true);
-    try {
-      // Vì để test nhanh, nếu bạn chưa có table projects, có thể truyền tạm project ID cứng
-      // Nếu bạn đã có bảng projects, truyền params.projectId vào đây.
-      const projectIdToFetch = params.projectId === 'proj-1'
-        ? '00000000-0000-0000-0000-000000000000' // Giả sử ID UUID hợp lệ nếu chưa set
-        : params.projectId;
-
-      const res = await fetch(`/api/test-cases?projectId=${projectIdToFetch}`);
-      const result = await res.json();
-
-      if (result.success) {
-        setTestCases(result.data);
-      } else {
-        console.error(result.error);
-      }
-    } catch (error) {
-      console.error('Lỗi khi tải test cases:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchTestCases();
-  }, [params.projectId]);
+    let mounted = true;
 
-  // Gọi API cập nhật Supabase
-  const updateStatus = async (id: string, newStatus: string) => {
-    // Cập nhật giao diện ngay lập tức (Optimistic UI)
-    setTestCases(prev => prev.map(tc => tc.id === id ? { ...tc, status: newStatus } : tc));
-
-    try {
-      await fetch('/api/test-cases', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status: newStatus })
-      });
-    } catch (error) {
-      console.error('Lỗi cập nhật trạng thái:', error);
-    }
-  };
-
-  const exportCSV = () => {
-    if (testCases.length === 0) return;
-    const headers = ['Mã TC', 'Tiêu đề', 'Phân loại', 'Độ ưu tiên', 'Trạng thái'];
-    const rows = testCases.map(tc => [tc.code, tc.title, tc.category, tc.priority, tc.status]);
-
-    const csvContent = "data:text/csv;charset=utf-8,\uFEFF"
-      + [headers.join(','), ...rows.map(e => e.map(item => `"${item}"`).join(','))].join('\n');
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `TestCases_${params.projectId}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const generatePlaywrightCode = async (tc: any) => {
-    setGeneratingCodeId(tc.id);
-    try {
-      const res = await fetch('/api/ai/generate-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ test_case: tc })
-      });
-      const result = await res.json();
-      if (result.success) {
-        setGeneratedCode(prev => ({ ...prev, [tc.id]: result.data.code }));
+    async function fetchTestCases() {
+      setLoading(true);
+      setError('');
+      try {
+        const response = await fetch(`/api/test-cases?projectId=${encodeURIComponent(projectId)}`);
+        const result = await response.json();
+        if (!response.ok || !result.success) {
+          throw new Error(result.error ?? 'Không thể tải test cases');
+        }
+        if (mounted) setTestCases(result.data ?? []);
+      } catch (err) {
+        if (mounted) setError(err instanceof Error ? err.message : 'Không thể tải test cases');
+      } finally {
+        if (mounted) setLoading(false);
       }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setGeneratingCodeId(null);
     }
-  };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'PASS': return 'bg-green-100 text-green-700';
-      case 'FAIL': return 'bg-red-100 text-red-700';
-      case 'SKIP': return 'bg-amber-100 text-amber-700';
-      default: return 'bg-slate-100 text-slate-600';
+    fetchTestCases();
+    return () => {
+      mounted = false;
+    };
+  }, [projectId]);
+
+  async function updateStatus(id: string, status: TestCaseRow['status']) {
+    const previous = testCases;
+    setTestCases((current) => current.map((testCase) => (testCase.id === id ? { ...testCase, status } : testCase)));
+
+    const response = await fetch('/api/test-cases', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, status }),
+    });
+
+    if (!response.ok) {
+      setTestCases(previous);
+      const result = await response.json();
+      setError(result.error ?? 'Không thể cập nhật trạng thái');
     }
-  };
-
-  if (loading) return <div className="text-center py-12 text-slate-500 animate-pulse font-medium">Đang tải dữ liệu từ Supabase Database... ⏳</div>;
+  }
 
   return (
-    <div className="max-w-6xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold mb-1 flex items-center gap-2">
-            🧪 Quản lý & Thực thi Test Case
-            <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">Supabase Sync</span>
-          </h1>
-          <p className="text-slate-500 text-sm">Dữ liệu được lưu trữ an toàn trên Database.</p>
+          <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Test case library</p>
+          <h1 className="mt-2 text-3xl font-black text-slate-950">Project {projectId}</h1>
+          <p className="mt-2 text-slate-600">Danh sách case đã lưu trong Supabase, sẵn sàng dùng làm dữ liệu học cho lần generate sau.</p>
         </div>
-        <button onClick={exportCSV} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 shadow-sm transition-colors">
-          📥 Xuất CSV
-        </button>
+        <Link href={`/projects/${projectId}/generate`} className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
+          Generate mới
+        </Link>
       </div>
 
-      <div className="space-y-4">
-        {testCases.map(tc => (
-          <div key={tc.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden transition-shadow hover:shadow-md">
-            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-sm bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold">{tc.code}</span>
-                <h3 className="font-semibold text-slate-800">{tc.title}</h3>
-                <span className="text-[10px] uppercase font-bold tracking-wider bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">{tc.priority}</span>
-              </div>
-              <div className="flex items-center gap-4">
-                <select
-                  value={tc.status || 'UNTESTED'}
-                  onChange={(e) => updateStatus(tc.id, e.target.value)}
-                  className={`text-sm font-semibold px-3 py-1.5 rounded-md border-0 ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-blue-600 cursor-pointer ${getStatusColor(tc.status || 'UNTESTED')}`}
-                >
-                  <option value="UNTESTED">⚪ Chưa test</option>
-                  <option value="PASS">🟢 PASS</option>
-                  <option value="FAIL">🔴 FAIL</option>
-                  <option value="SKIP">🟡 SKIP</option>
-                </select>
-                <button
-                  onClick={() => generatePlaywrightCode(tc)}
-                  disabled={generatingCodeId === tc.id}
-                  className="px-3 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded hover:bg-indigo-700 disabled:opacity-50 transition-colors flex items-center gap-2"
-                >
-                  {generatingCodeId === tc.id ? '⏳ Đang sinh code...' : '🤖 Sinh code Automation'}
-                </button>
-              </div>
-            </div>
+      {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div>}
 
-            <div className="p-4 bg-white">
-              <h4 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-3">Các bước thực hiện</h4>
-              <ul className="text-sm space-y-3 text-slate-600">
-                {tc.steps?.map((step: any, idx: number) => (
-                  <li key={idx} className="flex gap-3 items-start">
-                    <span className="font-mono font-medium text-slate-400 bg-slate-100 px-1.5 rounded text-xs mt-0.5">{step.step_number}</span>
-                    <div className="flex-1">
-                      <span className="text-slate-700 block mb-0.5">{step.action}</span>
-                      <span className="text-blue-600 text-[13px] flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7"></path></svg>
-                        {step.expected_result}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            {/* Vùng hiển thị code được sinh ra */}
-            {generatedCode[tc.id] && (
-              <div className="p-4 bg-[#0d1117] border-t border-slate-800">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">Playwright TypeScript Code</span>
-                  <button
-                    onClick={() => navigator.clipboard.writeText(generatedCode[tc.id])}
-                    className="text-xs text-slate-300 hover:text-white bg-white/10 px-3 py-1.5 rounded transition-colors"
-                  >
-                    📋 Copy Code
-                  </button>
-                </div>
-                <pre className="text-xs text-green-400 font-mono overflow-auto max-h-96 whitespace-pre-wrap leading-relaxed">
-                  {generatedCode[tc.id]}
-                </pre>
-              </div>
-            )}
+      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+        <div className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
+          <span>Code</span>
+          <span>Title</span>
+          <span>Category</span>
+          <span>Priority</span>
+          <span>Status</span>
+        </div>
+        {loading && <div className="p-8 text-center text-slate-500">Đang tải test cases...</div>}
+        {!loading && testCases.length === 0 && <div className="p-8 text-center text-slate-500">Chưa có test case trong project này.</div>}
+        {testCases.map((testCase) => (
+          <div key={testCase.id} className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-100 px-5 py-4 text-sm last:border-b-0">
+            <Link href={`/projects/${projectId}/test-cases/${testCase.id}`} className="font-mono font-bold text-blue-700">{testCase.code}</Link>
+            <span className="font-semibold text-slate-950">{testCase.title}</span>
+            <span className="text-slate-600">{testCase.category}</span>
+            <span className="font-bold text-slate-700">{testCase.priority}</span>
+            <select value={testCase.status} onChange={(event) => updateStatus(testCase.id, event.target.value as TestCaseRow['status'])} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
+              <option value="draft">Draft</option>
+              <option value="in_review">In review</option>
+              <option value="approved">Approved</option>
+            </select>
           </div>
         ))}
-
-        {testCases.length === 0 && (
-          <div className="text-center py-16 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 text-slate-500">
-            <span className="text-4xl mb-3 block">🗂️</span>
-            <p className="font-medium text-slate-600">Chưa có Test Case nào trong Database.</p>
-            <p className="text-sm mt-1">Hãy sử dụng tính năng "Tạo Test Case bằng AI" sau đó lưu vào DB.</p>
-          </div>
-        )}
       </div>
     </div>
   );

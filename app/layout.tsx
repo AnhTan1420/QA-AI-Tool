@@ -1,21 +1,16 @@
 import type { Metadata } from 'next';
-import './globals.css'; // Nhập CSS toàn cục (Tailwind CSS)
+import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'QAForge - AI QA & Testing Platform',
-  description: 'Nền tảng hỗ trợ tạo Test Case tự động bằng AI và quản lý tiến độ kiểm thử chuyên nghiệp.',
+  title: 'QAForge - QA Toolkit & AI Test Case Generator',
+  description:
+    'Nền tảng QA Toolkit và AI Test Case Generator có RAG, review agent độc lập và requirement traceability.',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="vi">
-      <body className="antialiased bg-slate-50 text-slate-900">
-        {children}
-      </body>
+      <body className="bg-slate-50 text-slate-950 antialiased">{children}</body>
     </html>
   );
 }

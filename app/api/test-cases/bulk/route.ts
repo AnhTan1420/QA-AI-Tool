@@ -1,36 +1,39 @@
+import { z } from 'zod';
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase/server';
+import { generatedTestCasesSchema } from '@/lib/validators/test-case';
 
-// Lưu nhiều Test Cases cùng lúc (Dùng khi AI vừa sinh xong)
+const bulkCreateSchema = z.object({
+  set_id: z.string().uuid(),
+  test_cases: generatedTestCasesSchema,
+});
+
 export async function POST(req: NextRequest) {
   try {
-    const { testCases, projectId } = await req.json();
-
-    if (!projectId || !testCases || !Array.isArray(testCases)) {
-      return NextResponse.json({ success: false, error: 'Dữ liệu không hợp lệ' }, { status: 400 });
-    }
-
-    const payload = testCases.map(tc => ({
-      project_id: projectId,
-      code: tc.code || `TC-${Math.floor(Math.random()*10000)}`,
-      title: tc.title,
-      category: tc.category,
-      priority: tc.priority,
-      status: 'UNTESTED',
-      preconditions: tc.preconditions || [],
-      steps: tc.steps || [],
-      final_expected_result: tc.final_expected_result || ''
+    const payload = bulkCreateSchema.parse(await req.json());
+    const rows = payload.test_cases.map((testCase) => ({
+      set_id: payload.set_id,
+      code: testCase.code,
+      title: testCase.title,
+      category: testCase.category,
+      priority: testCase.priority,
+      preconditions: testCase.preconditions,
+      test_data: testCase.test_data ?? {},
+      steps: testCase.steps,
+      expected_result: testCase.final_expected_result,
+      status: 'draft',
     }));
 
-    const { data, error } = await supabase
-      .from('test_cases')
-      .insert(payload)
-      .select();
+    const supabase = await createClient();
+    const { data, error } = await supabase.from('test_cases').insert(rows).select();
 
-    if (error) throw error;
+    if (error) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    }
 
     return NextResponse.json({ success: true, data });
-  } catch (error: any) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Không thể lưu test case';
+    return NextResponse.json({ success: false, error: message }, { status: 400 });
   }
 }

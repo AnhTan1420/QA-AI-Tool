@@ -1,0 +1,37 @@
+import Link from 'next/link';
+
+const navItems = [
+  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/tools', label: 'QA Toolkit' },
+  { href: '/projects', label: 'Projects' },
+  { href: '/settings', label: 'Settings' },
+];
+
+export default function DashboardLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <aside className="fixed inset-y-0 left-0 hidden w-72 border-r border-slate-200 bg-white p-6 lg:block">
+        <Link href="/" className="text-2xl font-black tracking-tight text-slate-950">
+          QAForge
+        </Link>
+        <nav className="mt-8 space-y-2">
+          {navItems.map((item) => (
+            <Link key={item.href} href={item.href} className="block rounded-xl px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-blue-50 hover:text-blue-700">
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+        <div className="absolute bottom-6 left-6 right-6 rounded-2xl bg-slate-950 p-4 text-sm text-slate-300">
+          <p className="font-bold text-white">MVP Phase 1</p>
+          <p className="mt-1">Toolkit client-side và AI generator có schema validation.</p>
+        </div>
+      </aside>
+      <div className="lg:pl-72">
+        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/85 px-6 py-4 backdrop-blur lg:hidden">
+          <Link href="/" className="text-xl font-black text-slate-950">QAForge</Link>
+        </header>
+        <main className="mx-auto max-w-7xl px-6 py-8 lg:px-8">{children}</main>
+      </div>
+    </div>
+  );
+}
