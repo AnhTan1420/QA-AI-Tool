@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useTransition } from 'react';
+import * as XLSX from 'xlsx';
 import { TEST_CASE_CATEGORIES, getCategoryLabel } from '@/lib/test-case-taxonomy';
 import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
 
@@ -14,13 +15,11 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const [selectedCategories, setSelectedCategories] = useState<TestCaseCategory[]>(['positive', 'negative', 'boundary', 'security', 'localization']);
   const [oldCasesText, setOldCasesText] = useState('');
   
-  // 🛡️ Khởi tạo mảng rỗng mặc định để tránh undefined
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [review, setReview] = useState<ReviewResult | null>(null);
   const [error, setError] = useState('');
   const [isPending, startTransition] = useTransition();
 
-  // 🛡️ Vá lỗi an toàn: Thêm (testCases ?? []) để chống sập khi chưa có dữ liệu
   const groupedCases = useMemo(() => {
     return (testCases ?? []).reduce<Record<string, GeneratedTestCase[]>>((acc, testCase) => {
       const cat = testCase?.category ?? 'uncategorized';
@@ -60,10 +59,8 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       throw new Error(payload.error ?? 'Generate failed');
     }
 
-    // 1. Lấy mảng dữ liệu thô từ API (hỗ trợ cả mảng trực tiếp hoặc object bọc)
     const rawCases = Array.isArray(payload) ? payload : (payload.test_cases ?? []);
 
-    // 2. CHUẨN HÓA DỮ LIỆU: Map các tên trường từ API sang đúng chuẩn UI đang cần
     const normalizedTestCases = rawCases.map((item: any, index: number) => ({
       code: item.code || item.test_case_id || `TC-${String(index + 1).padStart(3, '0')}`,
       title: item.title || 'Không có tiêu đề',
@@ -117,20 +114,42 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
     setTestCases((current) => [...(current ?? []), { ...testCase, code: testCase.code || `TC-${String((current ?? []).length + 1).padStart(3, '0')}` }]);
   }
 
-  function exportCsv() {
+  // 📊 HÀM XUẤT FILE EXCEL (.XLSX) CHUYÊN NGHIỆP
+  function exportExcel() {
     const safeTestCases = testCases ?? [];
-    const headers = ['Code', 'Title', 'Category', 'Priority', 'Final expected result'];
-    const rows = safeTestCases.map((testCase) => [testCase.code, testCase.title, testCase.category, testCase.priority, testCase.final_expected_result]);
-    const csv = [headers, ...rows]
-      .map((row) => row.map((cell) => `"${String(cell ?? '').replaceAll('"', '""')}"`).join(','))
-      .join('\n');
-    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `qaforge-${projectId}-test-cases.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
+    
+    // Định dạng dữ liệu thành các dòng phẳng cho file Excel
+    const excelData = safeTestCases.map((tc, index) => ({
+      'STT': index + 1,
+      'Test Case Code': tc.code,
+      'Title': tc.title,
+      'Category': tc.category,
+      'Priority': tc.priority,
+      'Preconditions': (tc.preconditions ?? []).join('; '),
+      'Steps Detail': (tc.steps ?? []).map(s => `${s.step_number}. ${s.action} (Expected: ${s.expected_result})`).join('\n'),
+      'Final Expected Result': tc.final_expected_result
+    }));
+
+    // Tạo Worksheet và Workbook từ SheetJS
+    const worksheet = XLSX.utils.json_to_sheet(excelData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Test Cases');
+
+    // Tự động căn chỉnh độ rộng cột cơ bản cho đẹp mắt
+    const colWidths = [
+      { wch: 6 },  // STT
+      { wch: 15 }, // Code
+      { wch: 35 }, // Title
+      { wch: 15 }, // Category
+      { wch: 10 }, // Priority
+      { wch: 25 }, // Preconditions
+      { wch: 50 }, // Steps Detail
+      { wch: 30 }  // Final Expected Result
+    ];
+    worksheet['!cols'] = colWidths;
+
+    // Kích hoạt tải file xuống trình duyệt
+    XLSX.writeFile(workbook, `qaforge-${projectId}-test-cases.xlsx`);
   }
 
   const safeTestCasesCount = (testCases ?? []).length;
@@ -201,8 +220,12 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
           >
             Chạy Senior QA Review
           </button>
-          <button disabled={safeTestCasesCount === 0} onClick={exportCsv} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50">
-            Export CSV
+          <button 
+            disabled={safeTestCasesCount === 0} 
+            onClick={exportExcel} 
+            className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50"
+          >
+            Export Excel (.xlsx)
           </button>
         </div>
       </section>
