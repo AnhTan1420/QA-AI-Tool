@@ -4,6 +4,9 @@ import { buildGenerationPrompt } from "@/lib/ai/prompts/generation-agent";
 // 2. Import hàm runAIAgent từ provider.ts (sửa lại đường dẫn cho đúng vị trí file provider.ts của bạn)
 import { runAIAgent } from "@/lib/ai/provider"; // hoặc "@/lib/ai/provider" nếu bạn để trong folder lib
 
+export const maxDuration = 60;
+export const runtime = 'nodejs';
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
