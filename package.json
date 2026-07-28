@@ -1,6 +1,14 @@
 {
   "name": "qaforge",
   "version": "0.1.0",
+  "overrides": {
+    "glob": "^10.3.10",
+    "rimraf": "^5.0.0",
+    "inflight": "npm:@isaacs/prevent-abbrev@^1.0.0",
+    "lucide-react": {
+      "react": "$react"
+    }
+  },
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,13 +18,13 @@
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
-    "@supabase/supabase-js": "^2.43.0",
+    "@supabase/supabase-js": "^2.111.0",
     "clsx": "^2.1.1",
-    "lucide-react": "^0.378.0",
-    "next": "^14.2.0",
-    "otpauth": "^9.2.2",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "lucide-react": "^1.27.0",
+    "next": "^16.2.12",
+    "otpauth": "^9.5.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "tailwind-merge": "^2.3.0",
     "zod": "^3.23.0"
   },
@@ -24,7 +32,7 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "autoprefixer": "^10.4.19",
+    "autoprefixer": "^10.5.4",
     "eslint": "^8",
     "eslint-config-next": "14.2.3",
     "postcss": "^8",
