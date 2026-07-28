@@ -1,9 +1,9 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI } from "@google/genai";
 import { generatedTestCasesSchema, reviewResultSchema } from '@/lib/validators/test-case';
 import { parseJsonPayload, type AiProvider } from './provider';
 
 function getClient() {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.GOOGLE_GEMINI_API_KEY ;
   if (!apiKey) {
     throw new Error('Missing GEMINI_API_KEY');
   }
