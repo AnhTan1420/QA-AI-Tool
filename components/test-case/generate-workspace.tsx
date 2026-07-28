@@ -60,8 +60,12 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       throw new Error(payload.error ?? 'Generate failed');
     }
 
-    // 🛡️ Đảm bảo luôn nhận vào một mảng an toàn
-    setTestCases(payload.test_cases ?? []);
+    // 🛡️ Xử lý linh hoạt: Chấp nhận cả mảng trực tiếp từ API hoặc object bọc test_cases
+    const finalTestCases = Array.isArray(payload) 
+      ? payload 
+      : (payload.test_cases ?? []);
+
+    setTestCases(finalTestCases);
   }
 
   async function runReview() {
