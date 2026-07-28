@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { NextResponse } from 'next/server';
-import { getAiProvider } from '@/lib/ai/provider';
+// 1. Sửa import: Lấy hàm createEmbedding thay vì getAiProvider
+import { createEmbedding } from '@/lib/ai/provider'; 
 
 export const runtime = 'nodejs';
 
@@ -11,11 +12,9 @@ const embedRequestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const payload = embedRequestSchema.parse(await request.json());
-    const provider = await getAiProvider('gemini');
-    const embedding = await provider.embed({
-      content: payload.content,
-      model: process.env.AI_MODEL_EMBEDDING ?? 'text-embedding-004',
-    });
+    
+    // 2. Gọi thẳng hàm createEmbedding đã tạo ở provider.ts
+    const embedding = await createEmbedding(payload.content);
 
     return NextResponse.json({ embedding });
   } catch (error) {
