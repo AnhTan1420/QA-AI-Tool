@@ -60,12 +60,38 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       throw new Error(payload.error ?? 'Generate failed');
     }
 
-    // 🛡️ Xử lý linh hoạt: Chấp nhận cả mảng trực tiếp từ API hoặc object bọc test_cases
-    const finalTestCases = Array.isArray(payload) 
-      ? payload 
-      : (payload.test_cases ?? []);
+    // 1. Lấy mảng dữ liệu thô từ API (hỗ trợ cả mảng trực tiếp hoặc object bọc)
+    const rawCases = Array.isArray(payload) ? payload : (payload.test_cases ?? []);
 
-    setTestCases(finalTestCases);
+    // 2. CHUẨN HÓA DỮ LIỆU: Map các tên trường từ API sang đúng chuẩn UI đang cần
+    const normalizedTestCases = rawCases.map((item: any, index: number) => ({
+      code: item.code || item.test_case_id || `TC-${String(index + 1).padStart(3, '0')}`,
+      title: item.title || 'Không có tiêu đề',
+      category: item.category || item.type || 'positive',
+      priority: item.priority || 'Medium',
+      preconditions: Array.isArray(item.preconditions) 
+        ? item.preconditions 
+        : (item.precondition ? [item.precondition] : []),
+      steps: Array.isArray(item.steps) 
+        ? item.steps.map((step: any, sIdx: number) => {
+            if (typeof step === 'string') {
+              return { 
+                step_number: sIdx + 1, 
+                action: step, 
+                expected_result: item.expected_result || '' 
+              };
+            }
+            return {
+              step_number: step.step_number || sIdx + 1,
+              action: step.action || String(step),
+              expected_result: step.expected_result || item.expected_result || ''
+            };
+          })
+        : [],
+      final_expected_result: item.final_expected_result || item.expected_result || ''
+    }));
+
+    setTestCases(normalizedTestCases);
   }
 
   async function runReview() {
