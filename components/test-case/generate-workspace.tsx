@@ -18,7 +18,11 @@ async function callApi<T>(url: string, body: unknown): Promise<T> {
   });
   const payload = await response.json();
   if (!response.ok || !payload.success) {
-    throw new Error(payload.error ?? `Yêu cầu tới ${url} thất bại`);
+    const err = new Error(payload.error ?? `Yêu cầu tới ${url} thất bại`) as Error & {
+      details?: { path: string; message: string }[];
+    };
+    if (Array.isArray(payload.details)) err.details = payload.details;
+    throw err;
   }
   return payload.data as T;
 }
@@ -34,6 +38,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [review, setReview] = useState<ReviewResult | null>(null);
   const [error, setError] = useState('');
+  const [errorDetails, setErrorDetails] = useState<{ path: string; message: string }[]>([]);
   const [successMessage, setSuccessMessage] = useState('');
   const [isPending, startTransition] = useTransition();
   const [isSaving, setIsSaving] = useState(false);
@@ -58,6 +63,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 
   async function generate() {
     setError('');
+    setErrorDetails([]);
     setSuccessMessage('');
     setReview(null);
 
@@ -210,7 +216,20 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
           </div>
         </div>
 
-        {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div>}
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+            {error}
+            {errorDetails.length > 0 && (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-normal text-red-600">
+                {errorDetails.map((d, i) => (
+                  <li key={i}>
+                    <span className="font-mono">{d.path || '(root)'}</span>: {d.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
         {isDemoProject && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
@@ -221,7 +240,14 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
         <div className="flex flex-wrap gap-3">
           <button
             disabled={isPending || selectedCategories.length === 0}
-            onClick={() => startTransition(() => generate().catch((err) => setError(err instanceof Error ? err.message : 'Generate failed')))}
+            onClick={() =>
+              startTransition(() =>
+                generate().catch((err) => {
+                  setError(err instanceof Error ? err.message : 'Generate failed');
+                  setErrorDetails((err as any)?.details ?? []);
+                }),
+              )
+            }
             className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {isPending ? 'Đang xử lý...' : 'Generate test case'}
