@@ -1,4 +1,5 @@
 create extension if not exists vector;
+create extension if not exists pgcrypto; -- dam bao gen_random_uuid() luon co san
 
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -121,6 +122,33 @@ create table if not exists ai_usage_logs (
   created_at timestamptz default now()
 );
 
+-- ----------------------------------------------------------------------------
+-- Trigger: tu dong tao 1 dong profiles moi khi co user moi dang ky qua Supabase Auth.
+-- Neu khong co trigger nay, moi bang co FK toi profiles(id) se loi ngay sau signup
+-- vi chua co ban ghi profiles tuong ung.
+-- ----------------------------------------------------------------------------
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  insert into public.profiles (id, full_name, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.email),
+    'qa'
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
 create index if not exists idx_project_members_user_id on project_members(user_id);
 create index if not exists idx_test_case_sets_project_id on test_case_sets(project_id);
 create index if not exists idx_test_cases_set_id on test_cases(set_id);
@@ -140,8 +168,12 @@ alter table requirement_traceability enable row level security;
 alter table comments enable row level security;
 alter table ai_usage_logs enable row level security;
 
+-- Cho phep moi user da dang nhap xem thong tin co ban (ten, avatar, role) cua nguoi khac -
+-- can thiet de hien thi ten thanh vien trong team page / comment. Bang nay khong chua
+-- du lieu nhay cam nen chap nhan duoc; rieng UPDATE van gioi han ve chinh chu (xem duoi).
 drop policy if exists profiles_select_self on profiles;
-create policy profiles_select_self on profiles for select using (id = auth.uid());
+drop policy if exists profiles_select_authenticated on profiles;
+create policy profiles_select_authenticated on profiles for select using (auth.uid() is not null);
 
 drop policy if exists profiles_update_self on profiles;
 create policy profiles_update_self on profiles for update using (id = auth.uid()) with check (id = auth.uid());
@@ -159,6 +191,9 @@ create policy project_members_select_member on project_members for select using 
   exists (select 1 from project_members pm where pm.project_id = project_members.project_id and pm.user_id = auth.uid())
 );
 
+-- Admin cua project duoc quan ly toan bo thanh vien. Rieng INSERT con cho phep
+-- "bootstrap": chu so huu project (projects.owner_id) tu them chinh minh lam
+-- thanh vien dau tien - neu khong se bi ket (chua co admin nao de duoc phep them admin dau tien).
 drop policy if exists project_members_manage_admin on project_members;
 create policy project_members_manage_admin on project_members for all using (
   exists (
@@ -169,6 +204,15 @@ create policy project_members_manage_admin on project_members for all using (
   exists (
     select 1 from project_members pm
     where pm.project_id = project_members.project_id and pm.user_id = auth.uid() and pm.role = 'admin'
+  )
+);
+
+drop policy if exists project_members_bootstrap_owner on project_members;
+create policy project_members_bootstrap_owner on project_members for insert with check (
+  user_id = auth.uid()
+  and exists (
+    select 1 from projects p
+    where p.id = project_members.project_id and p.owner_id = auth.uid()
   )
 );
 
@@ -242,6 +286,17 @@ create policy test_cases_member_update on test_cases for update using (
     join project_members pm on pm.project_id = s.project_id
     where s.id = test_cases.set_id and pm.user_id = auth.uid()
       and (test_cases.status <> 'approved' or pm.role in ('senior_qa','admin'))
+  )
+);
+
+-- Xoa test case chi danh cho senior_qa/admin cua project - tranh QA thuong xoa nham
+-- case nguoi khac dang review.
+drop policy if exists test_cases_senior_delete on test_cases;
+create policy test_cases_senior_delete on test_cases for delete using (
+  exists (
+    select 1 from test_case_sets s
+    join project_members pm on pm.project_id = s.project_id
+    where s.id = test_cases.set_id and pm.user_id = auth.uid() and pm.role in ('senior_qa', 'admin')
   )
 );
 

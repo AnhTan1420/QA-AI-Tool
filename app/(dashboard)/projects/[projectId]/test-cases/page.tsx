@@ -23,6 +23,10 @@ export default function TestCasesPage({ params }: { params: Promise<{ projectId:
     let mounted = true;
 
     async function fetchTestCases() {
+      if (projectId === 'demo') {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       setError('');
       try {
@@ -76,6 +80,12 @@ export default function TestCasesPage({ params }: { params: Promise<{ projectId:
       </div>
 
       {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div>}
+
+      {projectId === 'demo' && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+          Project demo không lưu dữ liệu vào Supabase. Tạo một project thật ở trang Projects để xem thư viện test case.
+        </div>
+      )}
 
       <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-black uppercase tracking-wide text-slate-500">

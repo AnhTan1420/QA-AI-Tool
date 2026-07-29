@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { TEST_CASE_CATEGORIES, getCategoryLabel } from '@/lib/test-case-taxonomy';
 import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
@@ -8,17 +9,34 @@ import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/va
 const sampleDescription = `Tính năng đăng nhập email/password cho web app QAForge.
 Người dùng nhập email và mật khẩu, bấm Đăng nhập. Nếu thông tin hợp lệ, hệ thống chuyển tới dashboard. Nếu sai email/mật khẩu, hiển thị lỗi rõ ràng. Nếu tài khoản chưa xác thực email, yêu cầu xác thực trước khi đăng nhập. Form phải validate email hợp lệ, không cho submit khi bỏ trống, hỗ trợ tiếng Việt.`;
 
+/** Goi fetch JSON va tra ve payload.data; nem loi voi thong bao ro rang neu success=false. */
+async function callApi<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (!response.ok || !payload.success) {
+    throw new Error(payload.error ?? `Yêu cầu tới ${url} thất bại`);
+  }
+  return payload.data as T;
+}
+
 export function GenerateWorkspace({ projectId }: { projectId: string }) {
+  const router = useRouter();
   const [description, setDescription] = useState(sampleDescription);
   const [language, setLanguage] = useState('Tiếng Việt');
   const [detailLevel, setDetailLevel] = useState<'concise' | 'standard' | 'detailed'>('standard');
   const [selectedCategories, setSelectedCategories] = useState<TestCaseCategory[]>(['positive', 'negative', 'boundary', 'security', 'localization']);
   const [oldCasesText, setOldCasesText] = useState('');
-  
+
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [review, setReview] = useState<ReviewResult | null>(null);
   const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
   const [isPending, startTransition] = useTransition();
+  const [isSaving, setIsSaving] = useState(false);
 
   const groupedCases = useMemo(() => {
     return (testCases ?? []).reduce<Record<string, GeneratedTestCase[]>>((acc, testCase) => {
@@ -30,6 +48,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   }, [testCases]);
 
   const coverageTone = review && review.coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600';
+  const isDemoProject = projectId === 'demo';
 
   function toggleCategory(category: TestCaseCategory) {
     setSelectedCategories((current) =>
@@ -39,86 +58,78 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 
   async function generate() {
     setError('');
+    setSuccessMessage('');
     setReview(null);
 
     const parsedOldCases = parseOldCases(oldCasesText);
-    const response = await fetch('/api/ai/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requirement_description: description,
-        selected_categories: selectedCategories,
-        language,
-        detail_level: detailLevel,
-        retrieved_old_test_cases: parsedOldCases,
-      }),
+    const data = await callApi<GeneratedTestCase[]>('/api/ai/generate', {
+      requirement_description: description,
+      selected_categories: selectedCategories,
+      language,
+      detail_level: detailLevel,
+      retrieved_old_test_cases: parsedOldCases,
     });
 
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error ?? 'Generate failed');
-    }
-
-    const rawCases = Array.isArray(payload) ? payload : (payload.test_cases ?? []);
-
-    const normalizedTestCases = rawCases.map((item: any, index: number) => ({
-      code: item.code || item.test_case_id || `TC-${String(index + 1).padStart(3, '0')}`,
-      title: item.title || 'Không có tiêu đề',
-      category: item.category || item.type || 'positive',
-      priority: item.priority || 'Medium',
-      preconditions: Array.isArray(item.preconditions) 
-        ? item.preconditions 
-        : (item.precondition ? [item.precondition] : []),
-      steps: Array.isArray(item.steps) 
-        ? item.steps.map((step: any, sIdx: number) => {
-            if (typeof step === 'string') {
-              return { 
-                step_number: sIdx + 1, 
-                action: step, 
-                expected_result: item.expected_result || '' 
-              };
-            }
-            return {
-              step_number: step.step_number || sIdx + 1,
-              action: step.action || String(step),
-              expected_result: step.expected_result || item.expected_result || ''
-            };
-          })
-        : [],
-      final_expected_result: item.final_expected_result || item.expected_result || ''
-    }));
-
-    setTestCases(normalizedTestCases);
+    // API da validate bang Zod (generatedTestCasesSchema) truoc khi tra ve -
+    // khong can "doan" lai ten field o day nua.
+    setTestCases(data);
   }
 
   async function runReview() {
     setError('');
-    const response = await fetch('/api/ai/review', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        requirement_description: description,
-        generated_test_cases: testCases,
-      }),
+    setSuccessMessage('');
+    const data = await callApi<ReviewResult>('/api/ai/review', {
+      requirement_description: description,
+      generated_test_cases: testCases,
     });
+    setReview(data);
+  }
 
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload.error ?? 'Review failed');
+  async function saveToLibrary() {
+    setIsSaving(true);
+    setError('');
+    setSuccessMessage('');
+    try {
+      if (isDemoProject) {
+        throw new Error('Đây là project demo (không lưu DB). Hãy tạo project thật ở trang Projects để lưu vào thư viện.');
+      }
+
+      const { set } = await callApi<{ set: { id: string } }>('/api/test-case-sets', {
+        project_id: projectId,
+        requirement_title: description.slice(0, 80),
+        requirement_description: description,
+      });
+
+      await callApi('/api/test-cases/bulk', {
+        set_id: set.id,
+        test_cases: testCases,
+      });
+
+      if (review) {
+        await callApi('/api/ai-reviews', {
+          set_id: set.id,
+          review,
+        }).catch(() => {
+          // Khong chan luong luu chinh neu luu review phu that bai - test case van da luu thanh cong.
+        });
+      }
+
+      setSuccessMessage(`Đã lưu ${testCases.length} test case vào thư viện project.`);
+      router.push(`/projects/${projectId}/generate/${set.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không thể lưu vào thư viện');
+    } finally {
+      setIsSaving(false);
     }
-
-    setReview(payload);
   }
 
   function acceptSuggestedCase(testCase: GeneratedTestCase) {
     setTestCases((current) => [...(current ?? []), { ...testCase, code: testCase.code || `TC-${String((current ?? []).length + 1).padStart(3, '0')}` }]);
   }
 
-  // 📊 HÀM XUẤT FILE EXCEL (.XLSX) CHUYÊN NGHIỆP
   function exportExcel() {
     const safeTestCases = testCases ?? [];
-    
-    // Định dạng dữ liệu thành các dòng phẳng cho file Excel
+
     const excelData = safeTestCases.map((tc, index) => ({
       'STT': index + 1,
       'Test Case Code': tc.code,
@@ -126,29 +137,25 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       'Category': tc.category,
       'Priority': tc.priority,
       'Preconditions': (tc.preconditions ?? []).join('; '),
-      'Steps Detail': (tc.steps ?? []).map(s => `${s.step_number}. ${s.action} (Expected: ${s.expected_result})`).join('\n'),
-      'Final Expected Result': tc.final_expected_result
+      'Steps Detail': (tc.steps ?? []).map((s) => `${s.step_number}. ${s.action} (Expected: ${s.expected_result})`).join('\n'),
+      'Final Expected Result': tc.final_expected_result,
     }));
 
-    // Tạo Worksheet và Workbook từ SheetJS
     const worksheet = XLSX.utils.json_to_sheet(excelData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Test Cases');
 
-    // Tự động căn chỉnh độ rộng cột cơ bản cho đẹp mắt
-    const colWidths = [
-      { wch: 6 },  // STT
-      { wch: 15 }, // Code
-      { wch: 35 }, // Title
-      { wch: 15 }, // Category
-      { wch: 10 }, // Priority
-      { wch: 25 }, // Preconditions
-      { wch: 50 }, // Steps Detail
-      { wch: 30 }  // Final Expected Result
+    worksheet['!cols'] = [
+      { wch: 6 },
+      { wch: 15 },
+      { wch: 35 },
+      { wch: 15 },
+      { wch: 10 },
+      { wch: 25 },
+      { wch: 50 },
+      { wch: 30 },
     ];
-    worksheet['!cols'] = colWidths;
 
-    // Kích hoạt tải file xuống trình duyệt
     XLSX.writeFile(workbook, `qaforge-${projectId}-test-cases.xlsx`);
   }
 
@@ -204,6 +211,12 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
         </div>
 
         {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div>}
+        {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
+        {isDemoProject && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+            Bạn đang ở project demo — kết quả generate/review chạy thật, nhưng nút "Lưu vào thư viện" cần một project thật (tạo ở trang Projects).
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-3">
           <button
@@ -220,9 +233,16 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
           >
             Chạy Senior QA Review
           </button>
-          <button 
-            disabled={safeTestCasesCount === 0} 
-            onClick={exportExcel} 
+          <button
+            disabled={isSaving || safeTestCasesCount === 0}
+            onClick={saveToLibrary}
+            className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+          >
+            {isSaving ? 'Đang lưu...' : 'Lưu vào thư viện'}
+          </button>
+          <button
+            disabled={safeTestCasesCount === 0}
+            onClick={exportExcel}
             className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50"
           >
             Export Excel (.xlsx)
@@ -262,6 +282,9 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <h2 className="text-2xl font-black text-slate-950">Senior QA Review</h2>
             <div className="mt-5 space-y-4">
+              {(review.requirement_gaps ?? []).length === 0 && (review.test_case_comments ?? []).length === 0 && (
+                <p className="text-sm font-semibold text-emerald-700">Không phát hiện gap hoặc vấn đề nào — bộ test case đã bám sát description.</p>
+              )}
               {(review.requirement_gaps ?? []).map((gap, index) => (
                 <div key={`${gap?.requirement_text}-${index}`} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
                   <p className="text-sm font-bold text-amber-900">Gap: {gap?.requirement_text}</p>

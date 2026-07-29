@@ -16,9 +16,9 @@ export async function POST(request: Request) {
     // 2. Gọi thẳng hàm createEmbedding đã tạo ở provider.ts
     const embedding = await createEmbedding(payload.content);
 
-    return NextResponse.json({ embedding });
+    return NextResponse.json({ success: true, data: { embedding } });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to create embedding';
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json({ success: false, error: message }, { status: 400 });
   }
 }

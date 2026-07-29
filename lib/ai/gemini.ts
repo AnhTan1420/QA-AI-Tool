@@ -1,15 +1,29 @@
 import { GoogleGenAI } from "@google/genai";
+import { extractJson } from "./parse";
 
-const GEMINI_MODELS = [
-  process.env.GEMINI_MODEL ?? "gemini-3.6-flash", // Ưu tiên 1
-  "gemini-3.5-flash-lite",                        // Dự phòng nội bộ 1 (Quota lớn hơn)
-];
+/**
+ * Goi Gemini voi danh sach model uu tien theo thu tu (model chinh truoc,
+ * cac model du phong sau). Danh sach nay LUON duoc truyen tu ben ngoai
+ * (provider.ts, doc tu bien moi truong theo tung tac vu) - file nay khong
+ * tu quyet dinh model ID.
+ */
+export async function generateWithGemini(
+  systemPrompt: string,
+  userPrompt: string,
+  models: string[]
+): Promise<any> {
+  const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('Thieu GOOGLE_GEMINI_API_KEY trong bien moi truong server.');
+  }
+  if (models.length === 0) {
+    throw new Error('Khong co model Gemini nao duoc cau hinh cho tac vu nay.');
+  }
 
-export async function generateWithGemini(systemPrompt: string, userPrompt: string): Promise<any> {
-  const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GEMINI_API_KEY });
+  const ai = new GoogleGenAI({ apiKey });
   let lastError: any;
 
-  for (const model of GEMINI_MODELS) {
+  for (const model of models) {
     try {
       const response = await ai.models.generateContent({
         model,
@@ -22,24 +36,22 @@ export async function generateWithGemini(systemPrompt: string, userPrompt: strin
       });
 
       if (!response.text) throw new Error("Empty response from Gemini");
-      
-      // Parse và trả về object JSON luôn
-      return JSON.parse(response.text);
-      
+
+      return extractJson(response.text);
     } catch (err: any) {
       lastError = err;
       const status = err?.status || err?.code;
-      
-      // Chỉ tự động thử model khác nếu bị Rate Limit (429), Server Error (50x) hoặc lỗi JSON
-      const isFallbackWorthy = status === 429 || status === 500 || status === 503 || err instanceof SyntaxError;
-      
+
+      const isJsonParseFailure = typeof err?.message === 'string' && err.message.includes('không đúng định dạng JSON');
+      const isFallbackWorthy = status === 429 || status === 500 || status === 503 || isJsonParseFailure;
+
       if (!isFallbackWorthy) {
-        throw err; // Nếu lỗi 400 (nhập sai param) thì văng lỗi luôn
+        throw err;
       }
-      
+
       console.warn(`⚠️ [Gemini] Model ${model} thất bại (Lỗi ${status || "JSON"}). Đang thử model kế tiếp...`);
     }
   }
-  
-  throw lastError; // Hết model để thử -> Quăng lỗi lên cho provider.ts xử lý
+
+  throw lastError;
 }
