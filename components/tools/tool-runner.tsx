@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { Search, ArrowLeft } from 'lucide-react';
 
 type ToolSlug = 'json-formatter' | 'base64' | 'uuid' | 'regex-tester' | 'hash-generator' | 'timestamp';
 
@@ -52,9 +53,9 @@ function UuidTool() {
 
   return (
     <div className="space-y-4">
-      <label className="block text-sm font-semibold text-slate-700">Số lượng</label>
-      <input type="number" min={1} max={50} value={count} onChange={(event) => setCount(Number(event.target.value))} className="w-32 rounded-xl border border-slate-200 px-3 py-2" />
-      <pre className="rounded-2xl bg-slate-950 p-4 text-sm text-emerald-300">{values}</pre>
+      <label className="field-label">Số lượng</label>
+      <input type="number" min={1} max={50} value={count} onChange={(event) => setCount(Number(event.target.value))} className="field-input w-32" />
+      <pre className="overflow-auto rounded-2xl bg-ink-900 p-4 text-sm text-emerald-300">{values}</pre>
     </div>
   );
 }
@@ -72,9 +73,11 @@ function RegexTester() {
 
   return (
     <div className="space-y-4">
-      <input value={pattern} onChange={(event) => setPattern(event.target.value)} className="w-full rounded-xl border border-slate-200 px-4 py-3 font-mono text-sm" />
-      <textarea value={input} onChange={(event) => setInput(event.target.value)} className="min-h-32 w-full rounded-xl border border-slate-200 px-4 py-3" />
-      <div className="rounded-2xl bg-slate-950 p-4 font-bold text-white">{result}</div>
+      <input value={pattern} onChange={(event) => setPattern(event.target.value)} className="field-input font-mono text-sm" />
+      <textarea value={input} onChange={(event) => setInput(event.target.value)} className="field-input min-h-32" />
+      <div className={`rounded-2xl p-4 font-bold text-white ${result === 'MATCH' ? 'bg-success-600' : result === 'NO MATCH' ? 'bg-ink-900' : 'bg-danger-600'}`}>
+        {result}
+      </div>
     </div>
   );
 }
@@ -90,12 +93,12 @@ function HashGenerator() {
 
   return (
     <div className="space-y-4">
-      <textarea value={input} onChange={(event) => setInput(event.target.value)} className="min-h-32 w-full rounded-xl border border-slate-200 px-4 py-3" />
+      <textarea value={input} onChange={(event) => setInput(event.target.value)} className="field-input min-h-32" />
       <div className="flex gap-2">
-        <button onClick={() => generate('SHA-1')} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white">SHA-1</button>
-        <button onClick={() => generate('SHA-256')} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white">SHA-256</button>
+        <button onClick={() => generate('SHA-1')} className="btn-ghost bg-ink-900 text-white hover:bg-ink-800">SHA-1</button>
+        <button onClick={() => generate('SHA-256')} className="btn-primary">SHA-256</button>
       </div>
-      <pre className="overflow-auto rounded-2xl bg-slate-950 p-4 text-sm text-emerald-300">{hash || 'Chọn thuật toán để sinh hash.'}</pre>
+      <pre className="overflow-auto rounded-2xl bg-ink-900 p-4 text-sm text-emerald-300">{hash || 'Chọn thuật toán để sinh hash.'}</pre>
     </div>
   );
 }
@@ -106,10 +109,10 @@ function TimestampTool() {
 
   return (
     <div className="space-y-4">
-      <input type="number" value={timestamp} onChange={(event) => setTimestamp(Number(event.target.value))} className="w-full rounded-xl border border-slate-200 px-4 py-3" />
-      <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-        <p className="font-bold text-slate-950">{date.toLocaleString('vi-VN')}</p>
-        <p className="mt-1 text-sm text-slate-500">ISO: {date.toISOString()}</p>
+      <input type="number" value={timestamp} onChange={(event) => setTimestamp(Number(event.target.value))} className="field-input" />
+      <div className="surface-card p-4">
+        <p className="font-bold text-ink-900">{date.toLocaleString('vi-VN')}</p>
+        <p className="text-caption mt-1">ISO: {date.toISOString()}</p>
       </div>
     </div>
   );
@@ -118,8 +121,8 @@ function TimestampTool() {
 function ToolTextArea({ input, setInput, output, tone = 'success' }: { input: string; setInput: (value: string) => void; output: string; tone?: 'success' | 'error' }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <textarea value={input} onChange={(event) => setInput(event.target.value)} className="min-h-80 rounded-2xl border border-slate-200 bg-white p-4 font-mono text-sm outline-none focus:border-blue-300" />
-      <pre className={`min-h-80 overflow-auto rounded-2xl p-4 text-sm ${tone === 'error' ? 'bg-red-950 text-red-100' : 'bg-slate-950 text-emerald-300'}`}>{output}</pre>
+      <textarea value={input} onChange={(event) => setInput(event.target.value)} className="field-input min-h-80 font-mono text-sm" />
+      <pre className={`min-h-80 overflow-auto rounded-2xl p-4 text-sm ${tone === 'error' ? 'bg-red-950 text-red-100' : 'bg-ink-900 text-emerald-300'}`}>{output}</pre>
     </div>
   );
 }
@@ -130,13 +133,21 @@ export function ToolsGrid() {
 
   return (
     <div className="space-y-6">
-      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Tìm tool: JSON, Base64, Regex..." className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm outline-none focus:border-blue-300" />
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Tìm tool: JSON, Base64, Regex..."
+          className="field-input py-4 pl-11 shadow-[var(--shadow-soft)]"
+        />
+      </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {filtered.map((tool) => (
-          <Link key={tool.slug} href={`/tools/${tool.slug}`} className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm transition hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md">
-            <p className="text-xs font-bold uppercase tracking-wide text-blue-600">{tool.group}</p>
-            <h2 className="mt-3 text-lg font-bold text-slate-950">{tool.title}</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-600">{tool.description}</p>
+          <Link key={tool.slug} href={`/tools/${tool.slug}`} className="surface-card-interactive p-6">
+            <p className="text-eyebrow">{tool.group}</p>
+            <h2 className="text-h3 mt-3">{tool.title}</h2>
+            <p className="text-body mt-2 text-sm">{tool.description}</p>
           </Link>
         ))}
       </div>
@@ -147,7 +158,7 @@ export function ToolsGrid() {
 export function ToolRunner({ slug }: { slug: string }) {
   const tool = TOOL_DEFINITIONS.find((item) => item.slug === slug);
   if (!tool) {
-    return <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700">Tool chưa tồn tại.</div>;
+    return <div className="alert-danger">Tool chưa tồn tại.</div>;
   }
 
   const runner = {
@@ -162,12 +173,14 @@ export function ToolRunner({ slug }: { slug: string }) {
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/tools" className="text-sm font-semibold text-blue-600">← Quay lại toolkit</Link>
-        <p className="mt-4 text-sm font-bold uppercase tracking-wide text-blue-600">{tool.group}</p>
-        <h1 className="mt-2 text-3xl font-black text-slate-950">{tool.title}</h1>
-        <p className="mt-2 text-slate-600">{tool.description} Tool chạy 100% client-side, không gọi AI.</p>
+        <Link href="/tools" className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:text-brand-700">
+          <ArrowLeft className="h-4 w-4" /> Quay lại toolkit
+        </Link>
+        <p className="text-eyebrow mt-4">{tool.group}</p>
+        <h1 className="text-h1 mt-2">{tool.title}</h1>
+        <p className="text-body mt-2">{tool.description} Tool chạy 100% client-side, không gọi AI.</p>
       </div>
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">{runner}</div>
+      <div className="surface-card p-5">{runner}</div>
     </div>
   );
 }
