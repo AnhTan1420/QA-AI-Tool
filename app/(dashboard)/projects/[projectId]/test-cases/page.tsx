@@ -130,7 +130,6 @@ export default function TestCaseLibraryPage() {
           </div>
           <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">Test Case Library</p>
           <h1 className="text-2xl font-bold text-gray-900">Project {projectId}</h1>
-          <p className="text-sm text-gray-500 mt-1">Danh sách case đã lưu trong Supabase, sẵn sàng dùng làm dữ liệu học cho lần generate sau.</p>
         </div>
         <div className="flex gap-3">
           <button
