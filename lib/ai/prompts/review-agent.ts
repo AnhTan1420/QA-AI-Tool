@@ -4,27 +4,28 @@ export function buildReviewPrompt(input: {
   requirement_description: string;
   generated_test_cases: GeneratedTestCase[];
 }) {
-  return `Bạn đóng vai Senior QA Lead với 10 năm kinh nghiệm. Nhiệm vụ của bạn là REVIEW bộ test case dưới đây so với requirement gốc.
+  return `Bạn đóng vai Senior QA Lead. REVIEW bộ test case so với requirement.
 
-Đánh giá các tiêu chí:
-1. COVERAGE: Requirement nào chưa được cover bởi test case? (liệt kê requirement_gap)
-2. QUALITY: Test case nào có vấn đề? (missing step, ambiguous expected result, duplicate, wrong priority)
-3. SCORE: Cho điểm coverage từ 0-100.
+QUY TẮC OUTPUT:
+- Chỉ trả JSON, không thêm text ngoài.
+- coverage_score: number 0-100.
+- requirement_gaps: array, mỗi item có requirement_text (string) và suggested_test_case (object đúng schema GeneratedTestCase HOẶC null).
+- test_case_comments: array, mỗi item có test_case_code (string), issue_type (chỉ 1 trong 4: "missing_step", "ambiguous_expected", "duplicate", "priority_mismatch"), comment (string).
 
-Output CHỈ trả JSON đúng schema:
+VÍ DỤ OUTPUT ĐÚNG:
 {
-  "coverage_score": number (0-100),
+  "coverage_score": 75,
   "requirement_gaps": [
     {
-      "requirement_text": "mô tả requirement còn thiếu",
-      "suggested_test_case": { ...GeneratedTestCase... } | null
+      "requirement_text": "Chưa test trường hợp email chưa verify",
+      "suggested_test_case": null
     }
   ],
   "test_case_comments": [
     {
-      "test_case_code": "TC_XXX",
-      "issue_type": "missing_step" | "ambiguous_expected" | "duplicate" | "priority_mismatch",
-      "comment": "mô tả vấn đề"
+      "test_case_code": "TC_LOGIN_001",
+      "issue_type": "missing_step",
+      "comment": "Thiếu bước verify captcha"
     }
   ]
 }

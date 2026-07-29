@@ -25,7 +25,6 @@ export async function POST(request: Request) {
     const payload = requestSchema.parse(body);
     const { mode, requirement_description, test_cases } = payload;
 
-    // Build prompt theo mode
     let fullPrompt: string;
     if (mode === 'review') {
       fullPrompt = buildReviewPrompt({
@@ -46,23 +45,24 @@ export async function POST(request: Request) {
       });
     }
 
-    // Gọi AI
     let aiRawResult: unknown;
     try {
       aiRawResult = await runAIAgent(fullPrompt, 'review');
     } catch (aiError) {
       console.error(`[ai/${mode}] AI provider error:`, aiError);
       return NextResponse.json(
-        { success: false, error: 'AI đang quá tải. Vui lòng thử lại sau 1 phút.' },
+        { success: false, error: 'AI đang quá tải. Vui lòng thử lại sau.' },
         { status: 502 }
       );
     }
 
-    // Xử lý nếu AI trả string (wrap trong markdown)
+    // Xử lý nếu AI trả string
     if (typeof aiRawResult === 'string') {
+      const rawString = aiRawResult;
       try {
-        aiRawResult = JSON.parse(aiRawResult);
+        aiRawResult = JSON.parse(rawString);
       } catch {
+        console.error(`[ai/${mode}] AI trả string không phải JSON:`, rawString.slice(0, 500));
         return NextResponse.json(
           { success: false, error: 'AI trả về định dạng không hợp lệ' },
           { status: 502 }
@@ -70,13 +70,16 @@ export async function POST(request: Request) {
       }
     }
 
-    // Validate output theo mode
+    console.log(`[ai/${mode}] AI raw result:`, JSON.stringify(aiRawResult, null, 2).slice(0, 2000));
+
+    // Validate output
     if (mode === 'review') {
       const parsed = reviewResultSchema.safeParse(aiRawResult);
       if (!parsed.success) {
-        console.error('[ai/review] Schema fail:', parsed.error.flatten());
+        console.error('[ai/review] Schema fail:', JSON.stringify(parsed.error.flatten(), null, 2));
+        console.error('[ai/review] Raw data:', JSON.stringify(aiRawResult, null, 2));
         return NextResponse.json(
-          { success: false, error: 'AI trả review không đúng định dạng. Thử lại.' },
+          { success: false, error: `AI trả review sai định dạng: ${parsed.error.errors[0]?.message || 'unknown'}` },
           { status: 502 }
         );
       }
@@ -84,9 +87,9 @@ export async function POST(request: Request) {
     } else {
       const parsed = generatedTestCasesSchema.safeParse(aiRawResult);
       if (!parsed.success) {
-        console.error('[ai/enhance] Schema fail:', parsed.error.flatten());
+        console.error('[ai/enhance] Schema fail:', JSON.stringify(parsed.error.flatten(), null, 2));
         return NextResponse.json(
-          { success: false, error: 'AI trả enhance không đúng định dạng. Thử lại.' },
+          { success: false, error: 'AI trả enhance sai định dạng' },
           { status: 502 }
         );
       }
