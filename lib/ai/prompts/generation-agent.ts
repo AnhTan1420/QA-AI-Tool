@@ -23,45 +23,67 @@ const JSON_SCHEMA_CONTRACT = `{
 }`;
 
 export function buildGenerationPrompt(input: GenerationPromptInput) {
-  // Nối danh sách category thành chuỗi rõ ràng
-  const categoryConstraint = input.selected_categories.length > 0 
-    ? input.selected_categories.join(', ') 
+  const categoryConstraint = input.selected_categories.length > 0
+    ? input.selected_categories.join(', ')
     : 'Bất kỳ category hợp lệ nào trong schema';
 
-  // Tính toán số lượng tối thiểu để ép AI
   const minCases = input.selected_categories.length > 0 ? input.selected_categories.length : 3;
+
+  // Format test case cũ thành dạng dễ đọc cho AI
+  const oldCasesFormatted = input.retrieved_old_test_cases.length > 0
+    ? input.retrieved_old_test_cases.map((tc, idx) => `
+=== TEST CASE THAM KHẢO #${idx + 1} ===
+Code: ${tc.code}
+Title: ${tc.title}
+Category: ${tc.category}
+Priority: ${tc.priority}
+Preconditions: ${(tc.preconditions || []).join('; ')}
+Test Data: ${JSON.stringify(tc.test_data || {})}
+Steps:
+${(tc.steps || []).map(s => `  ${s.step_number}. ${s.action}\n     Expected: ${s.expected_result}`).join('\n')}
+Final Expected Result: ${tc.final_expected_result}
+=== END #${idx + 1} ===
+`).join('\n')
+    : '(Không có test case cũ nào được import)';
 
   return `Bạn là một Principal QA Architect kiêm Lead Product Analyst với hơn 20 năm kinh nghiệm xây dựng các hệ thống Enterprise.
 Nhiệm vụ của bạn là đọc hiểu mô tả tính năng dưới đây và tự động sinh ra một bộ Test Cases xuất chúng.
 
 QUY TẮC CỐT LÕI (CORE RULES):
 
-1. CHỈ TIÊU BẮT BUỘC (MANDATORY QUOTA) - ĐỌC KỸ:
+1. CHỈ TIÊU BẮT BUỘC (MANDATORY QUOTA):
    - Hệ thống yêu cầu sinh test case cho các danh mục (categories) sau: [${categoryConstraint}].
    - BẠN BẮT BUỘC PHẢI SINH RA ÍT NHẤT 1 TEST CASE CHO MỖI DANH MỤC TRONG DANH SÁCH TRÊN.
-   - Tổng số test case trả về PHẢI LỚN HƠN HOẶC BẰNG ${minCases}. Tuyệt đối không được bỏ sót bất kỳ category nào mà user đã chọn!
+   - Tổng số test case trả về PHẢI LỚN HƠN HOẶC BẰNG ${minCases}.
 
-2. LUẬT 300% (Xử lý Input sơ sài): KHÔNG ĐƯỢC PHÉP trả về kết quả hời hợt nếu user nhập mô tả quá ngắn. Hãy tự động giả định bối cảnh ứng dụng, suy luận các "Yêu cầu ngầm định" (Implicit Requirements).
+2. HỌC TỪ TEST CASE CŨ (RAG - RETRIEVED OLD TEST CASES):
+   - Dưới đây là ${input.retrieved_old_test_cases.length} test case đã được import từ file Excel tham khảo.
+   - BẠN PHẢI học style viết, độ chi tiết, format steps, cách đặt tên code, và cấu trúc expected result từ các test case này.
+   - Đảm bảo test case mới có cùng "chất lượng" và "style" với test case cũ.
+   - Nếu test case cũ đã cover một scenario, KHÔNG sinh trùng lặp. Thay vào đó, sinh case mới bổ sung góc nhìn khác.
+   - Nếu không có test case cũ, tự suy luận theo chuẩn industry best practice.
 
-3. TIÊU CHUẨN KỸ THUẬT SÂU: 
+3. LUẬT 300% (Xử lý Input sơ sài): KHÔNG ĐƯỢC PHÉP trả về kết quả hời hợt nếu user nhập mô tả quá ngắn. Hãy tự động giả định bối cảnh ứng dụng, suy luận các "Yêu cầu ngầm định" (Implicit Requirements).
+
+4. TIÊU CHUẨN KỸ THUẬT SÂU:
    - Pre-conditions: Ghi rõ trạng thái kỹ thuật (VD: "Session JWT còn hạn", "DB có record X") chứ không chỉ tả UI bề mặt.
    - Steps: Cụ thể, bao gồm cả thao tác phá hủy hệ thống nếu đang test security/performance.
    - Expected Result: Bắt buộc mô tả cả 2 khía cạnh: UI (người dùng thấy gì) và System/DB (dữ liệu lưu thế nào).
-   - Compatibility/Localization/Security: Nếu phải viết test case cho các category này (dựa theo danh sách yêu cầu), hãy giả định bối cảnh cực đoan (VD: Dùng Safari phiên bản cũ, đổi múi giờ, thử XSS payload).
+   - Compatibility/Localization/Security: Nếu phải viết test case cho các category này, hãy giả định bối cảnh cực đoan.
 
-4. ĐỊNH DẠNG ĐẦU RA BẤT KHẢ XÂM PHẠM: Output CHỈ trả về một JSON ARRAY thuần (không bọc trong object, không có key bao ngoài, không dùng markdown \`\`\`json). 
-Mỗi phần tử BẮT BUỘC đúng CHÍNH XÁC cấu trúc field, kiểu dữ liệu và enum sau (tuyệt đối không tự dịch enum sang tiếng Việt):
+5. ĐỊNH DẠNG ĐẦU RA BẤT KHẢ XÂM PHẠM:
+   - Output CHỈ trả về một JSON ARRAY thuần (không bọc trong object, không có key bao ngoài, không dùng markdown \`\`\`json).
+   - Mỗi phần tử BẮT BUỘC đúng CHÍNH XÁC cấu trúc field sau:
 ${JSON_SCHEMA_CONTRACT}
-- Field "category" PHẢI LÀ MỘT TRONG CÁC GIÁ TRỊ TỪ DANH SÁCH CẤU HÌNH.
 
 [DESCRIPTION - MÔ TẢ TÍNH NĂNG]
 ${input.requirement_description}
 
-[TEST CASE CŨ THAM KHẢO - Top ${input.retrieved_old_test_cases.length} case]
-${JSON.stringify(input.retrieved_old_test_cases, null, 2)}
+[TEST CASE CŨ ĐÃ IMPORT TỪ EXCEL - HỌC STYLE TỪ ĐÂY]
+${oldCasesFormatted}
 
 [CẤU HÌNH BẮT BUỘC]
-- Danh sách Category BẮT BUỘC PHẢI PHỦ ĐẦY ĐỦ (Ít nhất 1 case cho MỖI category dưới đây): ${categoryConstraint}
+- Danh sách Category BẮT BUỘC PHẢI PHỦ ĐẦY ĐỦ: ${categoryConstraint}
 - Ngôn ngữ nội dung: ${input.language}
 - Mức độ chi tiết: ${input.detail_level}
 `;
