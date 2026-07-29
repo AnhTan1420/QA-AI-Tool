@@ -70,6 +70,20 @@ export async function POST(request: Request) {
       }
     }
 
+    console.log(`[ai/${mode}] AI raw result type:`, typeof aiRawResult, Array.isArray(aiRawResult) ? '(array)' : '(not array)');
+
+    // NẾU enhance: AI có thể trả { test_cases: [...] } thay vì [...]
+    if (mode === 'enhance' && aiRawResult && typeof aiRawResult === 'object' && !Array.isArray(aiRawResult)) {
+      const obj = aiRawResult as Record<string, unknown>;
+      if (Array.isArray(obj.test_cases)) {
+        console.log('[ai/enhance] Unwrapping obj.test_cases -> array');
+        aiRawResult = obj.test_cases;
+      } else if (Array.isArray(obj.data)) {
+        console.log('[ai/enhance] Unwrapping obj.data -> array');
+        aiRawResult = obj.data;
+      }
+    }
+
     console.log(`[ai/${mode}] AI raw result:`, JSON.stringify(aiRawResult, null, 2).slice(0, 2000));
 
     // Validate output
@@ -88,8 +102,9 @@ export async function POST(request: Request) {
       const parsed = generatedTestCasesSchema.safeParse(aiRawResult);
       if (!parsed.success) {
         console.error('[ai/enhance] Schema fail:', JSON.stringify(parsed.error.flatten(), null, 2));
+        console.error('[ai/enhance] Raw data:', JSON.stringify(aiRawResult, null, 2));
         return NextResponse.json(
-          { success: false, error: 'AI trả enhance sai định dạng' },
+          { success: false, error: `AI trả enhance sai định dạng: ${parsed.error.errors[0]?.message || 'unknown'}` },
           { status: 502 }
         );
       }
