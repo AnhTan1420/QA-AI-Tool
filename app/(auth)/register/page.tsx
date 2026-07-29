@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { Sparkles } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 export default function RegisterPage() {
@@ -48,38 +49,43 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,#dbeafe,transparent_32rem),#f8fafc] px-6 py-12">
-      <section className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/70">
-        <Link href="/" className="text-2xl font-black text-slate-950">QAForge</Link>
-        <p className="mt-6 text-sm font-semibold uppercase tracking-wide text-blue-600">Register</p>
-        <h1 className="mt-2 text-3xl font-black text-slate-950">Tạo tài khoản QAForge</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-600">Tài khoản mới mặc định role "qa", có thể được mời vào project sau.</p>
+    <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,var(--color-brand-100),transparent_32rem)] bg-ink-50 px-6 py-12">
+      <section className="surface-card w-full max-w-md p-8 sm:p-10">
+        <Link href="/" className="text-display flex items-center gap-2 text-xl">
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
+            <Sparkles className="h-4 w-4" strokeWidth={2.5} />
+          </span>
+          QAForge
+        </Link>
+        <p className="text-eyebrow mt-7">Register</p>
+        <h1 className="text-h1 mt-2">Tạo tài khoản QAForge</h1>
+        <p className="text-body mt-2">Tài khoản mới mặc định role &quot;qa&quot;, có thể được mời vào project sau.</p>
 
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <form onSubmit={handleSubmit} className="mt-7 space-y-5">
           <label className="block">
-            <span className="text-sm font-bold text-slate-700">Họ tên</span>
+            <span className="field-label">Họ tên</span>
             <input
               type="text"
               required
               value={fullName}
               onChange={(event) => setFullName(event.target.value)}
               placeholder="Nguyễn Văn QA"
-              className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-300"
+              className="field-input"
             />
           </label>
           <label className="block">
-            <span className="text-sm font-bold text-slate-700">Email</span>
+            <span className="field-label">Email</span>
             <input
               type="email"
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               placeholder="qa@example.com"
-              className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-300"
+              className="field-input"
             />
           </label>
           <label className="block">
-            <span className="text-sm font-bold text-slate-700">Mật khẩu</span>
+            <span className="field-label">Mật khẩu</span>
             <input
               type="password"
               required
@@ -87,20 +93,23 @@ export default function RegisterPage() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder="Tối thiểu 8 ký tự"
-              className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-blue-300"
+              className="field-input"
             />
           </label>
 
-          {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</div>}
-          {info && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-700">{info}</div>}
+          {error && <div className="alert-danger">{error}</div>}
+          {info && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">{info}</div>}
 
-          <button type="submit" disabled={isSubmitting} className="w-full rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+          <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
             {isSubmitting ? 'Đang tạo tài khoản...' : 'Đăng ký'}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-slate-600">
-          Đã có tài khoản? <Link href="/login" className="font-bold text-blue-600">Đăng nhập</Link>
+        <p className="text-body mt-7 text-center text-sm">
+          Đã có tài khoản?{' '}
+          <Link href="/login" className="font-semibold text-brand-600 hover:text-brand-700">
+            Đăng nhập
+          </Link>
         </p>
       </section>
     </main>
