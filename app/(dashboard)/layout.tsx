@@ -31,7 +31,12 @@ export default async function DashboardLayout({ children }: Readonly<{ children:
 
         <nav className="mt-8 flex-1 space-y-1.5 px-4">
           {navItems.map((item) => (
-            <NavLink key={item.href} {...item} />
+            <NavLink
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              icon={<item.icon className="h-[18px] w-[18px]" strokeWidth={2.25} />}
+            />
           ))}
         </nav>
 
@@ -70,7 +75,12 @@ export default async function DashboardLayout({ children }: Readonly<{ children:
         {/* Mobile bottom-nav-style quick links */}
         <nav className="flex gap-1.5 overflow-x-auto border-b border-ink-200/70 bg-white/80 px-4 py-2 backdrop-blur-xl lg:hidden">
           {navItems.map((item) => (
-            <NavLink key={item.href} {...item} />
+            <NavLink
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              icon={<item.icon className="h-[18px] w-[18px]" strokeWidth={2.25} />}
+            />
           ))}
         </nav>
 
