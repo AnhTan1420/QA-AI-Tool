@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { runAIAgent } from '@/lib/ai/provider';
 import { buildGenerationPrompt } from '@/lib/ai/prompts/generation-agent';
 import { generateRequestSchema, generatedTestCasesSchema } from '@/lib/validators/test-case';
+import { unwrapArrayResponse } from '@/lib/ai/parse';
 
 export const maxDuration = 60;
 export const runtime = 'nodejs';
@@ -29,7 +30,12 @@ export async function POST(req: Request) {
 
     // 2) Validate OUTPUT tu AI truoc khi tra ve client - KHONG bao gio tin JSON tho tu LLM,
     // du da ep responseMimeType: application/json o phia provider.
-    const parsedTestCases = generatedTestCasesSchema.safeParse(aiRawResult);
+    // Luu y: khi fallback sang Groq, response_format "json_object" bat buoc AI phai
+    // tra ve 1 JSON OBJECT o top-level (khong the la bare array) -> AI se tu bọc mang
+    // test case vao 1 key nhu "test_cases"/"data"/... -> can go bo lop bọc nay truoc
+    // khi validate, neu khong se bi bao sai "khong dung dinh dang test case" oan.
+    const normalizedResult = unwrapArrayResponse(aiRawResult);
+    const parsedTestCases = generatedTestCasesSchema.safeParse(normalizedResult);
     if (!parsedTestCases.success) {
       console.error('[ai/generate] AI tra ve JSON sai schema:', parsedTestCases.error.flatten());
       return NextResponse.json(
