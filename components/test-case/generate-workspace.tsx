@@ -7,11 +7,8 @@ import { TEST_CASE_CATEGORIES } from '@/lib/test-case-taxonomy';
 import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
 import { useLanguage } from '@/lib/i18n/language-context';
 
-// Dung chung 1 nguon voi TEST_CASE_CATEGORIES (khop enum category trong
-// bang test_cases cua schema.sql) de validate file Excel import client-side.
 const VALID_CATEGORY_VALUES = TEST_CASE_CATEGORIES.map((c) => c.value);
 
-/** Goi fetch JSON va tra ve payload.data; nem loi voi thong bao ro rang neu success=false. */
 async function callApi<T>(url: string, body: unknown, requestFailedMessage: (url: string) => string): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
@@ -89,8 +86,6 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       retrieved_old_test_cases: oldCases,
     }, t.generateWorkspace.errors.requestFailed);
 
-    // API da validate bang Zod (generatedTestCasesSchema) truoc khi tra ve -
-    // khong can "doan" lai ten field o day nua.
     setTestCases(data);
   }
 
@@ -166,25 +161,13 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Test Cases');
 
     worksheet['!cols'] = [
-      { wch: 6 },
-      { wch: 15 },
-      { wch: 35 },
-      { wch: 15 },
-      { wch: 10 },
-      { wch: 25 },
-      { wch: 25 },
-      { wch: 50 },
-      { wch: 30 },
+      { wch: 6 }, { wch: 15 }, { wch: 35 }, { wch: 15 },
+      { wch: 10 }, { wch: 25 }, { wch: 25 }, { wch: 50 }, { wch: 30 },
     ];
 
     XLSX.writeFile(workbook, `qaforge-${projectId}-test-cases.xlsx`);
   }
 
-  /**
-   * Tai file mau (.xlsx) cho "Test case cu tham khao" - dung DUNG header voi
-   * exportExcel() va DUNG enum voi DB (test_cases.category / priority CHECK
-   * constraint trong schema.sql) de nguoi dung khong doan sai cot.
-   */
   function downloadOldCasesTemplate() {
     const templateData = [
       {
@@ -192,36 +175,22 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
         'Title': 'Đăng nhập thành công với email/password hợp lệ',
         'Category': 'positive',
         'Priority': 'P1',
-        'Preconditions': 'Tài khoản đã xác thực email; Ở trang /login',
-        'Test Data': '{"email":"qa@example.com","password":"Abc@12345"}',
-        'Steps Detail': '1. Nhập email hợp lệ (Expected: Field email hiển thị đúng giá trị đã nhập)\n2. Nhập password hợp lệ (Expected: Field password ẩn ký tự dạng dấu chấm)\n3. Bấm nút Đăng nhập (Expected: Hệ thống chuyển hướng tới /dashboard trong vòng 2s)',
+        'Preconditions': 'Tài khoản đã xác thực email; Ổn trang /login',
+        'Test Data': '{"email":"qa@example.com","password":"AbC@12345"}',
+        'Steps Detail': '1. Nhập email hợp lệ (Expected: Field email hiển thị đúng giá trị)\n2. Nhập password hợp lệ (Expected: Field password ẩn ký tự đúng)\n3. Bấm nút đăng nhập (Expected: Hệ thống chuyển hướng /dashboard trong vòng 2s)',
         'Final Expected Result': 'Người dùng đăng nhập thành công và thấy trang dashboard.',
       },
     ];
     const worksheet = XLSX.utils.json_to_sheet(templateData);
     worksheet['!cols'] = [
-      { wch: 15 },
-      { wch: 35 },
-      { wch: 15 },
-      { wch: 10 },
-      { wch: 25 },
-      { wch: 25 },
-      { wch: 50 },
-      { wch: 30 },
+      { wch: 15 }, { wch: 35 }, { wch: 15 }, { wch: 10 },
+      { wch: 25 }, { wch: 25 }, { wch: 50 }, { wch: 30 },
     ];
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Test Cases Cu');
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Test Cases Cũ');
     XLSX.writeFile(workbook, 'qaforge-old-test-cases-template.xlsx');
   }
 
-  /**
-   * Doc file .xlsx nguoi dung upload, map moi dong sheet dau tien thanh
-   * GeneratedTestCase. Cac cot khop voi cot cua exportExcel() (co the
-   * export ra roi sua lai va import nguoc), dong thoi khop enum
-   * category/priority cua bang test_cases trong schema.sql.
-   * Loi tung dong (thieu code/title...) duoc thay bang gia tri mac dinh an toan
-   * thay vi chan toan bo import, vi day chi la du lieu tham khao cho RAG.
-   */
   async function handleOldCasesFile(file: File) {
     setIsParsingOldCases(true);
     setOldCasesWarning('');
@@ -254,7 +223,6 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 
         const title = getField('Title', 'title', 'Tiêu đề');
         const code = getField('Test Case Code', 'Code', 'code', 'Mã') || `TC-OLD-${String(index + 1).padStart(3, '0')}`;
-        // Bo qua dong hoan toan rong (khong co title lan code that su).
         if (!title && !getField('Test Case Code', 'Code', 'code', 'Mã')) {
           skippedRows += 1;
           return;
@@ -335,198 +303,213 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const safeTestCasesCount = (testCases ?? []).length;
 
   return (
-    <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-      <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div>
-          <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.wizardEyebrow}</p>
-          <h1 className="mt-2 text-3xl font-black text-slate-950">{t.generateWorkspace.title}</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">{t.generateWorkspace.subtitle}</p>
-        </div>
+    <div className="space-y-4">
+      {/* Button quay lại */}
+      <button
+        onClick={() => router.back()}
+        className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+        </svg>
+        Quay lại
+      </button>
 
-        <label className="block">
-          <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.requirementLabel}</span>
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-64 w-full rounded-2xl border border-slate-200 p-4 text-sm leading-6 outline-none focus:border-blue-300" />
-        </label>
-
-        <div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.oldCasesLabel}</span>
-            <button type="button" onClick={downloadOldCasesTemplate} className="text-xs font-bold text-blue-600 hover:underline">
-              {t.generateWorkspace.downloadTemplate}
-            </button>
+      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr] h-[calc(100vh-10rem)]">
+        {/* Wizard panel - có scrollbar */}
+        <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm overflow-y-auto">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.wizardEyebrow}</p>
+            <h1 className="mt-2 text-3xl font-black text-slate-950">{t.generateWorkspace.title}</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{t.generateWorkspace.subtitle}</p>
           </div>
-          <label className="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-slate-200 p-5 text-center hover:border-blue-300">
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) handleOldCasesFile(file);
-                event.target.value = '';
-              }}
-            />
-            <span className="text-sm font-semibold text-slate-700">{isParsingOldCases ? t.generateWorkspace.chooseFileReading : t.generateWorkspace.chooseFile}</span>
-            <span className="text-xs text-slate-400">{t.generateWorkspace.fileHint}</span>
+
+          <label className="block">
+            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.requirementLabel}</span>
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-64 w-full rounded-2xl border border-slate-200 p-4 text-sm leading-6 outline-none focus:border-blue-300" />
           </label>
-          {oldCasesFileName && !isParsingOldCases && (
-            <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
-              <span className="font-semibold text-slate-700">
-                {oldCasesFileName} {t.generateWorkspace.loadedSuffix(oldCases.length)}
-              </span>
-              <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-600 hover:underline">
-                {t.generateWorkspace.removeFile}
+
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.oldCasesLabel}</span>
+              <button type="button" onClick={downloadOldCasesTemplate} className="text-xs font-bold text-blue-600 hover:underline">
+                {t.generateWorkspace.downloadTemplate}
               </button>
             </div>
-          )}
-          {oldCasesWarning && <p className="mt-1 text-xs font-semibold text-amber-600">{oldCasesWarning}</p>}
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="block">
-            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.languageLabel}</span>
-            <input value={language} onChange={(event) => setLanguage(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3" />
-          </label>
-          <label className="block">
-            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.detailLevelLabel}</span>
-            <select value={detailLevel} onChange={(event) => setDetailLevel(event.target.value as typeof detailLevel)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3">
-              <option value="concise">{t.generateWorkspace.detailConcise}</option>
-              <option value="standard">{t.generateWorkspace.detailStandard}</option>
-              <option value="detailed">{t.generateWorkspace.detailDetailed}</option>
-            </select>
-          </label>
-        </div>
-
-        <div>
-          <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.taxonomyLabel}</span>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {TEST_CASE_CATEGORIES.map((category) => (
-              <label key={category.value} className="flex cursor-pointer gap-3 rounded-2xl border border-slate-200 p-3 text-sm hover:border-blue-200">
-                <input type="checkbox" checked={selectedCategories.includes(category.value)} onChange={() => toggleCategory(category.value)} />
-                <span>
-                  <span className="block font-bold text-slate-800">{getCategoryLabel(category.value)}</span>
-                  <span className="text-xs text-slate-500">{getCategoryDescription(category.value)}</span>
+            <label className="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-slate-200 p-5 text-center hover:border-blue-300">
+              <input
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) handleOldCasesFile(file);
+                  event.target.value = '';
+                }}
+              />
+              <span className="text-sm font-semibold text-slate-700">{isParsingOldCases ? t.generateWorkspace.chooseFileReading : t.generateWorkspace.chooseFile}</span>
+              <span className="text-xs text-slate-400">{t.generateWorkspace.fileHint}</span>
+            </label>
+            {oldCasesFileName && !isParsingOldCases && (
+              <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
+                <span className="font-semibold text-slate-700">
+                  {oldCasesFileName} {t.generateWorkspace.loadedSuffix(oldCases.length)}
                 </span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {error && (
-          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
-            {error}
-            {errorDetails.length > 0 && (
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-normal text-red-600">
-                {errorDetails.map((d, i) => (
-                  <li key={i}>
-                    <span className="font-mono">{d.path || '(root)'}</span>: {d.message}
-                  </li>
-                ))}
-              </ul>
+                <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-600 hover:underline">
+                  {t.generateWorkspace.removeFile}
+                </button>
+              </div>
             )}
+            {oldCasesWarning && <p className="mt-1 text-xs font-semibold text-amber-600">{oldCasesWarning}</p>}
           </div>
-        )}
-        {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
-        {isDemoProject && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-            {t.generateWorkspace.demoNotice}
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.languageLabel}</span>
+              <input value={language} onChange={(event) => setLanguage(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3" />
+            </label>
+            <label className="block">
+              <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.detailLevelLabel}</span>
+              <select value={detailLevel} onChange={(event) => setDetailLevel(event.target.value as typeof detailLevel)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3">
+                <option value="concise">{t.generateWorkspace.detailConcise}</option>
+                <option value="standard">{t.generateWorkspace.detailStandard}</option>
+                <option value="detailed">{t.generateWorkspace.detailDetailed}</option>
+              </select>
+            </label>
           </div>
-        )}
 
-        <div className="flex flex-wrap gap-3">
-          <button
-            disabled={isPending || selectedCategories.length === 0}
-            onClick={() =>
-              startTransition(() =>
-                generate().catch((err) => {
-                  setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed);
-                  setErrorDetails((err as any)?.details ?? []);
-                }),
-              )
-            }
-            className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isPending ? t.generateWorkspace.generating : t.generateWorkspace.generateButton}
-          </button>
-          <button
-            disabled={isPending || safeTestCasesCount === 0}
-            onClick={() => startTransition(() => runReview().catch((err) => setError(err instanceof Error ? err.message : t.generateWorkspace.errors.reviewFailed)))}
-            className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-blue-200 disabled:opacity-50"
-          >
-            {t.generateWorkspace.reviewButton}
-          </button>
-          <button
-            disabled={isSaving || safeTestCasesCount === 0}
-            onClick={saveToLibrary}
-            className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-          >
-            {isSaving ? t.generateWorkspace.saving : t.generateWorkspace.saveButton}
-          </button>
-          <button
-            disabled={safeTestCasesCount === 0}
-            onClick={exportExcel}
-            className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50"
-          >
-            {t.generateWorkspace.exportButton}
-          </button>
-        </div>
-      </section>
-
-      <section className="space-y-5">
-        <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.generatedSetEyebrow}</p>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">{safeTestCasesCount} {t.generateWorkspace.testCasesSuffix}</h2>
+          <div>
+            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.taxonomyLabel}</span>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {TEST_CASE_CATEGORIES.map((category) => (
+                <label key={category.value} className="flex cursor-pointer gap-3 rounded-2xl border border-slate-200 p-3 text-sm hover:border-blue-200">
+                  <input type="checkbox" checked={selectedCategories.includes(category.value)} onChange={() => toggleCategory(category.value)} />
+                  <span>
+                    <span className="block font-bold text-slate-800">{getCategoryLabel(category.value)}</span>
+                    <span className="text-xs text-slate-500">{getCategoryDescription(category.value)}</span>
+                  </span>
+                </label>
+              ))}
             </div>
-            {review && (
-              <div className="text-right">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{t.generateWorkspace.coverageLabel}</p>
-                <p className={`text-4xl font-black ${coverageTone}`}>{review.coverage_score}%</p>
-              </div>
-            )}
           </div>
 
-          <div className="mt-6 space-y-5">
-            {Object.entries(groupedCases).map(([category, items]) => (
-              <div key={category}>
-                <h3 className="mb-3 text-sm font-black uppercase tracking-wide text-slate-500">{getCategoryLabel(category as TestCaseCategory)}</h3>
-                <div className="space-y-3">
-                  {(items ?? []).map((testCase) => <TestCaseCard key={`${testCase?.code}-${testCase?.title}`} testCase={testCase} />)}
-                </div>
-              </div>
-            ))}
-            {safeTestCasesCount === 0 && <div className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-500">{t.generateWorkspace.emptyState}</div>}
-          </div>
-        </div>
-
-        {review && (
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-2xl font-black text-slate-950">{t.generateWorkspace.reviewTitle}</h2>
-            <div className="mt-5 space-y-4">
-              {(review.requirement_gaps ?? []).length === 0 && (review.test_case_comments ?? []).length === 0 && (
-                <p className="text-sm font-semibold text-emerald-700">{t.generateWorkspace.noIssues}</p>
+          {error && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+              {error}
+              {errorDetails.length > 0 && (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-normal text-red-600">
+                  {errorDetails.map((d, i) => (
+                    <li key={i}>
+                      <span className="font-mono">{d.path || '(root)'}</span>: {d.message}
+                    </li>
+                  ))}
+                </ul>
               )}
-              {(review.requirement_gaps ?? []).map((gap, index) => (
-                <div key={`${gap?.requirement_text}-${index}`} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                  <p className="text-sm font-bold text-amber-900">{t.generateWorkspace.gapPrefix}: {gap?.requirement_text}</p>
-                  {gap?.suggested_test_case && (
-                    <button onClick={() => acceptSuggestedCase(gap.suggested_test_case!)} className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700">
-                      {t.generateWorkspace.acceptSuggestion}
-                    </button>
-                  )}
+            </div>
+          )}
+          {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
+          {isDemoProject && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+              {t.generateWorkspace.demoNotice}
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              disabled={isPending || selectedCategories.length === 0}
+              onClick={() =>
+                startTransition(() =>
+                  generate().catch((err) => {
+                    setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed);
+                    setErrorDetails((err as any)?.details ?? []);
+                  }),
+                )
+              }
+              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isPending ? t.generateWorkspace.generating : t.generateWorkspace.generateButton}
+            </button>
+            <button
+              disabled={isPending || safeTestCasesCount === 0}
+              onClick={() => startTransition(() => runReview().catch((err) => setError(err instanceof Error ? err.message : t.generateWorkspace.errors.reviewFailed)))}
+              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-blue-200 disabled:opacity-50"
+            >
+              {t.generateWorkspace.reviewButton}
+            </button>
+            <button
+              disabled={isSaving || safeTestCasesCount === 0}
+              onClick={saveToLibrary}
+              className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+            >
+              {isSaving ? t.generateWorkspace.saving : t.generateWorkspace.saveButton}
+            </button>
+            <button
+              disabled={safeTestCasesCount === 0}
+              onClick={exportExcel}
+              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50"
+            >
+              {t.generateWorkspace.exportButton}
+            </button>
+          </div>
+        </section>
+
+        {/* Generated set panel - có scrollbar */}
+        <section className="space-y-5 overflow-y-auto">
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.generatedSetEyebrow}</p>
+                <h2 className="mt-2 text-2xl font-black text-slate-950">{safeTestCasesCount} {t.generateWorkspace.testCasesSuffix}</h2>
+              </div>
+              {review && (
+                <div className="text-right">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{t.generateWorkspace.coverageLabel}</p>
+                  <p className={`text-4xl font-black ${coverageTone}`}>{review.coverage_score}%</p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 space-y-5">
+              {Object.entries(groupedCases).map(([category, items]) => (
+                <div key={category}>
+                  <h3 className="mb-3 text-sm font-black uppercase tracking-wide text-slate-500">{getCategoryLabel(category as TestCaseCategory)}</h3>
+                  <div className="space-y-3">
+                    {(items ?? []).map((testCase) => <TestCaseCard key={`${testCase?.code}-${testCase?.title}`} testCase={testCase} />)}
+                  </div>
                 </div>
               ))}
-              {(review.test_case_comments ?? []).map((comment) => (
-                <div key={`${comment?.test_case_code}-${comment?.comment}`} className="rounded-2xl border border-slate-200 p-4">
-                  <p className="text-sm font-bold text-slate-950">{comment?.test_case_code} · {comment?.issue_type}</p>
-                  <p className="mt-1 text-sm text-slate-600">{comment?.comment}</p>
-                </div>
-              ))}
+              {safeTestCasesCount === 0 && <div className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-500">{t.generateWorkspace.emptyState}</div>}
             </div>
           </div>
-        )}
-      </section>
+
+          {review && (
+            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-2xl font-black text-slate-950">{t.generateWorkspace.reviewTitle}</h2>
+              <div className="mt-5 space-y-4">
+                {(review.requirement_gaps ?? []).length === 0 && (review.test_case_comments ?? []).length === 0 && (
+                  <p className="text-sm font-semibold text-emerald-700">{t.generateWorkspace.noIssues}</p>
+                )}
+                {(review.requirement_gaps ?? []).map((gap, index) => (
+                  <div key={`${gap?.requirement_text}-${index}`} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm font-bold text-amber-900">{t.generateWorkspace.gapPrefix}: {gap?.requirement_text}</p>
+                    {gap?.suggested_test_case && (
+                      <button onClick={() => acceptSuggestedCase(gap.suggested_test_case!)} className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700">
+                        {t.generateWorkspace.acceptSuggestion}
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {(review.test_case_comments ?? []).map((comment) => (
+                  <div key={`${comment?.test_case_code}-${comment?.comment}`} className="rounded-2xl border border-slate-200 p-4">
+                    <p className="text-sm font-bold text-slate-950">{comment?.test_case_code} – {comment?.issue_type}</p>
+                    <p className="mt-1 text-sm text-slate-600">{comment?.comment}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
