@@ -360,7 +360,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
               }}
             />
             <span className="text-sm font-semibold text-slate-700">{isParsingOldCases ? 'Đang đọc file...' : 'Chọn file .xlsx test case cũ'}</span>
-            <span className="text-xs text-slate-400">Dùng đúng cột như "Tải file mẫu"; bỏ qua để skip RAG.</span>
+            <span className="text-xs text-slate-400">Dùng đúng cột như &quot;Tải file mẫu&quot;; bỏ qua để skip RAG.</span>
           </label>
           {oldCasesFileName && !isParsingOldCases && (
             <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
@@ -422,7 +422,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
         {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
         {isDemoProject && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-            Bạn đang ở project demo — kết quả generate/review chạy thật, nhưng nút "Lưu vào thư viện" cần một project thật (tạo ở trang Projects).
+            Bạn đang ở project demo — kết quả generate/review chạy thật, nhưng nút &quot;Lưu vào thư viện&quot; cần một project thật (tạo ở trang Projects).
           </div>
         )}
 
