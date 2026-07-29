@@ -1,118 +1,253 @@
 'use client';
 
+import type { getDictionary } from '@/lib/i18n/dictionaries';
+import { useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useEffect, useState, use } from 'react';
-import { useLanguage } from '@/lib/i18n/language-context';
+import TestCaseForm from '@/components/test-case-form';
 
-type TestCaseRow = {
+type TestCase = {
   id: string;
   code: string;
   title: string;
   category: string;
-  priority: 'P1' | 'P2' | 'P3' | 'P4';
-  status: 'draft' | 'in_review' | 'approved';
-  expected_result?: string | null;
+  priority: string;
+  status: string;
 };
 
-export default function TestCasesPage({ params }: { params: Promise<{ projectId: string }> }) {
-  const { projectId } = use(params);
-  const { t } = useLanguage();
-  const [testCases, setTestCases] = useState<TestCaseRow[]>([]);
+export default function TestCaseLibraryPage() {
+  const { projectId } = useParams() as { projectId: string };
+  const router = useRouter();
+  const [cases, setCases] = useState<TestCase[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const fetchCases = async () => {
+    setLoading(true);
+    const res = await fetch(`/api/test-cases?projectId=${projectId}`);
+    const json = await res.json();
+    if (json.success) setCases(json.data);
+    setLoading(false);
+    setSelectedIds(new Set());
+  };
 
   useEffect(() => {
-    let mounted = true;
-
-    async function fetchTestCases() {
-      if (projectId === 'demo') {
-        setLoading(false);
-        return;
-      }
-      setLoading(true);
-      setError('');
-      try {
-        const response = await fetch(`/api/test-cases?projectId=${encodeURIComponent(projectId)}`);
-        const result = await response.json();
-        if (!response.ok || !result.success) {
-          throw new Error(result.error ?? t.testCasesList.errors.loadFailed);
-        }
-        if (mounted) setTestCases(result.data ?? []);
-      } catch (err) {
-        if (mounted) setError(err instanceof Error ? err.message : t.testCasesList.errors.loadFailed);
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
-    fetchTestCases();
-    return () => {
-      mounted = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchCases();
   }, [projectId]);
 
-  async function updateStatus(id: string, status: TestCaseRow['status']) {
-    const previous = testCases;
-    setTestCases((current) => current.map((testCase) => (testCase.id === id ? { ...testCase, status } : testCase)));
+  const handleCreate = async (data: any) => {
+    const res = await fetch('/api/test-cases', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, project_id: projectId }),
+    });
+    const json = await res.json();
+    if (json.success) {
+      setShowCreate(false);
+      fetchCases();
+    } else {
+      alert(json.error);
+    }
+  };
 
-    const response = await fetch('/api/test-cases', {
+  const handleStatusChange = async (id: string, status: string) => {
+    const res = await fetch('/api/test-cases', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, status }),
     });
+    if (res.ok) fetchCases();
+  };
 
-    if (!response.ok) {
-      setTestCases(previous);
-      const result = await response.json();
-      setError(result.error ?? t.testCasesList.errors.updateFailed);
+  const handleExport = () => {
+    window.open(`/api/test-cases/export?projectId=${projectId}`, '_blank');
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === cases.length && cases.length > 0) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(cases.map((c) => c.id)));
     }
-  }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!confirm(`Bạn có chắc muốn xóa ${selectedIds.size} test case đã chọn?`)) return;
+
+    const res = await fetch('/api/test-cases', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: Array.from(selectedIds) }),
+    });
+
+    if (res.ok) {
+      fetchCases();
+    } else {
+      const json = await res.json();
+      alert(json.error || 'Xóa thất bại');
+    }
+  };
+
+  const categoryBadge = (cat: string) => {
+    const colors: Record<string, string> = {
+      positive: 'bg-green-100 text-green-700',
+      negative: 'bg-red-100 text-red-700',
+      boundary: 'bg-yellow-100 text-yellow-700',
+      security: 'bg-purple-100 text-purple-700',
+      localization: 'bg-pink-100 text-pink-700',
+    };
+    return colors[cat] || 'bg-gray-100 text-gray-700';
+  };
+
+  const selectedCount = selectedIds.size;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
         <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">{t.testCasesList.eyebrow}</p>
-          <h1 className="mt-2 text-3xl font-black text-slate-950">{t.testCasesList.titlePrefix} {projectId}</h1>
-          <p className="mt-2 text-slate-600">{t.testCasesList.subtitle}</p>
+          <div className="flex items-center gap-3 mb-1">
+            <button
+              onClick={() => router.back()}
+              className="text-sm text-gray-500 hover:text-gray-800 flex items-center gap-1 transition-colors"
+              title="Quay lại trang trước"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+              </svg>
+              Quay lại
+            </button>
+          </div>
+          <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">Test Case Library</p>
+          <h1 className="text-2xl font-bold text-gray-900">Project {projectId}</h1>
+          <p className="text-sm text-gray-500 mt-1">Danh sách case đã lưu trong Supabase, sẵn sàng dùng làm dữ liệu học cho lần generate sau.</p>
         </div>
-        <Link href={`/projects/${projectId}/generate`} className="rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
-          {t.testCasesList.generateNew}
-        </Link>
+        <div className="flex gap-3">
+          <button
+            onClick={handleExport}
+            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 flex items-center gap-2"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            Export Excel
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+          >
+            + Tạo test case
+          </button>
+        </div>
       </div>
 
-      {error && <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">{error}</div>}
-
-      {projectId === 'demo' && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-          {t.testCasesList.demoNotice}
+      {showCreate && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6">
+            <h2 className="text-lg font-bold mb-4">Tạo test case mới</h2>
+            <TestCaseForm
+              onSubmit={handleCreate}
+              onCancel={() => setShowCreate(false)}
+              submitLabel="Tạo test case"
+            />
+          </div>
         </div>
       )}
 
-      <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
-          <span>{t.testCasesList.colCode}</span>
-          <span>{t.testCasesList.colTitle}</span>
-          <span>{t.testCasesList.colCategory}</span>
-          <span>{t.testCasesList.colPriority}</span>
-          <span>{t.testCasesList.colStatus}</span>
+      {selectedCount > 0 && (
+        <div className="mb-4 flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+          <span className="text-sm text-red-700 font-medium">
+            Đã chọn {selectedCount} test case
+          </span>
+          <button
+            onClick={handleBulkDelete}
+            className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 flex items-center gap-1.5"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Xóa đã chọn
+          </button>
         </div>
-        {loading && <div className="p-8 text-center text-slate-500">{t.testCasesList.loading}</div>}
-        {!loading && testCases.length === 0 && <div className="p-8 text-center text-slate-500">{t.testCasesList.empty}</div>}
-        {testCases.map((testCase) => (
-          <div key={testCase.id} className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-100 px-5 py-4 text-sm last:border-b-0">
-            <Link href={`/projects/${projectId}/test-cases/${testCase.id}`} className="font-mono font-bold text-blue-700">{testCase.code}</Link>
-            <span className="font-semibold text-slate-950">{testCase.title}</span>
-            <span className="text-slate-600">{testCase.category}</span>
-            <span className="font-bold text-slate-700">{testCase.priority}</span>
-            <select value={testCase.status} onChange={(event) => updateStatus(testCase.id, event.target.value as TestCaseRow['status'])} className="rounded-xl border border-slate-200 px-3 py-2 text-sm">
-              <option value="draft">{t.testCasesList.statusDraft}</option>
-              <option value="in_review">{t.testCasesList.statusInReview}</option>
-              <option value="approved">{t.testCasesList.statusApproved}</option>
-            </select>
-          </div>
-        ))}
+      )}
+
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-gray-500 font-medium">
+            <tr>
+              <th className="px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  checked={cases.length > 0 && selectedCount === cases.length}
+                  onChange={toggleSelectAll}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+              </th>
+              <th className="text-left px-6 py-3">CODE</th>
+              <th className="text-left px-6 py-3">TITLE</th>
+              <th className="text-left px-6 py-3">CATEGORY</th>
+              <th className="text-left px-6 py-3">PRIORITY</th>
+              <th className="text-left px-6 py-3">STATUS</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">Đang tải...</td>
+              </tr>
+            ) : cases.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">Chưa có test case nào</td>
+              </tr>
+            ) : (
+              cases.map((tc) => (
+                <tr key={tc.id} className={`hover:bg-gray-50 ${selectedIds.has(tc.id) ? 'bg-blue-50/50' : ''}`}>
+                  <td className="px-4 py-4">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(tc.id)}
+                      onChange={() => toggleSelect(tc.id)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </td>
+                  <td className="px-6 py-4">
+                    <Link href={`/projects/${projectId}/test-cases/${tc.id}`} className="text-blue-600 font-medium hover:underline">
+                      {tc.code}
+                    </Link>
+                  </td>
+                  <td className="px-6 py-4 text-gray-900">{tc.title}</td>
+                  <td className="px-6 py-4">
+                    <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${categoryBadge(tc.category)}`}>
+                      {tc.category}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 font-semibold text-gray-700">{tc.priority}</td>
+                  <td className="px-6 py-4">
+                    <select
+                      value={tc.status}
+                      onChange={(e) => handleStatusChange(tc.id, e.target.value)}
+                      className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="draft">Draft</option>
+                      <option value="in_review">In Review</option>
+                      <option value="approved">Approved</option>
+                    </select>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
