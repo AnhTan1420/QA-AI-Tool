@@ -6,7 +6,7 @@ import { NextResponse, type NextRequest } from 'next/server';
  * Nhiem vu: (1) refresh session Supabase tren moi request, (2) redirect ve /login
  * neu truy cap route can dang nhap ma chua co session.
  */
-const PROTECTED_PREFIXES = ['/dashboard', '/projects', '/settings'];
+const PROTECTED_PREFIXES = ['/dashboard', '/projects'];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -58,5 +58,5 @@ export async function proxy(request: NextRequest) {
 // handler goi Supabase, dan toi auth.uid() = NULL o phia DB dai qua RLS mac du app-level
 // da thay user dang nhap.
 export const config = {
-  matcher: ['/dashboard/:path*', '/projects/:path*', '/settings/:path*', '/api/:path*'],
+  matcher: ['/dashboard/:path*', '/projects/:path*', '/api/:path*'],
 };
