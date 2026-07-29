@@ -46,6 +46,43 @@ export function extractJson(text: string): any {
 }
 
 /**
+ * Groq (OpenAI-compatible) bắt buộc response_format: json_object phải là một
+ * JSON OBJECT ở top-level — model không thể trả về bare array trong chế độ này.
+ * Vì vậy khi fallback sang Groq, AI sẽ tự bọc mảng test case vào 1 object,
+ * VD: {"test_cases": [...]}, {"data": [...]}, {"result": [...]}...
+ * Hàm này "gỡ lớp bọc" đó ra để lấy đúng mảng cần validate, tránh việc
+ * generatedTestCasesSchema (z.array(...)) fail chỉ vì bị bọc thêm 1 lớp object
+ * không do lỗi nội dung AI sinh ra.
+ */
+export function unwrapArrayResponse(data: any): any {
+  if (Array.isArray(data)) return data;
+  if (!data || typeof data !== 'object') return data;
+
+  // Ưu tiên các key phổ biến mà LLM hay dùng để bọc mảng.
+  const preferredKeys = [
+    'test_cases',
+    'testCases',
+    'test_case',
+    'testCase',
+    'data',
+    'result',
+    'results',
+    'items',
+    'cases',
+  ];
+  for (const key of preferredKeys) {
+    if (Array.isArray(data[key])) return data[key];
+  }
+
+  // Không match key quen thuộc -> lấy property đầu tiên có giá trị là mảng.
+  const arrayValue = Object.values(data).find((v) => Array.isArray(v));
+  if (arrayValue) return arrayValue;
+
+  // Không tìm thấy mảng nào bên trong -> trả nguyên object, để Zod báo lỗi rõ ràng.
+  return data;
+}
+
+/**
  * Kiểm tra xem một lỗi có đáng để kích hoạt cơ chế Fallback (chuyển sang AI khác) không.
  * Chỉ Fallback khi lỗi thuộc về hạ tầng mạng hoặc giới hạn API (Rate limit, Timeout, 50x...).
  */
