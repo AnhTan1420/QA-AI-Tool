@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Plus, X, FlaskConical, ArrowRight, FolderKanban } from 'lucide-react';
+import { Plus, X, FlaskConical, ArrowRight, FolderKanban, Trash2 } from 'lucide-react';
 
 type Project = {
   id: string;
@@ -19,6 +19,8 @@ export default function ProjectsPage() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function loadProjects() {
     setLoading(true);
@@ -59,6 +61,22 @@ export default function ProjectsPage() {
       setError(err instanceof Error ? err.message : 'Không thể tạo project');
     } finally {
       setIsCreating(false);
+    }
+  }
+
+  async function handleDelete(projectId: string) {
+    setDeletingId(projectId);
+    setError('');
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể xóa project');
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      setConfirmId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Không thể xóa project');
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -127,15 +145,52 @@ export default function ProjectsPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {projects.map((project) => (
-          <Link key={project.id} href={`/projects/${project.id}`} className="surface-card-interactive p-6">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
-              <FolderKanban className="h-5 w-5" strokeWidth={2.25} />
-            </span>
-            <h2 className="text-h3 mt-4">{project.name}</h2>
-            <p className="text-body mt-2 line-clamp-2">{project.description || 'Chưa có mô tả.'}</p>
-          </Link>
-        ))}
+        {projects.map((project) => {
+          const isConfirming = confirmId === project.id;
+          const isDeleting = deletingId === project.id;
+
+          return (
+            <div key={project.id} className="group relative">
+              <Link href={`/projects/${project.id}`} className="surface-card-interactive block p-6">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
+                  <FolderKanban className="h-5 w-5" strokeWidth={2.25} />
+                </span>
+                <h2 className="text-h3 mt-4 pr-8">{project.name}</h2>
+                <p className="text-body mt-2 line-clamp-2">{project.description || 'Chưa có mô tả.'}</p>
+              </Link>
+
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setConfirmId(project.id);
+                }}
+                aria-label={`Xóa project ${project.name}`}
+                className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 opacity-0 transition-opacity duration-150 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
+              >
+                <Trash2 className="h-4 w-4" strokeWidth={2.25} />
+              </button>
+
+              {isConfirming && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-[var(--radius-card)] bg-white/97 p-6 text-center shadow-[var(--shadow-soft-lg)] backdrop-blur-sm">
+                  <p className="text-sm font-semibold text-ink-900">Xóa &quot;{project.name}&quot;?</p>
+                  <p className="text-xs leading-relaxed text-ink-500">
+                    Toàn bộ test case và thành viên của project sẽ bị xóa vĩnh viễn. Không thể hoàn tác.
+                  </p>
+                  <div className="mt-1 flex gap-2">
+                    <button type="button" onClick={() => setConfirmId(null)} className="btn-secondary" disabled={isDeleting}>
+                      Hủy
+                    </button>
+                    <button type="button" onClick={() => handleDelete(project.id)} className="btn-danger" disabled={isDeleting}>
+                      {isDeleting ? 'Đang xóa...' : 'Xóa project'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
