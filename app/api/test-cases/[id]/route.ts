@@ -22,12 +22,14 @@ const updateSchema = z.object({
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ Id: string }> }) {
   const { Id } = await params;
+  console.log('[API GET test-case] Id =', Id);
+
   const supabase = await createClient();
 
-  // QUAN TRỌNG: Phải join test_case_sets!inner để RLS nhận context project
+  // Dùng maybeSingle() thay vì single() để tránh lỗi "0 rows" từ RLS
   const { data, error } = await supabase
     .from('test_cases')
-    .select('*, test_case_sets!inner(project_id)')
+    .select('*')
     .eq('id', Id)
     .maybeSingle();
 
@@ -37,16 +39,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ Id:
   }
 
   if (!data) {
-    return NextResponse.json(
-      { success: false, error: 'Test case không tồn tại hoặc bạn không có quyền truy cập' },
-      { status: 404 }
-    );
+    console.error('[API GET test-case] No data found for Id:', Id);
+    return NextResponse.json({ success: false, error: 'Test case không tồn tại hoặc bạn không có quyền truy cập' }, { status: 404 });
   }
 
-  // Trả về data flat (bỏ nested test_case_sets đi nếu UI không cần)
-  const { test_case_sets, ...testCaseData } = data as any;
-
-  return NextResponse.json({ success: true, data: testCaseData });
+  return NextResponse.json({ success: true, data });
 }
 
 export async function PUT(_req: NextRequest, { params }: { params: Promise<{ Id: string }> }) {
@@ -59,15 +56,12 @@ export async function PUT(_req: NextRequest, { params }: { params: Promise<{ Id:
 
     const { data: current, error: fetchError } = await supabase
       .from('test_cases')
-      .select('*, test_case_sets!inner(project_id)')
+      .select('*')
       .eq('id', Id)
       .maybeSingle();
 
     if (fetchError || !current) {
-      return NextResponse.json(
-        { success: false, error: fetchError?.message || 'Test case không tồn tại' },
-        { status: 404 }
-      );
+      return NextResponse.json({ success: false, error: fetchError?.message || 'Test case không tồn tại' }, { status: 404 });
     }
 
     const { error: versionError } = await supabase
