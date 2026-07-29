@@ -3,57 +3,49 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Search, ArrowLeft } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n/language-context';
 
 type ToolSlug = 'json-formatter' | 'base64' | 'uuid' | 'regex-tester' | 'hash-generator' | 'timestamp';
 
-export const TOOL_DEFINITIONS: {
-  slug: ToolSlug;
-  title: string;
-  group: string;
-  description: string;
-}[] = [
-  { slug: 'json-formatter', title: 'JSON Formatter / Validator', group: 'Xử lý dữ liệu', description: 'Format, validate và đọc JSON nhanh.' },
-  { slug: 'base64', title: 'Base64 Encode / Decode', group: 'Mã hoá', description: 'Encode/decode Base64 ngay trên trình duyệt.' },
-  { slug: 'uuid', title: 'UUID Generator', group: 'Generator', description: 'Sinh UUID v4 phục vụ dữ liệu test.' },
-  { slug: 'regex-tester', title: 'Regex Tester', group: 'Testing utilities', description: 'Kiểm tra pattern regex với input mẫu.' },
-  { slug: 'hash-generator', title: 'Hash Generator', group: 'Mã hoá', description: 'Sinh SHA-1/SHA-256 bằng Web Crypto.' },
-  { slug: 'timestamp', title: 'Timestamp Converter', group: 'Converter', description: 'Đổi Unix timestamp sang ngày giờ local.' },
-];
+const TOOL_SLUGS: ToolSlug[] = ['json-formatter', 'base64', 'uuid', 'regex-tester', 'hash-generator', 'timestamp'];
 
 function JsonFormatter() {
+  const { t } = useLanguage();
   const [input, setInput] = useState('{"project":"QAForge","phase":1}');
   const result = useMemo(() => {
     try {
       return { ok: true, value: JSON.stringify(JSON.parse(input), null, 2) };
     } catch (error) {
-      return { ok: false, value: error instanceof Error ? error.message : 'JSON không hợp lệ' };
+      return { ok: false, value: error instanceof Error ? error.message : t.tools.jsonInvalid };
     }
-  }, [input]);
+  }, [input, t]);
 
   return <ToolTextArea input={input} setInput={setInput} output={result.value} tone={result.ok ? 'success' : 'error'} />;
 }
 
 function Base64Tool() {
-  const [input, setInput] = useState('QAForge xin chào tester Việt Nam');
+  const { t } = useLanguage();
+  const [input, setInput] = useState(t.tools.base64Placeholder);
   const encoded = useMemo(() => (typeof window === 'undefined' ? '' : btoa(unescape(encodeURIComponent(input)))), [input]);
   const decoded = useMemo(() => {
     try {
       return decodeURIComponent(escape(atob(input)));
     } catch {
-      return 'Input hiện tại không phải Base64 hợp lệ.';
+      return t.tools.base64InvalidInput;
     }
-  }, [input]);
+  }, [input, t]);
 
-  return <ToolTextArea input={input} setInput={setInput} output={`Encode:\n${encoded}\n\nDecode nếu input là Base64:\n${decoded}`} />;
+  return <ToolTextArea input={input} setInput={setInput} output={t.tools.base64Output(encoded, decoded)} />;
 }
 
 function UuidTool() {
+  const { t } = useLanguage();
   const [count, setCount] = useState(5);
   const values = useMemo(() => Array.from({ length: count }, () => crypto.randomUUID()).join('\n'), [count]);
 
   return (
     <div className="space-y-4">
-      <label className="field-label">Số lượng</label>
+      <label className="field-label">{t.tools.uuidCountLabel}</label>
       <input type="number" min={1} max={50} value={count} onChange={(event) => setCount(Number(event.target.value))} className="field-input w-32" />
       <pre className="overflow-auto rounded-2xl bg-ink-900 p-4 text-sm text-emerald-300">{values}</pre>
     </div>
@@ -61,15 +53,16 @@ function UuidTool() {
 }
 
 function RegexTester() {
+  const { t } = useLanguage();
   const [pattern, setPattern] = useState('^[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}$');
   const [input, setInput] = useState('tester@example.com');
   const result = useMemo(() => {
     try {
       return new RegExp(pattern, 'i').test(input) ? 'MATCH' : 'NO MATCH';
     } catch (error) {
-      return error instanceof Error ? error.message : 'Regex không hợp lệ';
+      return error instanceof Error ? error.message : t.tools.regexInvalid;
     }
-  }, [pattern, input]);
+  }, [pattern, input, t]);
 
   return (
     <div className="space-y-4">
@@ -83,6 +76,7 @@ function RegexTester() {
 }
 
 function HashGenerator() {
+  const { t } = useLanguage();
   const [input, setInput] = useState('QAForge');
   const [hash, setHash] = useState('');
 
@@ -98,12 +92,13 @@ function HashGenerator() {
         <button onClick={() => generate('SHA-1')} className="btn-ghost bg-ink-900 text-white hover:bg-ink-800">SHA-1</button>
         <button onClick={() => generate('SHA-256')} className="btn-primary">SHA-256</button>
       </div>
-      <pre className="overflow-auto rounded-2xl bg-ink-900 p-4 text-sm text-emerald-300">{hash || 'Chọn thuật toán để sinh hash.'}</pre>
+      <pre className="overflow-auto rounded-2xl bg-ink-900 p-4 text-sm text-emerald-300">{hash || t.tools.hashChoosePrompt}</pre>
     </div>
   );
 }
 
 function TimestampTool() {
+  const { locale } = useLanguage();
   const [timestamp, setTimestamp] = useState(1704067200);
   const date = useMemo(() => new Date(timestamp * 1000), [timestamp]);
 
@@ -111,7 +106,7 @@ function TimestampTool() {
     <div className="space-y-4">
       <input type="number" value={timestamp} onChange={(event) => setTimestamp(Number(event.target.value))} className="field-input" />
       <div className="surface-card p-4">
-        <p className="font-bold text-ink-900">{date.toLocaleString('vi-VN')}</p>
+        <p className="font-bold text-ink-900">{date.toLocaleString(locale === 'vi' ? 'vi-VN' : 'en-US')}</p>
         <p className="text-caption mt-1">ISO: {date.toISOString()}</p>
       </div>
     </div>
@@ -128,8 +123,10 @@ function ToolTextArea({ input, setInput, output, tone = 'success' }: { input: st
 }
 
 export function ToolsGrid() {
+  const { t } = useLanguage();
   const [query, setQuery] = useState('');
-  const filtered = TOOL_DEFINITIONS.filter((tool) => `${tool.title} ${tool.group}`.toLowerCase().includes(query.toLowerCase()));
+  const tools = TOOL_SLUGS.map((slug) => ({ slug, ...t.tools.definitions[slug] }));
+  const filtered = tools.filter((tool) => `${tool.title} ${tool.group}`.toLowerCase().includes(query.toLowerCase()));
 
   return (
     <div className="space-y-6">
@@ -138,7 +135,7 @@ export function ToolsGrid() {
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Tìm tool: JSON, Base64, Regex..."
+          placeholder={t.tools.searchPlaceholder}
           className="field-input py-4 pl-11 shadow-[var(--shadow-soft)]"
         />
       </div>
@@ -156,10 +153,12 @@ export function ToolsGrid() {
 }
 
 export function ToolRunner({ slug }: { slug: string }) {
-  const tool = TOOL_DEFINITIONS.find((item) => item.slug === slug);
-  if (!tool) {
-    return <div className="alert-danger">Tool chưa tồn tại.</div>;
+  const { t } = useLanguage();
+  const isValidSlug = (TOOL_SLUGS as string[]).includes(slug);
+  if (!isValidSlug) {
+    return <div className="alert-danger">{t.tools.notFound}</div>;
   }
+  const tool = { slug: slug as ToolSlug, ...t.tools.definitions[slug as ToolSlug] };
 
   const runner = {
     'json-formatter': <JsonFormatter />,
@@ -174,11 +173,11 @@ export function ToolRunner({ slug }: { slug: string }) {
     <div className="space-y-6">
       <div>
         <Link href="/tools" className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:text-brand-700">
-          <ArrowLeft className="h-4 w-4" /> Quay lại toolkit
+          <ArrowLeft className="h-4 w-4" /> {t.tools.backToToolkit}
         </Link>
         <p className="text-eyebrow mt-4">{tool.group}</p>
         <h1 className="text-h1 mt-2">{tool.title}</h1>
-        <p className="text-body mt-2">{tool.description} Tool chạy 100% client-side, không gọi AI.</p>
+        <p className="text-body mt-2">{tool.description} {t.tools.clientSideNote}</p>
       </div>
       <div className="surface-card p-5">{runner}</div>
     </div>

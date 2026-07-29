@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Plus, X, FlaskConical, ArrowRight, FolderKanban, Trash2 } from 'lucide-react';
+import { useLanguage } from '@/lib/i18n/language-context';
+import type { getDictionary } from '@/lib/i18n/dictionaries';
 
 type Project = {
   id: string;
@@ -19,19 +21,20 @@ type ApiPayload<T> = { success: boolean; error?: string; data?: T };
  * nem loi kho hieu ("JSON.parse: unexpected character..."). Doc dang text truoc,
  * roi thu parse, neu that bai thi tra ve thong bao loi ro rang kem HTTP status.
  */
-async function parseApiResponse<T>(response: Response): Promise<ApiPayload<T>> {
+async function parseApiResponse<T>(response: Response, t: ReturnType<typeof getDictionary>): Promise<ApiPayload<T>> {
   const raw = await response.text();
   try {
-    return raw ? JSON.parse(raw) : { success: false, error: `Server không trả về dữ liệu (HTTP ${response.status}).` };
+    return raw ? JSON.parse(raw) : { success: false, error: t.projects.errors.serverNoData(response.status) };
   } catch {
     return {
       success: false,
-      error: `Phản hồi không hợp lệ từ server (HTTP ${response.status}). Có thể route chưa được deploy hoặc phiên đăng nhập đã hết hạn.`,
+      error: t.projects.errors.invalidResponse(response.status),
     };
   }
 }
 
 export default function ProjectsPage() {
+  const { t } = useLanguage();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -47,11 +50,11 @@ export default function ProjectsPage() {
     setError('');
     try {
       const response = await fetch('/api/projects');
-      const payload = await parseApiResponse<Project[]>(response);
-      if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể tải projects');
+      const payload = await parseApiResponse<Project[]>(response, t);
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? t.projects.errors.loadFailed);
       setProjects(payload.data ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thể tải projects');
+      setError(err instanceof Error ? err.message : t.projects.errors.loadFailed);
     } finally {
       setLoading(false);
     }
@@ -59,6 +62,7 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function createProject(event: React.FormEvent) {
@@ -71,14 +75,14 @@ export default function ProjectsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, description: description || undefined }),
       });
-      const payload = await parseApiResponse<Project>(response);
-      if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể tạo project');
+      const payload = await parseApiResponse<Project>(response, t);
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? t.projects.errors.createFailed);
       setName('');
       setDescription('');
       setShowForm(false);
       await loadProjects();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thể tạo project');
+      setError(err instanceof Error ? err.message : t.projects.errors.createFailed);
     } finally {
       setIsCreating(false);
     }
@@ -89,12 +93,12 @@ export default function ProjectsPage() {
     setError('');
     try {
       const response = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
-      const payload = await parseApiResponse<{ id: string }>(response);
-      if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể xóa project');
+      const payload = await parseApiResponse<{ id: string }>(response, t);
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? t.projects.errors.deleteFailed);
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
       setConfirmId(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thể xóa project');
+      setError(err instanceof Error ? err.message : t.projects.errors.deleteFailed);
     } finally {
       setDeletingId(null);
     }
@@ -104,30 +108,28 @@ export default function ProjectsPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-eyebrow">Projects</p>
-          <h1 className="text-h1 mt-2">Thư viện test case</h1>
-          <p className="text-body mt-2 max-w-2xl">
-            Mỗi project có thư viện test case, quyền thành viên và vòng lặp học lại riêng.
-          </p>
+          <p className="text-eyebrow">{t.projects.eyebrow}</p>
+          <h1 className="text-h1 mt-2">{t.projects.title}</h1>
+          <p className="text-body mt-2 max-w-2xl">{t.projects.subtitle}</p>
         </div>
         <button onClick={() => setShowForm((v) => !v)} className={showForm ? 'btn-secondary' : 'btn-primary'}>
           {showForm ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          {showForm ? 'Đóng' : 'Tạo project mới'}
+          {showForm ? t.projects.closeButton : t.projects.createButton}
         </button>
       </div>
 
       {showForm && (
         <form onSubmit={createProject} className="surface-card space-y-5 p-6">
           <label className="block">
-            <span className="field-label">Tên project</span>
-            <input required value={name} onChange={(e) => setName(e.target.value)} className="field-input" placeholder="Ví dụ: Mobile Banking App" />
+            <span className="field-label">{t.projects.formNameLabel}</span>
+            <input required value={name} onChange={(e) => setName(e.target.value)} className="field-input" placeholder={t.projects.formNamePlaceholder} />
           </label>
           <label className="block">
-            <span className="field-label">Mô tả (optional)</span>
+            <span className="field-label">{t.projects.formDescLabel}</span>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} className="field-input" rows={2} />
           </label>
           <button type="submit" disabled={isCreating} className="btn-primary">
-            {isCreating ? 'Đang tạo...' : 'Tạo project'}
+            {isCreating ? t.projects.formSubmitting : t.projects.formSubmit}
           </button>
         </form>
       )}
@@ -140,12 +142,10 @@ export default function ProjectsPage() {
             <FlaskConical className="h-5 w-5" strokeWidth={2.25} />
           </span>
           <div>
-            <h2 className="text-h3">Sandbox demo</h2>
-            <p className="text-body mt-1">
-              Demo flow: description → generate → review, kết quả không lưu vào DB.
-            </p>
+            <h2 className="text-h3">{t.projects.sandboxTitle}</h2>
+            <p className="text-body mt-1">{t.projects.sandboxDesc}</p>
             <Link href="/projects/demo/generate" className="btn-secondary mt-4">
-              Thử generate
+              {t.projects.tryGenerate}
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
@@ -154,13 +154,13 @@ export default function ProjectsPage() {
 
       {loading && (
         <div className="rounded-[var(--radius-card)] border border-dashed border-ink-300 p-10 text-center text-ink-500">
-          Đang tải projects...
+          {t.projects.loadingList}
         </div>
       )}
 
       {!loading && projects.length === 0 && (
         <div className="rounded-[var(--radius-card)] border border-dashed border-ink-300 p-10 text-center text-ink-500">
-          Chưa có project nào. Bấm &quot;Tạo project mới&quot; để bắt đầu.
+          {t.projects.emptyList}
         </div>
       )}
 
@@ -176,7 +176,7 @@ export default function ProjectsPage() {
                   <FolderKanban className="h-5 w-5" strokeWidth={2.25} />
                 </span>
                 <h2 className="text-h3 mt-4 pr-8">{project.name}</h2>
-                <p className="text-body mt-2 line-clamp-2">{project.description || 'Chưa có mô tả.'}</p>
+                <p className="text-body mt-2 line-clamp-2">{project.description || t.projects.noDescription}</p>
               </Link>
 
               <button
@@ -186,7 +186,7 @@ export default function ProjectsPage() {
                   event.stopPropagation();
                   setConfirmId(project.id);
                 }}
-                aria-label={`Xóa project ${project.name}`}
+                aria-label={t.projects.deleteAria(project.name)}
                 className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 opacity-0 transition-opacity duration-150 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
               >
                 <Trash2 className="h-4 w-4" strokeWidth={2.25} />
@@ -194,16 +194,14 @@ export default function ProjectsPage() {
 
               {isConfirming && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-[var(--radius-card)] bg-white/97 p-6 text-center shadow-[var(--shadow-soft-lg)] backdrop-blur-sm">
-                  <p className="text-sm font-semibold text-ink-900">Xóa &quot;{project.name}&quot;?</p>
-                  <p className="text-xs leading-relaxed text-ink-500">
-                    Toàn bộ test case và thành viên của project sẽ bị xóa vĩnh viễn. Không thể hoàn tác.
-                  </p>
+                  <p className="text-sm font-semibold text-ink-900">{t.projects.confirmDeleteTitle(project.name)}</p>
+                  <p className="text-xs leading-relaxed text-ink-500">{t.projects.confirmDeleteBody}</p>
                   <div className="mt-1 flex gap-2">
                     <button type="button" onClick={() => setConfirmId(null)} className="btn-secondary" disabled={isDeleting}>
-                      Hủy
+                      {t.common.cancel}
                     </button>
                     <button type="button" onClick={() => handleDelete(project.id)} className="btn-danger" disabled={isDeleting}>
-                      {isDeleting ? 'Đang xóa...' : 'Xóa project'}
+                      {isDeleting ? t.projects.deleting : t.projects.deleteButton}
                     </button>
                   </div>
                 </div>

@@ -1,9 +1,13 @@
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
+import { getLocale } from '@/lib/i18n/get-locale';
+import { getDictionary } from '@/lib/i18n/dictionaries';
 
 export default async function GenerateResultPage({ params }: { params: Promise<{ projectId: string; setId: string }> }) {
   const { projectId, setId } = await params;
   const supabase = await createClient();
+  const locale = await getLocale();
+  const t = getDictionary(locale);
 
   const { data: set } = await supabase
     .from('test_case_sets')
@@ -28,7 +32,7 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
   if (!set) {
     return (
       <div className="rounded-3xl border border-red-200 bg-red-50 p-8 text-center text-red-700 shadow-sm">
-        Không tìm thấy generated set này (có thể bạn không phải thành viên của project).
+        {t.generateResult.notFound}
       </div>
     );
   }
@@ -37,38 +41,38 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
 
   return (
     <div className="space-y-6">
-      <Link href={`/projects/${projectId}/test-cases`} className="text-sm font-semibold text-blue-600">← Xem toàn bộ thư viện</Link>
+      <Link href={`/projects/${projectId}/test-cases`} className="text-sm font-semibold text-blue-600">{t.generateResult.back}</Link>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">Generated set</p>
-            <h1 className="mt-2 text-2xl font-black text-slate-950">{requirement?.title ?? 'Requirement'}</h1>
+            <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">{t.generateResult.eyebrow}</p>
+            <h1 className="mt-2 text-2xl font-black text-slate-950">{requirement?.title ?? t.generateResult.requirementFallback}</h1>
             <p className="mt-2 max-w-2xl text-sm text-slate-600">{requirement?.description}</p>
           </div>
           {review && (
             <div className="text-right">
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Coverage score</p>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{t.generateResult.coverageLabel}</p>
               <p className="text-4xl font-black text-emerald-600">{review.coverage_score}%</p>
             </div>
           )}
         </div>
         <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold text-slate-500">
-          <span className="rounded-full bg-slate-100 px-3 py-1">{testCases?.length ?? 0} test case</span>
-          <span className="rounded-full bg-slate-100 px-3 py-1">Trạng thái set: {set.status}</span>
-          {set.generated_by_model && <span className="rounded-full bg-slate-100 px-3 py-1">Model: {set.generated_by_model}</span>}
+          <span className="rounded-full bg-slate-100 px-3 py-1">{testCases?.length ?? 0} {t.generateResult.testCaseSuffix}</span>
+          <span className="rounded-full bg-slate-100 px-3 py-1">{t.generateResult.statusPrefix}: {set.status}</span>
+          {set.generated_by_model && <span className="rounded-full bg-slate-100 px-3 py-1">{t.generateResult.modelPrefix}: {set.generated_by_model}</span>}
         </div>
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
-          <span>Code</span>
-          <span>Title</span>
-          <span>Category</span>
-          <span>Priority</span>
-          <span>Status</span>
+          <span>{t.generateResult.colCode}</span>
+          <span>{t.generateResult.colTitle}</span>
+          <span>{t.generateResult.colCategory}</span>
+          <span>{t.generateResult.colPriority}</span>
+          <span>{t.generateResult.colStatus}</span>
         </div>
-        {(!testCases || testCases.length === 0) && <div className="p-8 text-center text-slate-500">Set này chưa có test case nào.</div>}
+        {(!testCases || testCases.length === 0) && <div className="p-8 text-center text-slate-500">{t.generateResult.empty}</div>}
         {testCases?.map((testCase) => (
           <Link
             key={testCase.id}

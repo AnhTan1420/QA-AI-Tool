@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { FolderKanban, FileStack, ListTree, Wrench, ArrowRight } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
+import { getLocale } from '@/lib/i18n/get-locale';
+import { getDictionary } from '@/lib/i18n/dictionaries';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -8,25 +10,26 @@ export default async function DashboardPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
+  const locale = await getLocale();
+  const t = getDictionary(locale);
+
   const { count: projectCount } = await supabase.from('projects').select('*', { count: 'exact', head: true });
   const { count: testCaseCount } = await supabase.from('test_cases').select('*', { count: 'exact', head: true });
 
   const metrics = [
-    { label: 'Projects của bạn', value: String(projectCount ?? 0), icon: FolderKanban },
-    { label: 'Test case đã lưu', value: String(testCaseCount ?? 0), icon: FileStack },
-    { label: 'Taxonomy hỗ trợ', value: '11', icon: ListTree },
+    { label: t.dashboard.metricProjects, value: String(projectCount ?? 0), icon: FolderKanban },
+    { label: t.dashboard.metricTestCases, value: String(testCaseCount ?? 0), icon: FileStack },
+    { label: t.dashboard.metricTaxonomy, value: '11', icon: ListTree },
   ];
 
   return (
     <div className="space-y-10">
       <div>
-        <p className="text-eyebrow">Overview</p>
+        <p className="text-eyebrow">{t.dashboard.eyebrow}</p>
         <h1 className="text-h1 mt-2">
-          {user ? `Chào, ${user.user_metadata?.full_name ?? user.email}` : 'QAForge Dashboard'}
+          {user ? `${t.dashboard.greeting} ${user.user_metadata?.full_name ?? user.email}` : t.dashboard.titleFallback}
         </h1>
-        <p className="text-body mt-3 max-w-2xl">
-          Theo dõi workflow tạo test case, review coverage và truy cập nhanh các công cụ tester.
-        </p>
+        <p className="text-body mt-3 max-w-2xl">{t.dashboard.subtitle}</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
@@ -42,16 +45,16 @@ export default async function DashboardPage() {
       </div>
 
       <div>
-        <h2 className="text-h2 mb-4">Bắt đầu nhanh</h2>
+        <h2 className="text-h2 mb-4">{t.dashboard.quickStart}</h2>
         <div className="grid gap-4 lg:grid-cols-2">
           <Link href="/tools" className="surface-card-interactive group p-7">
             <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-ink-100 text-ink-700">
               <Wrench className="h-5 w-5" strokeWidth={2.25} />
             </span>
-            <h3 className="text-h3 mt-5">Mở QA Utility Toolkit</h3>
-            <p className="text-body mt-2">JSON, Base64, UUID, Regex, Hash và Timestamp chạy client-side.</p>
+            <h3 className="text-h3 mt-5">{t.dashboard.openToolkitTitle}</h3>
+            <p className="text-body mt-2">{t.dashboard.openToolkitDesc}</p>
             <span className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600">
-              Khám phá toolkit
+              {t.dashboard.exploreToolkit}
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </span>
           </Link>
@@ -64,12 +67,10 @@ export default async function DashboardPage() {
             <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 text-white">
               <FolderKanban className="h-5 w-5" strokeWidth={2.25} />
             </span>
-            <h3 className="mt-5 text-lg font-bold">Mở Projects</h3>
-            <p className="mt-2 text-[0.9375rem] leading-relaxed text-brand-50">
-              Tạo project mới hoặc tiếp tục generate test case bằng AI.
-            </p>
+            <h3 className="mt-5 text-lg font-bold">{t.dashboard.openProjectsTitle}</h3>
+            <p className="mt-2 text-[0.9375rem] leading-relaxed text-brand-50">{t.dashboard.openProjectsDesc}</p>
             <span className="mt-5 inline-flex items-center gap-1.5 text-sm font-semibold text-white">
-              Xem projects
+              {t.dashboard.viewProjects}
               <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
             </span>
           </Link>

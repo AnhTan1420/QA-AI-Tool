@@ -3,18 +3,16 @@
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
-import { TEST_CASE_CATEGORIES, getCategoryLabel } from '@/lib/test-case-taxonomy';
+import { TEST_CASE_CATEGORIES } from '@/lib/test-case-taxonomy';
 import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
-
-const sampleDescription = `Tính năng đăng nhập email/password cho web app QAForge.
-Người dùng nhập email và mật khẩu, bấm Đăng nhập. Nếu thông tin hợp lệ, hệ thống chuyển tới dashboard. Nếu sai email/mật khẩu, hiển thị lỗi rõ ràng. Nếu tài khoản chưa xác thực email, yêu cầu xác thực trước khi đăng nhập. Form phải validate email hợp lệ, không cho submit khi bỏ trống, hỗ trợ tiếng Việt.`;
+import { useLanguage } from '@/lib/i18n/language-context';
 
 // Dung chung 1 nguon voi TEST_CASE_CATEGORIES (khop enum category trong
 // bang test_cases cua schema.sql) de validate file Excel import client-side.
 const VALID_CATEGORY_VALUES = TEST_CASE_CATEGORIES.map((c) => c.value);
 
 /** Goi fetch JSON va tra ve payload.data; nem loi voi thong bao ro rang neu success=false. */
-async function callApi<T>(url: string, body: unknown): Promise<T> {
+async function callApi<T>(url: string, body: unknown, requestFailedMessage: (url: string) => string): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -22,7 +20,7 @@ async function callApi<T>(url: string, body: unknown): Promise<T> {
   });
   const payload = await response.json();
   if (!response.ok || !payload.success) {
-    const err = new Error(payload.error ?? `Yêu cầu tới ${url} thất bại`) as Error & {
+    const err = new Error(payload.error ?? requestFailedMessage(url)) as Error & {
       details?: { path: string; message: string }[];
     };
     if (Array.isArray(payload.details)) err.details = payload.details;
@@ -33,8 +31,9 @@ async function callApi<T>(url: string, body: unknown): Promise<T> {
 
 export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const router = useRouter();
-  const [description, setDescription] = useState(sampleDescription);
-  const [language, setLanguage] = useState('Tiếng Việt');
+  const { t, locale } = useLanguage();
+  const [description, setDescription] = useState(t.generateWorkspace.sampleDescription);
+  const [language, setLanguage] = useState(t.generateWorkspace.defaultLanguage);
   const [detailLevel, setDetailLevel] = useState<'concise' | 'standard' | 'detailed'>('standard');
   const [selectedCategories, setSelectedCategories] = useState<TestCaseCategory[]>(['positive', 'negative', 'boundary', 'security', 'localization']);
   const [oldCases, setOldCases] = useState<GeneratedTestCase[]>([]);
@@ -49,6 +48,14 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const [successMessage, setSuccessMessage] = useState('');
   const [isPending, startTransition] = useTransition();
   const [isSaving, setIsSaving] = useState(false);
+
+  function getCategoryLabel(value: TestCaseCategory) {
+    return TEST_CASE_CATEGORIES.find((category) => category.value === value)?.label ?? value;
+  }
+
+  function getCategoryDescription(value: TestCaseCategory) {
+    return t.generateWorkspace.taxonomyDescriptions[value] ?? '';
+  }
 
   const groupedCases = useMemo(() => {
     return (testCases ?? []).reduce<Record<string, GeneratedTestCase[]>>((acc, testCase) => {
@@ -80,7 +87,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       language,
       detail_level: detailLevel,
       retrieved_old_test_cases: oldCases,
-    });
+    }, t.generateWorkspace.errors.requestFailed);
 
     // API da validate bang Zod (generatedTestCasesSchema) truoc khi tra ve -
     // khong can "doan" lai ten field o day nua.
@@ -93,7 +100,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
     const data = await callApi<ReviewResult>('/api/ai/review', {
       requirement_description: description,
       generated_test_cases: testCases,
-    });
+    }, t.generateWorkspace.errors.requestFailed);
     setReview(data);
   }
 
@@ -103,33 +110,33 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
     setSuccessMessage('');
     try {
       if (isDemoProject) {
-        throw new Error('Đây là project demo (không lưu DB). Hãy tạo project thật ở trang Projects để lưu vào thư viện.');
+        throw new Error(t.generateWorkspace.errors.demoSaveBlocked);
       }
 
       const { set } = await callApi<{ set: { id: string } }>('/api/test-case-sets', {
         project_id: projectId,
         requirement_title: description.slice(0, 80),
         requirement_description: description,
-      });
+      }, t.generateWorkspace.errors.requestFailed);
 
       await callApi('/api/test-cases/bulk', {
         set_id: set.id,
         test_cases: testCases,
-      });
+      }, t.generateWorkspace.errors.requestFailed);
 
       if (review) {
         await callApi('/api/ai-reviews', {
           set_id: set.id,
           review,
-        }).catch(() => {
+        }, t.generateWorkspace.errors.requestFailed).catch(() => {
           // Khong chan luong luu chinh neu luu review phu that bai - test case van da luu thanh cong.
         });
       }
 
-      setSuccessMessage(`Đã lưu ${testCases.length} test case vào thư viện project.`);
+      setSuccessMessage(t.generateWorkspace.errors.savedSuccess(testCases.length));
       router.push(`/projects/${projectId}/generate/${set.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Không thể lưu vào thư viện');
+      setError(err instanceof Error ? err.message : t.generateWorkspace.errors.saveFailed);
     } finally {
       setIsSaving(false);
     }
@@ -223,14 +230,14 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       const buffer = await file.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: 'array' });
       const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) throw new Error('File Excel không có sheet nào.');
+      if (!firstSheetName) throw new Error(t.generateWorkspace.errors.noSheet);
       const sheet = workbook.Sheets[firstSheetName];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
       if (rows.length === 0) {
         setOldCases([]);
         setOldCasesFileName(file.name);
-        setOldCasesWarning('File không có dòng dữ liệu nào (chỉ có header hoặc rỗng).');
+        setOldCasesWarning(t.generateWorkspace.errors.noDataRows);
         return;
       }
 
@@ -309,11 +316,11 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 
       setOldCases(parsed);
       setOldCasesFileName(file.name);
-      setOldCasesWarning(skippedRows > 0 ? `Đã bỏ qua ${skippedRows} dòng trống trong file.` : '');
+      setOldCasesWarning(skippedRows > 0 ? t.generateWorkspace.errors.skippedRows(skippedRows) : '');
     } catch (err) {
       setOldCases([]);
       setOldCasesFileName('');
-      setError(err instanceof Error ? `Không đọc được file Excel: ${err.message}` : 'Không đọc được file Excel.');
+      setError(err instanceof Error ? t.generateWorkspace.errors.readFailed(err.message) : t.generateWorkspace.errors.readFailedGeneric);
     } finally {
       setIsParsingOldCases(false);
     }
@@ -331,21 +338,21 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
     <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
       <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div>
-          <p className="text-sm font-bold uppercase tracking-wide text-blue-600">Wizard</p>
-          <h1 className="mt-2 text-3xl font-black text-slate-950">Generate test case</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">Nhập requirement, chọn taxonomy và gọi Generation Agent. Import test case cũ là optional.</p>
+          <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.wizardEyebrow}</p>
+          <h1 className="mt-2 text-3xl font-black text-slate-950">{t.generateWorkspace.title}</h1>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{t.generateWorkspace.subtitle}</p>
         </div>
 
         <label className="block">
-          <span className="text-sm font-bold text-slate-700">Requirement / description</span>
+          <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.requirementLabel}</span>
           <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-64 w-full rounded-2xl border border-slate-200 p-4 text-sm leading-6 outline-none focus:border-blue-300" />
         </label>
 
         <div>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-bold text-slate-700">Test case cũ tham khảo (.xlsx, optional)</span>
+            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.oldCasesLabel}</span>
             <button type="button" onClick={downloadOldCasesTemplate} className="text-xs font-bold text-blue-600 hover:underline">
-              Tải file mẫu
+              {t.generateWorkspace.downloadTemplate}
             </button>
           </div>
           <label className="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-slate-200 p-5 text-center hover:border-blue-300">
@@ -359,16 +366,16 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
                 event.target.value = '';
               }}
             />
-            <span className="text-sm font-semibold text-slate-700">{isParsingOldCases ? 'Đang đọc file...' : 'Chọn file .xlsx test case cũ'}</span>
-            <span className="text-xs text-slate-400">Dùng đúng cột như &quot;Tải file mẫu&quot;; bỏ qua để skip RAG.</span>
+            <span className="text-sm font-semibold text-slate-700">{isParsingOldCases ? t.generateWorkspace.chooseFileReading : t.generateWorkspace.chooseFile}</span>
+            <span className="text-xs text-slate-400">{t.generateWorkspace.fileHint}</span>
           </label>
           {oldCasesFileName && !isParsingOldCases && (
             <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
               <span className="font-semibold text-slate-700">
-                {oldCasesFileName} — nạp {oldCases.length} test case cũ
+                {oldCasesFileName} {t.generateWorkspace.loadedSuffix(oldCases.length)}
               </span>
               <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-600 hover:underline">
-                Xoá
+                {t.generateWorkspace.removeFile}
               </button>
             </div>
           )}
@@ -377,28 +384,28 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="text-sm font-bold text-slate-700">Ngôn ngữ</span>
+            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.languageLabel}</span>
             <input value={language} onChange={(event) => setLanguage(event.target.value)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3" />
           </label>
           <label className="block">
-            <span className="text-sm font-bold text-slate-700">Mức độ chi tiết</span>
+            <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.detailLevelLabel}</span>
             <select value={detailLevel} onChange={(event) => setDetailLevel(event.target.value as typeof detailLevel)} className="mt-2 w-full rounded-xl border border-slate-200 px-4 py-3">
-              <option value="concise">Concise</option>
-              <option value="standard">Standard</option>
-              <option value="detailed">Detailed</option>
+              <option value="concise">{t.generateWorkspace.detailConcise}</option>
+              <option value="standard">{t.generateWorkspace.detailStandard}</option>
+              <option value="detailed">{t.generateWorkspace.detailDetailed}</option>
             </select>
           </label>
         </div>
 
         <div>
-          <span className="text-sm font-bold text-slate-700">Taxonomy bắt buộc hỗ trợ</span>
+          <span className="text-sm font-bold text-slate-700">{t.generateWorkspace.taxonomyLabel}</span>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {TEST_CASE_CATEGORIES.map((category) => (
               <label key={category.value} className="flex cursor-pointer gap-3 rounded-2xl border border-slate-200 p-3 text-sm hover:border-blue-200">
                 <input type="checkbox" checked={selectedCategories.includes(category.value)} onChange={() => toggleCategory(category.value)} />
                 <span>
-                  <span className="block font-bold text-slate-800">{category.label}</span>
-                  <span className="text-xs text-slate-500">{category.description}</span>
+                  <span className="block font-bold text-slate-800">{getCategoryLabel(category.value)}</span>
+                  <span className="text-xs text-slate-500">{getCategoryDescription(category.value)}</span>
                 </span>
               </label>
             ))}
@@ -422,7 +429,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
         {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
         {isDemoProject && (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-            Bạn đang ở project demo — kết quả generate/review chạy thật, nhưng nút &quot;Lưu vào thư viện&quot; cần một project thật (tạo ở trang Projects).
+            {t.generateWorkspace.demoNotice}
           </div>
         )}
 
@@ -432,35 +439,35 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
             onClick={() =>
               startTransition(() =>
                 generate().catch((err) => {
-                  setError(err instanceof Error ? err.message : 'Generate failed');
+                  setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed);
                   setErrorDetails((err as any)?.details ?? []);
                 }),
               )
             }
             className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {isPending ? 'Đang xử lý...' : 'Generate test case'}
+            {isPending ? t.generateWorkspace.generating : t.generateWorkspace.generateButton}
           </button>
           <button
             disabled={isPending || safeTestCasesCount === 0}
-            onClick={() => startTransition(() => runReview().catch((err) => setError(err instanceof Error ? err.message : 'Review failed')))}
+            onClick={() => startTransition(() => runReview().catch((err) => setError(err instanceof Error ? err.message : t.generateWorkspace.errors.reviewFailed)))}
             className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-blue-200 disabled:opacity-50"
           >
-            Chạy Senior QA Review
+            {t.generateWorkspace.reviewButton}
           </button>
           <button
             disabled={isSaving || safeTestCasesCount === 0}
             onClick={saveToLibrary}
             className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
           >
-            {isSaving ? 'Đang lưu...' : 'Lưu vào thư viện'}
+            {isSaving ? t.generateWorkspace.saving : t.generateWorkspace.saveButton}
           </button>
           <button
             disabled={safeTestCasesCount === 0}
             onClick={exportExcel}
             className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50"
           >
-            Export Excel (.xlsx)
+            {t.generateWorkspace.exportButton}
           </button>
         </div>
       </section>
@@ -469,12 +476,12 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
         <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-blue-600">Generated set</p>
-              <h2 className="mt-2 text-2xl font-black text-slate-950">{safeTestCasesCount} test cases</h2>
+              <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.generatedSetEyebrow}</p>
+              <h2 className="mt-2 text-2xl font-black text-slate-950">{safeTestCasesCount} {t.generateWorkspace.testCasesSuffix}</h2>
             </div>
             {review && (
               <div className="text-right">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Coverage score</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{t.generateWorkspace.coverageLabel}</p>
                 <p className={`text-4xl font-black ${coverageTone}`}>{review.coverage_score}%</p>
               </div>
             )}
@@ -489,23 +496,23 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
                 </div>
               </div>
             ))}
-            {safeTestCasesCount === 0 && <div className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-500">Chưa có test case. Hãy chạy Generate để bắt đầu.</div>}
+            {safeTestCasesCount === 0 && <div className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-500">{t.generateWorkspace.emptyState}</div>}
           </div>
         </div>
 
         {review && (
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-            <h2 className="text-2xl font-black text-slate-950">Senior QA Review</h2>
+            <h2 className="text-2xl font-black text-slate-950">{t.generateWorkspace.reviewTitle}</h2>
             <div className="mt-5 space-y-4">
               {(review.requirement_gaps ?? []).length === 0 && (review.test_case_comments ?? []).length === 0 && (
-                <p className="text-sm font-semibold text-emerald-700">Không phát hiện gap hoặc vấn đề nào — bộ test case đã bám sát description.</p>
+                <p className="text-sm font-semibold text-emerald-700">{t.generateWorkspace.noIssues}</p>
               )}
               {(review.requirement_gaps ?? []).map((gap, index) => (
                 <div key={`${gap?.requirement_text}-${index}`} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                  <p className="text-sm font-bold text-amber-900">Gap: {gap?.requirement_text}</p>
+                  <p className="text-sm font-bold text-amber-900">{t.generateWorkspace.gapPrefix}: {gap?.requirement_text}</p>
                   {gap?.suggested_test_case && (
                     <button onClick={() => acceptSuggestedCase(gap.suggested_test_case!)} className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700">
-                      Accept suggested case
+                      {t.generateWorkspace.acceptSuggestion}
                     </button>
                   )}
                 </div>
@@ -525,6 +532,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 }
 
 function TestCaseCard({ testCase }: { testCase: GeneratedTestCase }) {
+  const { t } = useLanguage();
   if (!testCase) return null;
   return (
     <article className="rounded-2xl border border-slate-200 p-4">
@@ -533,16 +541,16 @@ function TestCaseCard({ testCase }: { testCase: GeneratedTestCase }) {
         <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{testCase.priority}</span>
       </div>
       <h4 className="mt-3 font-bold text-slate-950">{testCase.title}</h4>
-      {(testCase.preconditions ?? []).length > 0 && <p className="mt-2 text-sm text-slate-600">Preconditions: {testCase.preconditions.join('; ')}</p>}
+      {(testCase.preconditions ?? []).length > 0 && <p className="mt-2 text-sm text-slate-600">{t.generateWorkspace.preconditionsPrefix}: {testCase.preconditions.join('; ')}</p>}
       <ol className="mt-3 space-y-2 text-sm text-slate-700">
         {(testCase.steps ?? []).map((step) => (
           <li key={step?.step_number} className="rounded-xl bg-slate-50 p-3">
             <span className="font-bold">{step?.step_number}. {step?.action}</span>
-            <span className="mt-1 block text-blue-700">Expected: {step?.expected_result}</span>
+            <span className="mt-1 block text-blue-700">{t.generateWorkspace.expectedPrefix}: {step?.expected_result}</span>
           </li>
         ))}
       </ol>
-      <p className="mt-3 text-sm font-semibold text-emerald-700">Final: {testCase.final_expected_result}</p>
+      <p className="mt-3 text-sm font-semibold text-emerald-700">{t.generateWorkspace.finalPrefix}: {testCase.final_expected_result}</p>
     </article>
   );
 }

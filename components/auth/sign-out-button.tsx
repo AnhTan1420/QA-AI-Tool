@@ -2,9 +2,11 @@
 
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { useLanguage } from '@/lib/i18n/language-context';
 
 export function SignOutButton({ className }: { className?: string }) {
   const router = useRouter();
+  const { t } = useLanguage();
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -15,7 +17,7 @@ export function SignOutButton({ className }: { className?: string }) {
 
   return (
     <button onClick={handleSignOut} className={className ?? 'text-xs font-bold text-slate-400 hover:text-white'}>
-      Đăng xuất
+      {t.sidebar.signOut}
     </button>
   );
 }

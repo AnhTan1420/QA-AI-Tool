@@ -5,9 +5,12 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Sparkles } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useLanguage } from '@/lib/i18n/language-context';
+import { LanguageToggle } from '@/components/layout/language-toggle';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -24,7 +27,7 @@ export default function LoginPage() {
       router.push('/dashboard');
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Đăng nhập thất bại');
+      setError(err instanceof Error ? err.message : t.auth.login.failed);
     } finally {
       setIsSubmitting(false);
     }
@@ -43,19 +46,22 @@ export default function LoginPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[radial-gradient(circle_at_top,var(--color-brand-100),transparent_32rem)] bg-ink-50 px-6 py-12">
       <section className="surface-card w-full max-w-md p-8 sm:p-10">
-        <Link href="/" className="text-display flex items-center gap-2 text-xl">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
-            <Sparkles className="h-4 w-4" strokeWidth={2.5} />
-          </span>
-          QAForge
-        </Link>
-        <p className="text-eyebrow mt-7">Login</p>
-        <h1 className="text-h1 mt-2">Đăng nhập workspace QA</h1>
-        <p className="text-body mt-2">Đăng nhập bằng email/password hoặc Google.</p>
+        <div className="flex items-center justify-between">
+          <Link href="/" className="text-display flex items-center gap-2 text-xl">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
+              <Sparkles className="h-4 w-4" strokeWidth={2.5} />
+            </span>
+            QAForge
+          </Link>
+          <LanguageToggle />
+        </div>
+        <p className="text-eyebrow mt-7">{t.auth.login.eyebrow}</p>
+        <h1 className="text-h1 mt-2">{t.auth.login.title}</h1>
+        <p className="text-body mt-2">{t.auth.login.subtitle}</p>
 
         <form onSubmit={handleSubmit} className="mt-7 space-y-5">
           <label className="block">
-            <span className="field-label">Email</span>
+            <span className="field-label">{t.auth.login.emailLabel}</span>
             <input
               type="email"
               required
@@ -66,7 +72,7 @@ export default function LoginPage() {
             />
           </label>
           <label className="block">
-            <span className="field-label">Mật khẩu</span>
+            <span className="field-label">{t.auth.login.passwordLabel}</span>
             <input
               type="password"
               required
@@ -80,17 +86,17 @@ export default function LoginPage() {
           {error && <div className="alert-danger">{error}</div>}
 
           <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
-            {isSubmitting ? 'Đang đăng nhập...' : 'Đăng nhập'}
+            {isSubmitting ? t.auth.login.submitting : t.auth.login.submit}
           </button>
           <button type="button" onClick={handleGoogleLogin} className="btn-secondary w-full">
-            Tiếp tục với Google
+            {t.auth.login.google}
           </button>
         </form>
 
         <p className="text-body mt-7 text-center text-sm">
-          Chưa có tài khoản?{' '}
+          {t.auth.login.noAccount}{' '}
           <Link href="/register" className="font-semibold text-brand-600 hover:text-brand-700">
-            Đăng ký
+            {t.auth.login.registerLink}
           </Link>
         </p>
       </section>
