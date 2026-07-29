@@ -142,7 +142,7 @@ export default function ProjectsPage() {
           <div>
             <h2 className="text-h3">Sandbox demo</h2>
             <p className="text-body mt-1">
-              Không gian thử nghiệm flow description → generate → review, kết quả không lưu vào Supabase.
+              Demo flow: description → generate → review, kết quả không lưu vào DB.
             </p>
             <Link href="/projects/demo/generate" className="btn-secondary mt-4">
               Thử generate
