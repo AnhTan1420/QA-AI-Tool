@@ -104,7 +104,7 @@ export default function ProjectsPage() {
 
       {!loading && projects.length === 0 && (
         <div className="rounded-3xl border border-dashed border-slate-200 p-10 text-center text-slate-500">
-          Chưa có project nào. Bấm "Tạo project mới" để bắt đầu.
+          Chưa có project nào. Bấm &quot;Tạo project mới&quot; để bắt đầu.
         </div>
       )}
 
