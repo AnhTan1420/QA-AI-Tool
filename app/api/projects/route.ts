@@ -67,11 +67,45 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (projectError) {
+      // --- TEMP DEBUG: goi rieng de tim nguyen nhan that su gay 42501, xoa block nay sau khi fix xong ---
+      let debugInfo = '';
+      if (projectError.code === '42501') {
+        // 1) Giai ma payload JWT (khong can verify) de xem "sub" (auth.uid ma Postgres se doc)
+        //    va "exp" (het han) thuc su la gi tai thoi diem insert.
+        let jwtSub = 'khong doc duoc';
+        let jwtExp = 'khong doc duoc';
+        try {
+          const payloadPart = session.access_token.split('.')[1];
+          const decoded = JSON.parse(Buffer.from(payloadPart, 'base64').toString('utf8'));
+          jwtSub = decoded.sub;
+          jwtExp = new Date(decoded.exp * 1000).toISOString();
+        } catch {
+          // ignore decode error
+        }
+        const nowIso = new Date().toISOString();
+
+        // 2) Kiem tra co ton tai row trong profiles cho user nay khong (owner_id references profiles(id)).
+        const { data: profileRow, error: profileErr } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        debugInfo =
+          ` [DEBUG] user.id(getUser)=${user.id} | jwt.sub=${jwtSub} | jwt.exp=${jwtExp} | now=${nowIso}` +
+          ` | profiles_row_exists=${!!profileRow} | profiles_select_error=${profileErr?.message ?? 'none'}` +
+          ` | pg_error_details=${projectError.details ?? 'none'} | pg_error_hint=${projectError.hint ?? 'none'}`;
+      }
+      // --- END TEMP DEBUG ---
+
       const hint =
         projectError.code === '42501'
           ? ' (RLS từ chối — kiểm tra owner_id có đúng auth.uid() không, hoặc thử đăng xuất/đăng nhập lại để làm mới session.)'
           : '';
-      return NextResponse.json({ success: false, error: projectError.message + hint }, { status: 500 });
+      return NextResponse.json(
+        { success: false, error: projectError.message + hint + debugInfo },
+        { status: 500 }
+      );
     }
 
     const { error: memberError } = await supabase
