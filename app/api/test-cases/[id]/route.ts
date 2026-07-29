@@ -20,17 +20,14 @@ const updateSchema = z.object({
   status: z.enum(['draft', 'in_review', 'approved']).optional(),
 });
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ Id: string }> }) {
-  const { Id } = await params;
-  console.log('[API GET test-case] Id =', Id);
-
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = await createClient();
 
-  // Dùng maybeSingle() thay vì single() để tránh lỗi "0 rows" từ RLS
   const { data, error } = await supabase
     .from('test_cases')
-    .select('*')
-    .eq('id', Id)
+    .select('*, test_case_sets!inner(project_id)')
+    .eq('id', id)
     .maybeSingle();
 
   if (error) {
@@ -39,16 +36,19 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ Id:
   }
 
   if (!data) {
-    console.error('[API GET test-case] No data found for Id:', Id);
-    return NextResponse.json({ success: false, error: 'Test case không tồn tại hoặc bạn không có quyền truy cập' }, { status: 404 });
+    return NextResponse.json(
+      { success: false, error: 'Test case không tồn tại hoặc bạn không có quyền truy cập' },
+      { status: 404 }
+    );
   }
 
-  return NextResponse.json({ success: true, data });
+  const { test_case_sets, ...testCaseData } = data as any;
+  return NextResponse.json({ success: true, data: testCaseData });
 }
 
-export async function PUT(_req: NextRequest, { params }: { params: Promise<{ Id: string }> }) {
+export async function PUT(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { Id } = await params;
+    const { id } = await params;
     const body = await _req.json();
     const payload = updateSchema.parse(body);
 
@@ -56,18 +56,21 @@ export async function PUT(_req: NextRequest, { params }: { params: Promise<{ Id:
 
     const { data: current, error: fetchError } = await supabase
       .from('test_cases')
-      .select('*')
-      .eq('id', Id)
+      .select('*, test_case_sets!inner(project_id)')
+      .eq('id', id)
       .maybeSingle();
 
     if (fetchError || !current) {
-      return NextResponse.json({ success: false, error: fetchError?.message || 'Test case không tồn tại' }, { status: 404 });
+      return NextResponse.json(
+        { success: false, error: fetchError?.message || 'Test case không tồn tại' },
+        { status: 404 }
+      );
     }
 
     const { error: versionError } = await supabase
       .from('test_case_versions')
       .insert({
-        test_case_id: Id,
+        test_case_id: id,
         snapshot: current,
       });
 
@@ -81,7 +84,7 @@ export async function PUT(_req: NextRequest, { params }: { params: Promise<{ Id:
         ...payload,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', Id)
+      .eq('id', id)
       .select()
       .single();
 
@@ -96,15 +99,15 @@ export async function PUT(_req: NextRequest, { params }: { params: Promise<{ Id:
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ Id: string }> }) {
-  const { Id } = await params;
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = await createClient();
 
-  const { error } = await supabase.from('test_cases').delete().eq('id', Id);
+  const { error } = await supabase.from('test_cases').delete().eq('id', id);
 
   if (error) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ success: true, data: { id: Id } });
+  return NextResponse.json({ success: true, data: { id } });
 }
