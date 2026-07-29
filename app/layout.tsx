@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { Inter, Plus_Jakarta_Sans } from 'next/font/google';
 import './globals.css';
+import { LanguageProvider } from '@/lib/i18n/language-context';
+import { getLocale } from '@/lib/i18n/get-locale';
 
 const inter = Inter({
   subsets: ['latin', 'vietnamese'],
@@ -21,10 +23,14 @@ export const metadata: Metadata = {
     'Nền tảng QA Toolkit và AI Test Case Generator có RAG, review agent độc lập và requirement traceability.',
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const locale = await getLocale();
+
   return (
-    <html lang="vi" className={`${inter.variable} ${jakarta.variable}`}>
-      <body className="bg-ink-50 font-sans text-ink-900 antialiased">{children}</body>
+    <html lang={locale} className={`${inter.variable} ${jakarta.variable}`}>
+      <body className="bg-ink-50 font-sans text-ink-900 antialiased">
+        <LanguageProvider initialLocale={locale}>{children}</LanguageProvider>
+      </body>
     </html>
   );
 }
