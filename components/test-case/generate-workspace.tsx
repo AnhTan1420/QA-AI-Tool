@@ -46,6 +46,15 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const [isPending, startTransition] = useTransition();
   const [isSaving, setIsSaving] = useState(false);
 
+  // ── Senior QA Review card states ──
+  const [reviewMode, setReviewMode] = useState<'generated' | 'imported'>('generated');
+  const [importedReviewCases, setImportedReviewCases] = useState<GeneratedTestCase[]>([]);
+  const [importedReviewFileName, setImportedReviewFileName] = useState('');
+  const [importedReview, setImportedReview] = useState<ReviewResult | null>(null);
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [isEnhancing, setIsEnhancing] = useState(false);
+  const [reviewError, setReviewError] = useState('');
+
   function getCategoryLabel(value: TestCaseCategory) {
     return TEST_CASE_CATEGORIES.find((category) => category.value === value)?.label ?? value;
   }
@@ -92,11 +101,54 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   async function runReview() {
     setError('');
     setSuccessMessage('');
-    const data = await callApi<ReviewResult>('/api/ai/review', {
-      requirement_description: description,
-      generated_test_cases: testCases,
-    }, t.generateWorkspace.errors.requestFailed);
-    setReview(data);
+    const casesToReview = reviewMode === 'generated' ? testCases : importedReviewCases;
+    if (casesToReview.length === 0) {
+      setReviewError(reviewMode === 'generated' ? 'Chưa có test case nào để review. Hãy generate trước.' : 'Chưa import file test case nào.');
+      return;
+    }
+    setIsReviewing(true);
+    setReviewError('');
+    try {
+      const data = await callApi<ReviewResult>('/api/ai/review', {
+        requirement_description: description,
+        generated_test_cases: casesToReview,
+      }, t.generateWorkspace.errors.requestFailed);
+      if (reviewMode === 'generated') setReview(data);
+      else setImportedReview(data);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : 'Review thất bại');
+    } finally {
+      setIsReviewing(false);
+    }
+  }
+
+  async function runEnhance() {
+    const casesToEnhance = reviewMode === 'generated' ? testCases : importedReviewCases;
+    const reviewToUse = reviewMode === 'generated' ? review : importedReview;
+    if (!reviewToUse || casesToEnhance.length === 0) return;
+
+    setIsEnhancing(true);
+    setReviewError('');
+    try {
+      const enhanced = await callApi<GeneratedTestCase[]>('/api/ai/enhance', {
+        requirement_description: description,
+        test_cases: casesToEnhance,
+        review_result: reviewToUse,
+      }, t.generateWorkspace.errors.requestFailed);
+
+      if (reviewMode === 'generated') {
+        setTestCases(enhanced);
+        setReview(null);
+      } else {
+        setImportedReviewCases(enhanced);
+        setImportedReview(null);
+      }
+      setSuccessMessage(`Đã enhance ${enhanced.length} test case thành công!`);
+    } catch (err) {
+      setReviewError(err instanceof Error ? err.message : 'Enhance thất bại');
+    } finally {
+      setIsEnhancing(false);
+    }
   }
 
   async function saveToLibrary() {
@@ -123,9 +175,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
         await callApi('/api/ai-reviews', {
           set_id: set.id,
           review,
-        }, t.generateWorkspace.errors.requestFailed).catch(() => {
-          // Khong chan luong luu chinh neu luu review phu that bai - test case van da luu thanh cong.
-        });
+        }, t.generateWorkspace.errors.requestFailed).catch(() => {});
       }
 
       setSuccessMessage(t.generateWorkspace.errors.savedSuccess(testCases.length));
@@ -143,7 +193,6 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 
   function exportExcel() {
     const safeTestCases = testCases ?? [];
-
     const excelData = safeTestCases.map((tc, index) => ({
       'STT': index + 1,
       'Test Case Code': tc.code,
@@ -191,106 +240,117 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
     XLSX.writeFile(workbook, 'qaforge-old-test-cases-template.xlsx');
   }
 
+  async function parseXlsxFile(file: File): Promise<GeneratedTestCase[]> {
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const firstSheetName = workbook.SheetNames[0];
+    if (!firstSheetName) throw new Error('File không có sheet nào');
+    const sheet = workbook.Sheets[firstSheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+    const parsed: GeneratedTestCase[] = [];
+    let skippedRows = 0;
+
+    rows.forEach((row, index) => {
+      const getField = (...keys: string[]) => {
+        for (const key of keys) {
+          const value = row[key];
+          if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+        }
+        return '';
+      };
+
+      const title = getField('Title', 'title', 'Tiêu đề');
+      const code = getField('Test Case Code', 'Code', 'code', 'Mã') || `TC-OLD-${String(index + 1).padStart(3, '0')}`;
+      if (!title && !getField('Test Case Code', 'Code', 'code', 'Mã')) {
+        skippedRows += 1;
+        return;
+      }
+
+      const preconditions = getField('Preconditions', 'preconditions', 'Precondition')
+        .split(/[;\n]/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      let testData: Record<string, string> = {};
+      const testDataRaw = getField('Test Data', 'test_data');
+      if (testDataRaw) {
+        try {
+          const asJson = JSON.parse(testDataRaw);
+          if (asJson && typeof asJson === 'object' && !Array.isArray(asJson)) {
+            testData = Object.fromEntries(Object.entries(asJson).map(([k, v]) => [k, String(v)]));
+          }
+        } catch { /* ignore */ }
+      }
+
+      const stepsRaw = getField('Steps Detail', 'Steps', 'steps', 'Các bước');
+      const stepLines = stepsRaw.split('\n').map((l) => l.trim()).filter(Boolean);
+      const stepPattern = /^\d+[.)]\s*(.+?)\s*\(Expected:\s*(.+)\)\s*$/i;
+      const steps = stepLines.length
+        ? stepLines.map((line, stepIndex) => {
+            const match = line.match(stepPattern);
+            return {
+              step_number: stepIndex + 1,
+              action: match ? match[1] : line,
+              expected_result: match ? match[2] : 'Xem Final Expected Result',
+            };
+          })
+        : [{ step_number: 1, action: 'N/A', expected_result: 'N/A' }];
+
+      const rawCategory = getField('Category', 'category', 'Loại').toLowerCase().replace(/[\s/-]+/g, '_');
+      const category = (VALID_CATEGORY_VALUES as readonly string[]).includes(rawCategory)
+        ? (rawCategory as TestCaseCategory)
+        : 'positive';
+
+      const rawPriority = getField('Priority', 'priority', 'Độ ưu tiên').toUpperCase();
+      const priority = (['P1', 'P2', 'P3', 'P4'] as const).includes(rawPriority as any)
+        ? (rawPriority as GeneratedTestCase['priority'])
+        : 'P2';
+
+      parsed.push({
+        code,
+        title: title || `Test case #${index + 1}`,
+        category,
+        priority,
+        preconditions,
+        test_data: testData,
+        steps,
+        final_expected_result: getField('Final Expected Result', 'final_expected_result', 'Kết quả mong đợi') || 'N/A',
+      });
+    });
+
+    return parsed;
+  }
+
   async function handleOldCasesFile(file: File) {
     setIsParsingOldCases(true);
     setOldCasesWarning('');
     setError('');
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      if (!firstSheetName) throw new Error(t.generateWorkspace.errors.noSheet);
-      const sheet = workbook.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
-
-      if (rows.length === 0) {
-        setOldCases([]);
-        setOldCasesFileName(file.name);
-        setOldCasesWarning(t.generateWorkspace.errors.noDataRows);
-        return;
-      }
-
-      let skippedRows = 0;
-      const parsed: GeneratedTestCase[] = [];
-      rows.forEach((row, index) => {
-        const getField = (...keys: string[]) => {
-          for (const key of keys) {
-            const value = row[key];
-            if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
-          }
-          return '';
-        };
-
-        const title = getField('Title', 'title', 'Tiêu đề');
-        const code = getField('Test Case Code', 'Code', 'code', 'Mã') || `TC-OLD-${String(index + 1).padStart(3, '0')}`;
-        if (!title && !getField('Test Case Code', 'Code', 'code', 'Mã')) {
-          skippedRows += 1;
-          return;
-        }
-
-        const preconditions = getField('Preconditions', 'preconditions', 'Precondition')
-          .split(/[;\n]/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-
-        let testData: Record<string, string> = {};
-        const testDataRaw = getField('Test Data', 'test_data');
-        if (testDataRaw) {
-          try {
-            const asJson = JSON.parse(testDataRaw);
-            if (asJson && typeof asJson === 'object' && !Array.isArray(asJson)) {
-              testData = Object.fromEntries(Object.entries(asJson).map(([k, v]) => [k, String(v)]));
-            }
-          } catch {
-            // Khong phai JSON hop le -> bo qua, khong chan toan bo dong.
-          }
-        }
-
-        const stepsRaw = getField('Steps Detail', 'Steps', 'steps', 'Các bước');
-        const stepLines = stepsRaw.split('\n').map((l) => l.trim()).filter(Boolean);
-        const stepPattern = /^\d+[.)]\s*(.+?)\s*\(Expected:\s*(.+)\)\s*$/i;
-        const steps = stepLines.length
-          ? stepLines.map((line, stepIndex) => {
-              const match = line.match(stepPattern);
-              return {
-                step_number: stepIndex + 1,
-                action: match ? match[1] : line,
-                expected_result: match ? match[2] : 'Xem Final Expected Result',
-              };
-            })
-          : [{ step_number: 1, action: 'N/A (chưa có bước chi tiết trong file import)', expected_result: 'N/A' }];
-
-        const rawCategory = getField('Category', 'category', 'Loại').toLowerCase().replace(/[\s/-]+/g, '_');
-        const category = (VALID_CATEGORY_VALUES as readonly string[]).includes(rawCategory)
-          ? (rawCategory as TestCaseCategory)
-          : 'positive';
-
-        const rawPriority = getField('Priority', 'priority', 'Độ ưu tiên').toUpperCase();
-        const priority = (['P1', 'P2', 'P3', 'P4'] as const).includes(rawPriority as any)
-          ? (rawPriority as GeneratedTestCase['priority'])
-          : 'P2';
-
-        parsed.push({
-          code,
-          title: title || `Test case cũ #${index + 1}`,
-          category,
-          priority,
-          preconditions,
-          test_data: testData,
-          steps,
-          final_expected_result: getField('Final Expected Result', 'final_expected_result', 'Kết quả mong đợi') || 'N/A',
-        });
-      });
-
+      const parsed = await parseXlsxFile(file);
       setOldCases(parsed);
       setOldCasesFileName(file.name);
-      setOldCasesWarning(skippedRows > 0 ? t.generateWorkspace.errors.skippedRows(skippedRows) : '');
+      setOldCasesWarning('');
     } catch (err) {
       setOldCases([]);
       setOldCasesFileName('');
-      setError(err instanceof Error ? t.generateWorkspace.errors.readFailed(err.message) : t.generateWorkspace.errors.readFailedGeneric);
+      setError(err instanceof Error ? err.message : 'Đọc file thất bại');
     } finally {
       setIsParsingOldCases(false);
+    }
+  }
+
+  async function handleReviewImportFile(file: File) {
+    setReviewError('');
+    try {
+      const parsed = await parseXlsxFile(file);
+      setImportedReviewCases(parsed);
+      setImportedReviewFileName(file.name);
+      setImportedReview(null);
+    } catch (err) {
+      setImportedReviewCases([]);
+      setImportedReviewFileName('');
+      setReviewError(err instanceof Error ? err.message : 'Import file thất bại');
     }
   }
 
@@ -316,7 +376,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       </button>
 
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr] h-[calc(100vh-10rem)]">
-        {/* Wizard panel - có scrollbar */}
+        {/* ── Wizard panel ── */}
         <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm overflow-y-auto">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.wizardEyebrow}</p>
@@ -352,12 +412,8 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
             </label>
             {oldCasesFileName && !isParsingOldCases && (
               <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
-                <span className="font-semibold text-slate-700">
-                  {oldCasesFileName} {t.generateWorkspace.loadedSuffix(oldCases.length)}
-                </span>
-                <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-600 hover:underline">
-                  {t.generateWorkspace.removeFile}
-                </button>
+                <span className="font-semibold text-slate-700">{oldCasesFileName} {t.generateWorkspace.loadedSuffix(oldCases.length)}</span>
+                <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-600 hover:underline">{t.generateWorkspace.removeFile}</button>
               </div>
             )}
             {oldCasesWarning && <p className="mt-1 text-xs font-semibold text-amber-600">{oldCasesWarning}</p>}
@@ -398,63 +454,30 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
               {error}
               {errorDetails.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-normal text-red-600">
-                  {errorDetails.map((d, i) => (
-                    <li key={i}>
-                      <span className="font-mono">{d.path || '(root)'}</span>: {d.message}
-                    </li>
-                  ))}
+                  {errorDetails.map((d, i) => <li key={i}><span className="font-mono">{d.path || '(root)'}</span>: {d.message}</li>)}
                 </ul>
               )}
             </div>
           )}
           {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
-          {isDemoProject && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
-              {t.generateWorkspace.demoNotice}
-            </div>
-          )}
+          {isDemoProject && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">{t.generateWorkspace.demoNotice}</div>}
 
           <div className="flex flex-wrap gap-3">
-            <button
-              disabled={isPending || selectedCategories.length === 0}
-              onClick={() =>
-                startTransition(() =>
-                  generate().catch((err) => {
-                    setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed);
-                    setErrorDetails((err as any)?.details ?? []);
-                  }),
-                )
-              }
-              className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
+            <button disabled={isPending || selectedCategories.length === 0} onClick={() => startTransition(() => generate().catch((err) => { setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed); setErrorDetails((err as any)?.details ?? []); }))} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
               {isPending ? t.generateWorkspace.generating : t.generateWorkspace.generateButton}
             </button>
-            <button
-              disabled={isPending || safeTestCasesCount === 0}
-              onClick={() => startTransition(() => runReview().catch((err) => setError(err instanceof Error ? err.message : t.generateWorkspace.errors.reviewFailed)))}
-              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-blue-200 disabled:opacity-50"
-            >
-              {t.generateWorkspace.reviewButton}
-            </button>
-            <button
-              disabled={isSaving || safeTestCasesCount === 0}
-              onClick={saveToLibrary}
-              className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-            >
+            <button disabled={isSaving || safeTestCasesCount === 0} onClick={saveToLibrary} className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
               {isSaving ? t.generateWorkspace.saving : t.generateWorkspace.saveButton}
             </button>
-            <button
-              disabled={safeTestCasesCount === 0}
-              onClick={exportExcel}
-              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50"
-            >
+            <button disabled={safeTestCasesCount === 0} onClick={exportExcel} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50">
               {t.generateWorkspace.exportButton}
             </button>
           </div>
         </section>
 
-        {/* Generated set panel - có scrollbar */}
+        {/* ── Right column: Generated Set + Senior QA Review ── */}
         <section className="space-y-5 overflow-y-auto">
+          {/* Generated Set */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
@@ -482,32 +505,128 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
             </div>
           </div>
 
-          {review && (
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-2xl font-black text-slate-950">{t.generateWorkspace.reviewTitle}</h2>
-              <div className="mt-5 space-y-4">
-                {(review.requirement_gaps ?? []).length === 0 && (review.test_case_comments ?? []).length === 0 && (
-                  <p className="text-sm font-semibold text-emerald-700">{t.generateWorkspace.noIssues}</p>
-                )}
-                {(review.requirement_gaps ?? []).map((gap, index) => (
-                  <div key={`${gap?.requirement_text}-${index}`} className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                    <p className="text-sm font-bold text-amber-900">{t.generateWorkspace.gapPrefix}: {gap?.requirement_text}</p>
-                    {gap?.suggested_test_case && (
-                      <button onClick={() => acceptSuggestedCase(gap.suggested_test_case!)} className="mt-3 rounded-xl bg-amber-600 px-4 py-2 text-xs font-bold text-white hover:bg-amber-700">
-                        {t.generateWorkspace.acceptSuggestion}
-                      </button>
-                    )}
-                  </div>
-                ))}
-                {(review.test_case_comments ?? []).map((comment) => (
-                  <div key={`${comment?.test_case_code}-${comment?.comment}`} className="rounded-2xl border border-slate-200 p-4">
-                    <p className="text-sm font-bold text-slate-950">{comment?.test_case_code} – {comment?.issue_type}</p>
-                    <p className="mt-1 text-sm text-slate-600">{comment?.comment}</p>
-                  </div>
-                ))}
+          {/* ── Senior QA Review Card ── */}
+          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-sm font-bold uppercase tracking-wide text-purple-600">Senior QA Review</p>
+                <h2 className="mt-1 text-xl font-black text-slate-950">Review & Enhance</h2>
               </div>
             </div>
-          )}
+
+            {/* Toggle mode */}
+            <div className="flex gap-2 mb-4">
+              <button
+                onClick={() => setReviewMode('generated')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold ${reviewMode === 'generated' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                Review generated
+              </button>
+              <button
+                onClick={() => setReviewMode('imported')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold ${reviewMode === 'imported' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+              >
+                Review imported file
+              </button>
+            </div>
+
+            {/* Import file area (chỉ hiện khi mode = imported) */}
+            {reviewMode === 'imported' && (
+              <div className="mb-4">
+                <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-slate-200 p-4 text-center hover:border-purple-300">
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) handleReviewImportFile(file);
+                      event.target.value = '';
+                    }}
+                  />
+                  <span className="text-sm font-semibold text-slate-700">Chọn file .xlsx để review</span>
+                  <span className="text-xs text-slate-400">File sẽ được parse và review bởi AI</span>
+                </label>
+                {importedReviewFileName && (
+                  <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
+                    <span className="font-semibold text-slate-700">{importedReviewFileName} ({importedReviewCases.length} cases)</span>
+                    <button type="button" onClick={() => { setImportedReviewCases([]); setImportedReviewFileName(''); setImportedReview(null); }} className="font-bold text-red-600 hover:underline">Xóa</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reviewMode === 'generated' && safeTestCasesCount === 0 && (
+              <p className="text-sm text-slate-400 italic mb-4">Chưa có test case nào được generate. Hãy generate trước hoặc chuyển sang "Review imported file".</p>
+            )}
+
+            {reviewError && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 mb-3">{reviewError}</div>}
+
+            {/* Review result */}
+            {(reviewMode === 'generated' ? review : importedReview) && (
+              <div className="space-y-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-700">Coverage Score</span>
+                  <span className={`text-2xl font-black ${(reviewMode === 'generated' ? review! : importedReview!).coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                    {(reviewMode === 'generated' ? review! : importedReview!).coverage_score}%
+                  </span>
+                </div>
+
+                {(reviewMode === 'generated' ? review! : importedReview!).requirement_gaps?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-bold uppercase text-amber-600 mb-2">Requirement Gaps</p>
+                    <div className="space-y-2">
+                      {(reviewMode === 'generated' ? review! : importedReview!).requirement_gaps.map((gap, i) => (
+                        <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+                          <p className="font-bold text-amber-900">{gap.requirement_text}</p>
+                          {gap.suggested_test_case && (
+                            <button onClick={() => acceptSuggestedCase(gap.suggested_test_case!)} className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white hover:bg-amber-700">
+                              + Thêm test case đề xuất
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {(reviewMode === 'generated' ? review! : importedReview!).test_case_comments?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-bold uppercase text-slate-500 mb-2">Comments</p>
+                    <div className="space-y-2">
+                      {(reviewMode === 'generated' ? review! : importedReview!).test_case_comments.map((comment, i) => (
+                        <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                          <p className="font-bold text-slate-900">{comment.test_case_code} – <span className="text-purple-600">{comment.issue_type}</span></p>
+                          <p className="mt-1 text-slate-600">{comment.comment}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                disabled={isReviewing || (reviewMode === 'generated' && safeTestCasesCount === 0) || (reviewMode === 'imported' && importedReviewCases.length === 0)}
+                onClick={runReview}
+                className="rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50"
+              >
+                {isReviewing ? 'Đang review...' : 'Run Senior QA Review'}
+              </button>
+
+              {(reviewMode === 'generated' ? review : importedReview) && (
+                <button
+                  disabled={isEnhancing}
+                  onClick={runEnhance}
+                  className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-bold text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+                >
+                  {isEnhancing ? 'Đang enhance...' : '✨ Enhance with AI'}
+                </button>
+              )}
+            </div>
+          </div>
         </section>
       </div>
     </div>
