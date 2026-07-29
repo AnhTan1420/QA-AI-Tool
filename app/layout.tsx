@@ -1,5 +1,19 @@
 import type { Metadata } from 'next';
+import { Inter, Plus_Jakarta_Sans } from 'next/font/google';
 import './globals.css';
+
+const inter = Inter({
+  subsets: ['latin', 'vietnamese'],
+  variable: '--font-inter',
+  display: 'swap',
+});
+
+const jakarta = Plus_Jakarta_Sans({
+  subsets: ['latin', 'vietnamese'],
+  variable: '--font-jakarta',
+  display: 'swap',
+  weight: ['600', '700', '800'],
+});
 
 export const metadata: Metadata = {
   title: 'QAForge - QA Toolkit & AI Test Case Generator',
@@ -9,8 +23,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="vi">
-      <body className="bg-slate-50 text-slate-950 antialiased">{children}</body>
+    <html lang="vi" className={`${inter.variable} ${jakarta.variable}`}>
+      <body className="bg-ink-50 font-sans text-ink-900 antialiased">{children}</body>
     </html>
   );
 }
