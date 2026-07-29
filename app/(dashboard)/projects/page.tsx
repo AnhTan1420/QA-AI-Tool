@@ -11,6 +11,26 @@ type Project = {
   created_at: string;
 };
 
+type ApiPayload<T> = { success: boolean; error?: string; data?: T };
+
+/**
+ * Doc response an toan: server co the tra ve HTML (trang loi 404/500 cua Vercel,
+ * redirect login, v.v.) thay vi JSON that su - luc do response.json() truc tiep se
+ * nem loi kho hieu ("JSON.parse: unexpected character..."). Doc dang text truoc,
+ * roi thu parse, neu that bai thi tra ve thong bao loi ro rang kem HTTP status.
+ */
+async function parseApiResponse<T>(response: Response): Promise<ApiPayload<T>> {
+  const raw = await response.text();
+  try {
+    return raw ? JSON.parse(raw) : { success: false, error: `Server không trả về dữ liệu (HTTP ${response.status}).` };
+  } catch {
+    return {
+      success: false,
+      error: `Phản hồi không hợp lệ từ server (HTTP ${response.status}). Có thể route chưa được deploy hoặc phiên đăng nhập đã hết hạn.`,
+    };
+  }
+}
+
 export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,7 +47,7 @@ export default function ProjectsPage() {
     setError('');
     try {
       const response = await fetch('/api/projects');
-      const payload = await response.json();
+      const payload = await parseApiResponse<Project[]>(response);
       if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể tải projects');
       setProjects(payload.data ?? []);
     } catch (err) {
@@ -51,7 +71,7 @@ export default function ProjectsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, description: description || undefined }),
       });
-      const payload = await response.json();
+      const payload = await parseApiResponse<Project>(response);
       if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể tạo project');
       setName('');
       setDescription('');
@@ -69,7 +89,7 @@ export default function ProjectsPage() {
     setError('');
     try {
       const response = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
-      const payload = await response.json();
+      const payload = await parseApiResponse<{ id: string }>(response);
       if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể xóa project');
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
       setConfirmId(null);
