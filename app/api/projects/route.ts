@@ -43,6 +43,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Bạn cần đăng nhập.' }, { status: 401 });
     }
 
+    // Kiem tra them session/access_token thuc su ton tai - getUser() co the tra ve user
+    // tu mot lan xac thuc truoc do trong khi access_token dinh kem cho cac request sau
+    // (nhu insert ben duoi) da het han/khong hop le, khien auth.uid() = NULL o phia DB
+    // va RLS tu choi voi thong bao chung chung "new row violates row-level security policy".
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Phiên đăng nhập không hợp lệ (thiếu access token). Hãy đăng xuất rồi đăng nhập lại.',
+        },
+        { status: 401 }
+      );
+    }
+
     const { data: project, error: projectError } = await supabase
       .from('projects')
       .insert({ name: payload.name, description: payload.description ?? null, owner_id: user.id })
@@ -50,7 +67,11 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (projectError) {
-      return NextResponse.json({ success: false, error: projectError.message }, { status: 500 });
+      const hint =
+        projectError.code === '42501'
+          ? ' (RLS từ chối — kiểm tra owner_id có đúng auth.uid() không, hoặc thử đăng xuất/đăng nhập lại để làm mới session.)'
+          : '';
+      return NextResponse.json({ success: false, error: projectError.message + hint }, { status: 500 });
     }
 
     const { error: memberError } = await supabase

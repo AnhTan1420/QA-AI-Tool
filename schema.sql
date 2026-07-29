@@ -186,9 +186,44 @@ create policy projects_select_member on projects for select using (
 drop policy if exists projects_insert_owner on projects;
 create policy projects_insert_owner on projects for insert with check (owner_id = auth.uid());
 
+-- ----------------------------------------------------------------------------
+-- Helper functions SECURITY DEFINER de kiem tra quyen thanh vien/admin project.
+-- BAT BUOC dung cach nay thay vi EXISTS(select ... from project_members ...) truc tiep
+-- trong chinh policy CUA BANG project_members - neu khong Postgres se rat vao loop
+-- vo han ("infinite recursion detected in policy for relation project_members"):
+-- de chay subquery, no phai ap dung lai chinh policy dang duoc dinh nghia.
+-- Ham SECURITY DEFINER chay voi quyen cua nguoi tao (owner) nen KHONG bi RLS chan lai,
+-- pha duoc vong lap. Chi dung cho dung 2 muc dich kiem tra quyen nay, khong dung sai.
+-- ----------------------------------------------------------------------------
+create or replace function public.is_project_member(p_project_id uuid, p_user_id uuid default auth.uid())
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from project_members
+    where project_id = p_project_id and user_id = p_user_id
+  );
+$$;
+
+create or replace function public.is_project_admin(p_project_id uuid, p_user_id uuid default auth.uid())
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from project_members
+    where project_id = p_project_id and user_id = p_user_id and role = 'admin'
+  );
+$$;
+
 drop policy if exists project_members_select_member on project_members;
 create policy project_members_select_member on project_members for select using (
-  exists (select 1 from project_members pm where pm.project_id = project_members.project_id and pm.user_id = auth.uid())
+  is_project_member(project_members.project_id)
 );
 
 -- Admin cua project duoc quan ly toan bo thanh vien. Rieng INSERT con cho phep
@@ -196,15 +231,9 @@ create policy project_members_select_member on project_members for select using 
 -- thanh vien dau tien - neu khong se bi ket (chua co admin nao de duoc phep them admin dau tien).
 drop policy if exists project_members_manage_admin on project_members;
 create policy project_members_manage_admin on project_members for all using (
-  exists (
-    select 1 from project_members pm
-    where pm.project_id = project_members.project_id and pm.user_id = auth.uid() and pm.role = 'admin'
-  )
+  is_project_admin(project_members.project_id)
 ) with check (
-  exists (
-    select 1 from project_members pm
-    where pm.project_id = project_members.project_id and pm.user_id = auth.uid() and pm.role = 'admin'
-  )
+  is_project_admin(project_members.project_id)
 );
 
 drop policy if exists project_members_bootstrap_owner on project_members;

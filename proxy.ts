@@ -53,6 +53,10 @@ export async function proxy(request: NextRequest) {
   return response;
 }
 
+// Matcher gom ca /api/:path* - truoc day chi chay tren trang, khong chay tren API route,
+// nen access token co the da het han giua chung ma khong duoc lam moi truoc khi route
+// handler goi Supabase, dan toi auth.uid() = NULL o phia DB dai qua RLS mac du app-level
+// da thay user dang nhap.
 export const config = {
-  matcher: ['/dashboard/:path*', '/projects/:path*', '/settings/:path*'],
+  matcher: ['/dashboard/:path*', '/projects/:path*', '/settings/:path*', '/api/:path*'],
 };
