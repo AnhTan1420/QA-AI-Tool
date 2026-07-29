@@ -37,11 +37,18 @@ export async function POST(req: Request) {
     const normalizedResult = unwrapArrayResponse(aiRawResult);
     const parsedTestCases = generatedTestCasesSchema.safeParse(normalizedResult);
     if (!parsedTestCases.success) {
-      console.error('[ai/generate] AI tra ve JSON sai schema:', parsedTestCases.error.flatten());
+      const flattenedIssues = parsedTestCases.error.issues.map((issue: { path: (string | number)[]; message: string }) => ({
+        path: issue.path.join('.'),
+        message: issue.message,
+      }));
+      console.error('[ai/generate] AI tra ve JSON sai schema:', flattenedIssues);
+      console.error('[ai/generate] Raw AI result:', JSON.stringify(aiRawResult)?.slice(0, 3000));
       return NextResponse.json(
         {
           success: false,
           error: 'AI tra ve du lieu khong dung dinh dang test case. Vui long thu lai.',
+          // Chi tiet loi tung field de debug ngay tren client, khong can vao Vercel logs.
+          details: flattenedIssues,
         },
         { status: 502 }
       );
