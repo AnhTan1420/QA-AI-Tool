@@ -625,7 +625,7 @@ async function runEnhance() {
                 onClick={runReview}
                 className="rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50"
               >
-                {isReviewing ? 'Đang review...' : 'Run Senior QA Review'}
+                {isReviewing ? 'Đang review...' : 'Review'}
               </button>
 
               {(reviewMode === 'generated' ? review : importedReview) && (
