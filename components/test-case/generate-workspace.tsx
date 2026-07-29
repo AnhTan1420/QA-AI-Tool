@@ -9,6 +9,10 @@ import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/va
 const sampleDescription = `Tính năng đăng nhập email/password cho web app QAForge.
 Người dùng nhập email và mật khẩu, bấm Đăng nhập. Nếu thông tin hợp lệ, hệ thống chuyển tới dashboard. Nếu sai email/mật khẩu, hiển thị lỗi rõ ràng. Nếu tài khoản chưa xác thực email, yêu cầu xác thực trước khi đăng nhập. Form phải validate email hợp lệ, không cho submit khi bỏ trống, hỗ trợ tiếng Việt.`;
 
+// Dung chung 1 nguon voi TEST_CASE_CATEGORIES (khop enum category trong
+// bang test_cases cua schema.sql) de validate file Excel import client-side.
+const VALID_CATEGORY_VALUES = TEST_CASE_CATEGORIES.map((c) => c.value);
+
 /** Goi fetch JSON va tra ve payload.data; nem loi voi thong bao ro rang neu success=false. */
 async function callApi<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
@@ -33,7 +37,10 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const [language, setLanguage] = useState('Tiếng Việt');
   const [detailLevel, setDetailLevel] = useState<'concise' | 'standard' | 'detailed'>('standard');
   const [selectedCategories, setSelectedCategories] = useState<TestCaseCategory[]>(['positive', 'negative', 'boundary', 'security', 'localization']);
-  const [oldCasesText, setOldCasesText] = useState('');
+  const [oldCases, setOldCases] = useState<GeneratedTestCase[]>([]);
+  const [oldCasesFileName, setOldCasesFileName] = useState('');
+  const [isParsingOldCases, setIsParsingOldCases] = useState(false);
+  const [oldCasesWarning, setOldCasesWarning] = useState('');
 
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [review, setReview] = useState<ReviewResult | null>(null);
@@ -67,13 +74,12 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
     setSuccessMessage('');
     setReview(null);
 
-    const parsedOldCases = parseOldCases(oldCasesText);
     const data = await callApi<GeneratedTestCase[]>('/api/ai/generate', {
       requirement_description: description,
       selected_categories: selectedCategories,
       language,
       detail_level: detailLevel,
-      retrieved_old_test_cases: parsedOldCases,
+      retrieved_old_test_cases: oldCases,
     });
 
     // API da validate bang Zod (generatedTestCasesSchema) truoc khi tra ve -
@@ -143,6 +149,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       'Category': tc.category,
       'Priority': tc.priority,
       'Preconditions': (tc.preconditions ?? []).join('; '),
+      'Test Data': JSON.stringify(tc.test_data ?? {}),
       'Steps Detail': (tc.steps ?? []).map((s) => `${s.step_number}. ${s.action} (Expected: ${s.expected_result})`).join('\n'),
       'Final Expected Result': tc.final_expected_result,
     }));
@@ -158,11 +165,164 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       { wch: 15 },
       { wch: 10 },
       { wch: 25 },
+      { wch: 25 },
       { wch: 50 },
       { wch: 30 },
     ];
 
     XLSX.writeFile(workbook, `qaforge-${projectId}-test-cases.xlsx`);
+  }
+
+  /**
+   * Tai file mau (.xlsx) cho "Test case cu tham khao" - dung DUNG header voi
+   * exportExcel() va DUNG enum voi DB (test_cases.category / priority CHECK
+   * constraint trong schema.sql) de nguoi dung khong doan sai cot.
+   */
+  function downloadOldCasesTemplate() {
+    const templateData = [
+      {
+        'Test Case Code': 'TC_LOGIN_001',
+        'Title': 'Đăng nhập thành công với email/password hợp lệ',
+        'Category': 'positive',
+        'Priority': 'P1',
+        'Preconditions': 'Tài khoản đã xác thực email; Ở trang /login',
+        'Test Data': '{"email":"qa@example.com","password":"Abc@12345"}',
+        'Steps Detail': '1. Nhập email hợp lệ (Expected: Field email hiển thị đúng giá trị đã nhập)\n2. Nhập password hợp lệ (Expected: Field password ẩn ký tự dạng dấu chấm)\n3. Bấm nút Đăng nhập (Expected: Hệ thống chuyển hướng tới /dashboard trong vòng 2s)',
+        'Final Expected Result': 'Người dùng đăng nhập thành công và thấy trang dashboard.',
+      },
+    ];
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    worksheet['!cols'] = [
+      { wch: 15 },
+      { wch: 35 },
+      { wch: 15 },
+      { wch: 10 },
+      { wch: 25 },
+      { wch: 25 },
+      { wch: 50 },
+      { wch: 30 },
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Test Cases Cu');
+    XLSX.writeFile(workbook, 'qaforge-old-test-cases-template.xlsx');
+  }
+
+  /**
+   * Doc file .xlsx nguoi dung upload, map moi dong sheet dau tien thanh
+   * GeneratedTestCase. Cac cot khop voi cot cua exportExcel() (co the
+   * export ra roi sua lai va import nguoc), dong thoi khop enum
+   * category/priority cua bang test_cases trong schema.sql.
+   * Loi tung dong (thieu code/title...) duoc thay bang gia tri mac dinh an toan
+   * thay vi chan toan bo import, vi day chi la du lieu tham khao cho RAG.
+   */
+  async function handleOldCasesFile(file: File) {
+    setIsParsingOldCases(true);
+    setOldCasesWarning('');
+    setError('');
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) throw new Error('File Excel không có sheet nào.');
+      const sheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+      if (rows.length === 0) {
+        setOldCases([]);
+        setOldCasesFileName(file.name);
+        setOldCasesWarning('File không có dòng dữ liệu nào (chỉ có header hoặc rỗng).');
+        return;
+      }
+
+      let skippedRows = 0;
+      const parsed: GeneratedTestCase[] = [];
+      rows.forEach((row, index) => {
+        const getField = (...keys: string[]) => {
+          for (const key of keys) {
+            const value = row[key];
+            if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+          }
+          return '';
+        };
+
+        const title = getField('Title', 'title', 'Tiêu đề');
+        const code = getField('Test Case Code', 'Code', 'code', 'Mã') || `TC-OLD-${String(index + 1).padStart(3, '0')}`;
+        // Bo qua dong hoan toan rong (khong co title lan code that su).
+        if (!title && !getField('Test Case Code', 'Code', 'code', 'Mã')) {
+          skippedRows += 1;
+          return;
+        }
+
+        const preconditions = getField('Preconditions', 'preconditions', 'Precondition')
+          .split(/[;\n]/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        let testData: Record<string, string> = {};
+        const testDataRaw = getField('Test Data', 'test_data');
+        if (testDataRaw) {
+          try {
+            const asJson = JSON.parse(testDataRaw);
+            if (asJson && typeof asJson === 'object' && !Array.isArray(asJson)) {
+              testData = Object.fromEntries(Object.entries(asJson).map(([k, v]) => [k, String(v)]));
+            }
+          } catch {
+            // Khong phai JSON hop le -> bo qua, khong chan toan bo dong.
+          }
+        }
+
+        const stepsRaw = getField('Steps Detail', 'Steps', 'steps', 'Các bước');
+        const stepLines = stepsRaw.split('\n').map((l) => l.trim()).filter(Boolean);
+        const stepPattern = /^\d+[.)]\s*(.+?)\s*\(Expected:\s*(.+)\)\s*$/i;
+        const steps = stepLines.length
+          ? stepLines.map((line, stepIndex) => {
+              const match = line.match(stepPattern);
+              return {
+                step_number: stepIndex + 1,
+                action: match ? match[1] : line,
+                expected_result: match ? match[2] : 'Xem Final Expected Result',
+              };
+            })
+          : [{ step_number: 1, action: 'N/A (chưa có bước chi tiết trong file import)', expected_result: 'N/A' }];
+
+        const rawCategory = getField('Category', 'category', 'Loại').toLowerCase().replace(/[\s/-]+/g, '_');
+        const category = (VALID_CATEGORY_VALUES as readonly string[]).includes(rawCategory)
+          ? (rawCategory as TestCaseCategory)
+          : 'positive';
+
+        const rawPriority = getField('Priority', 'priority', 'Độ ưu tiên').toUpperCase();
+        const priority = (['P1', 'P2', 'P3', 'P4'] as const).includes(rawPriority as any)
+          ? (rawPriority as GeneratedTestCase['priority'])
+          : 'P2';
+
+        parsed.push({
+          code,
+          title: title || `Test case cũ #${index + 1}`,
+          category,
+          priority,
+          preconditions,
+          test_data: testData,
+          steps,
+          final_expected_result: getField('Final Expected Result', 'final_expected_result', 'Kết quả mong đợi') || 'N/A',
+        });
+      });
+
+      setOldCases(parsed);
+      setOldCasesFileName(file.name);
+      setOldCasesWarning(skippedRows > 0 ? `Đã bỏ qua ${skippedRows} dòng trống trong file.` : '');
+    } catch (err) {
+      setOldCases([]);
+      setOldCasesFileName('');
+      setError(err instanceof Error ? `Không đọc được file Excel: ${err.message}` : 'Không đọc được file Excel.');
+    } finally {
+      setIsParsingOldCases(false);
+    }
+  }
+
+  function clearOldCasesFile() {
+    setOldCases([]);
+    setOldCasesFileName('');
+    setOldCasesWarning('');
   }
 
   const safeTestCasesCount = (testCases ?? []).length;
@@ -181,10 +341,39 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
           <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-64 w-full rounded-2xl border border-slate-200 p-4 text-sm leading-6 outline-none focus:border-blue-300" />
         </label>
 
-        <label className="block">
-          <span className="text-sm font-bold text-slate-700">Test case cũ tham khảo (JSON array, optional)</span>
-          <textarea value={oldCasesText} onChange={(event) => setOldCasesText(event.target.value)} placeholder="Dán JSON GeneratedTestCase[] nếu có; bỏ trống để skip RAG." className="mt-2 min-h-28 w-full rounded-2xl border border-slate-200 p-4 font-mono text-xs outline-none focus:border-blue-300" />
-        </label>
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-bold text-slate-700">Test case cũ tham khảo (.xlsx, optional)</span>
+            <button type="button" onClick={downloadOldCasesTemplate} className="text-xs font-bold text-blue-600 hover:underline">
+              Tải file mẫu
+            </button>
+          </div>
+          <label className="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-slate-200 p-5 text-center hover:border-blue-300">
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) handleOldCasesFile(file);
+                event.target.value = '';
+              }}
+            />
+            <span className="text-sm font-semibold text-slate-700">{isParsingOldCases ? 'Đang đọc file...' : 'Chọn file .xlsx test case cũ'}</span>
+            <span className="text-xs text-slate-400">Dùng đúng cột như "Tải file mẫu"; bỏ qua để skip RAG.</span>
+          </label>
+          {oldCasesFileName && !isParsingOldCases && (
+            <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
+              <span className="font-semibold text-slate-700">
+                {oldCasesFileName} — nạp {oldCases.length} test case cũ
+              </span>
+              <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-600 hover:underline">
+                Xoá
+              </button>
+            </div>
+          )}
+          {oldCasesWarning && <p className="mt-1 text-xs font-semibold text-amber-600">{oldCasesWarning}</p>}
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
@@ -356,14 +545,4 @@ function TestCaseCard({ testCase }: { testCase: GeneratedTestCase }) {
       <p className="mt-3 text-sm font-semibold text-emerald-700">Final: {testCase.final_expected_result}</p>
     </article>
   );
-}
-
-function parseOldCases(input: string) {
-  if (!input.trim()) return [];
-  try {
-    const parsed = JSON.parse(input);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
 }
