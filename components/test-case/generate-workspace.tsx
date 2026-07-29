@@ -6,6 +6,8 @@ import * as XLSX from 'xlsx';
 import { TEST_CASE_CATEGORIES } from '@/lib/test-case-taxonomy';
 import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
 import { useLanguage } from '@/lib/i18n/language-context';
+// Thêm import ở đầu file
+import { parseSmartXlsx } from '@/lib/utils/smart-xlsx-parser';
 
 const VALID_CATEGORY_VALUES = TEST_CASE_CATEGORIES.map((c) => c.value);
 
@@ -253,86 +255,25 @@ async function runEnhance() {
   }
 
   async function parseXlsxFile(file: File): Promise<GeneratedTestCase[]> {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) throw new Error('File không có sheet nào');
-    const sheet = workbook.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: 'array' });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) throw new Error('File không có sheet nào');
+  const sheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
 
-    const parsed: GeneratedTestCase[] = [];
-    let skippedRows = 0;
+  const { cases, skipped, warnings } = parseSmartXlsx(rows);
 
-    rows.forEach((row, index) => {
-      const getField = (...keys: string[]) => {
-        for (const key of keys) {
-          const value = row[key];
-          if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
-        }
-        return '';
-      };
-
-      const title = getField('Title', 'title', 'Tiêu đề');
-      const code = getField('Test Case Code', 'Code', 'code', 'Mã') || `TC-OLD-${String(index + 1).padStart(3, '0')}`;
-      if (!title && !getField('Test Case Code', 'Code', 'code', 'Mã')) {
-        skippedRows += 1;
-        return;
-      }
-
-      const preconditions = getField('Preconditions', 'preconditions', 'Precondition')
-        .split(/[;\n]/)
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-      let testData: Record<string, string> = {};
-      const testDataRaw = getField('Test Data', 'test_data');
-      if (testDataRaw) {
-        try {
-          const asJson = JSON.parse(testDataRaw);
-          if (asJson && typeof asJson === 'object' && !Array.isArray(asJson)) {
-            testData = Object.fromEntries(Object.entries(asJson).map(([k, v]) => [k, String(v)]));
-          }
-        } catch { /* ignore */ }
-      }
-
-      const stepsRaw = getField('Steps Detail', 'Steps', 'steps', 'Các bước');
-      const stepLines = stepsRaw.split('\n').map((l) => l.trim()).filter(Boolean);
-      const stepPattern = /^\d+[.)]\s*(.+?)\s*\(Expected:\s*(.+)\)\s*$/i;
-      const steps = stepLines.length
-        ? stepLines.map((line, stepIndex) => {
-            const match = line.match(stepPattern);
-            return {
-              step_number: stepIndex + 1,
-              action: match ? match[1] : line,
-              expected_result: match ? match[2] : 'Xem Final Expected Result',
-            };
-          })
-        : [{ step_number: 1, action: 'N/A', expected_result: 'N/A' }];
-
-      const rawCategory = getField('Category', 'category', 'Loại').toLowerCase().replace(/[\s/-]+/g, '_');
-      const category = (VALID_CATEGORY_VALUES as readonly string[]).includes(rawCategory)
-        ? (rawCategory as TestCaseCategory)
-        : 'positive';
-
-      const rawPriority = getField('Priority', 'priority', 'Độ ưu tiên').toUpperCase();
-      const priority = (['P1', 'P2', 'P3', 'P4'] as const).includes(rawPriority as any)
-        ? (rawPriority as GeneratedTestCase['priority'])
-        : 'P2';
-
-      parsed.push({
-        code,
-        title: title || `Test case #${index + 1}`,
-        category,
-        priority,
-        preconditions,
-        test_data: testData,
-        steps,
-        final_expected_result: getField('Final Expected Result', 'final_expected_result', 'Kết quả mong đợi') || 'N/A',
-      });
-    });
-
-    return parsed;
+  if (warnings.length > 0 && cases.length === 0) {
+    throw new Error(warnings.join('; '));
   }
+
+  if (skipped > 0) {
+    console.warn(`[SmartXlsx] Đã bỏ qua ${skipped} dòng trống/không hợp lệ`);
+  }
+
+  return cases;
+}
 
   async function handleOldCasesFile(file: File) {
     setIsParsingOldCases(true);
@@ -517,11 +458,11 @@ async function runEnhance() {
             </div>
           </div>
 
-          {/* ── Senior QA Review Card ── */}
+          {/* ── Review Card ── */}
           <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <div>
-                <p className="text-sm font-bold uppercase tracking-wide text-purple-600">Senior QA Review</p>
+                <p className="text-sm font-bold uppercase tracking-wide text-purple-600">Review Cases</p>
                 <h2 className="mt-1 text-xl font-black text-slate-950">Review & Enhance</h2>
               </div>
             </div>
