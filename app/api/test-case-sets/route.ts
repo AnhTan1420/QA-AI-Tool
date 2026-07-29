@@ -20,12 +20,24 @@ export async function POST(req: NextRequest) {
     const payload = createSetSchema.parse(await req.json());
     const supabase = await createClient();
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       return NextResponse.json({ success: false, error: 'Bạn cần đăng nhập.' }, { status: 401 });
+    }
+
+    // CHECK: User có phải member của project không?
+    const { data: member, error: memberError } = await supabase
+      .from('project_members')
+      .select('role')
+      .eq('project_id', payload.project_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (memberError || !member) {
+      return NextResponse.json(
+        { success: false, error: 'Bạn không có quyền tạo test case cho project này.' },
+        { status: 403 }
+      );
     }
 
     const { data: requirement, error: requirementError } = await supabase

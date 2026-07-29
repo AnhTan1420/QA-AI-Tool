@@ -140,6 +140,18 @@ export async function DELETE(req: NextRequest) {
 
     const supabase = await createClient();
 
+    // 1. Xóa version history trước (tránh FK constraint)
+    const { error: versionError } = await supabase
+      .from('test_case_versions')
+      .delete()
+      .in('test_case_id', payload.ids);
+
+    if (versionError) {
+      console.error('[DELETE bulk] Lỗi xóa versions:', versionError.message);
+      // Không block nếu versions lỗi
+    }
+
+    // 2. Xóa test cases
     const { error } = await supabase
       .from('test_cases')
       .delete()

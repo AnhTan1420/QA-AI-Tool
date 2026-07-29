@@ -11,6 +11,35 @@ const bulkCreateSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     const payload = bulkCreateSchema.parse(await req.json());
+    const supabase = await createClient();
+
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'Bạn cần đăng nhập.' }, { status: 401 });
+    }
+
+    // CHECK: set_id tồn tại và user có quyền với project của set đó
+    const { data: setData, error: setError } = await supabase
+      .from('test_case_sets')
+      .select('project_id')
+      .eq('id', payload.set_id)
+      .single();
+
+    if (setError || !setData) {
+      return NextResponse.json({ success: false, error: 'Test case set không tồn tại.' }, { status: 404 });
+    }
+
+    const { data: member } = await supabase
+      .from('project_members')
+      .select('role')
+      .eq('project_id', setData.project_id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!member) {
+      return NextResponse.json({ success: false, error: 'Không có quyền.' }, { status: 403 });
+    }
+
     const rows = payload.test_cases.map((testCase) => ({
       set_id: payload.set_id,
       code: testCase.code,
@@ -24,7 +53,6 @@ export async function POST(req: NextRequest) {
       status: 'draft',
     }));
 
-    const supabase = await createClient();
     const { data, error } = await supabase.from('test_cases').insert(rows).select();
 
     if (error) {

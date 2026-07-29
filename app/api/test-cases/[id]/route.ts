@@ -103,6 +103,9 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
   const { id } = await params;
   const supabase = await createClient();
 
+  // Xóa versions trước
+  await supabase.from('test_case_versions').delete().eq('test_case_id', id);
+
   const { error } = await supabase.from('test_cases').delete().eq('id', id);
 
   if (error) {

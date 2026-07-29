@@ -99,57 +99,69 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   }
 
   async function runReview() {
-    setError('');
-    setSuccessMessage('');
-    const casesToReview = reviewMode === 'generated' ? testCases : importedReviewCases;
-    if (casesToReview.length === 0) {
-      setReviewError(reviewMode === 'generated' ? 'Chưa có test case nào để review. Hãy generate trước.' : 'Chưa import file test case nào.');
-      return;
-    }
-    setIsReviewing(true);
-    setReviewError('');
-    try {
-      const data = await callApi<ReviewResult>('/api/ai/review', {
-        requirement_description: description,
-        generated_test_cases: casesToReview,
-      }, t.generateWorkspace.errors.requestFailed);
-      if (reviewMode === 'generated') setReview(data);
-      else setImportedReview(data);
-    } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Review thất bại');
-    } finally {
-      setIsReviewing(false);
-    }
+  setError('');
+  setSuccessMessage('');
+  setReviewError('');
+  
+  const casesToReview = reviewMode === 'generated' ? testCases : importedReviewCases;
+  if (casesToReview.length === 0) {
+    setReviewError(reviewMode === 'generated' 
+      ? 'Chưa có test case nào để review. Hãy generate trước.' 
+      : 'Chưa import file test case nào.'
+    );
+    return;
   }
 
-  async function runEnhance() {
-    const casesToEnhance = reviewMode === 'generated' ? testCases : importedReviewCases;
-    const reviewToUse = reviewMode === 'generated' ? review : importedReview;
-    if (!reviewToUse || casesToEnhance.length === 0) return;
-
-    setIsEnhancing(true);
-    setReviewError('');
-    try {
-      const enhanced = await callApi<GeneratedTestCase[]>('/api/ai/enhance', {
-        requirement_description: description,
-        test_cases: casesToEnhance,
-        review_result: reviewToUse,
-      }, t.generateWorkspace.errors.requestFailed);
-
-      if (reviewMode === 'generated') {
-        setTestCases(enhanced);
-        setReview(null);
-      } else {
-        setImportedReviewCases(enhanced);
-        setImportedReview(null);
-      }
-      setSuccessMessage(`Đã enhance ${enhanced.length} test case thành công!`);
-    } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Enhance thất bại');
-    } finally {
-      setIsEnhancing(false);
-    }
+  setIsReviewing(true);
+  try {
+    const data = await callApi<ReviewResult>('/api/ai/enhance', {
+      mode: 'review',
+      requirement_description: description,
+      test_cases: casesToReview,
+    }, t.generateWorkspace.errors.requestFailed);
+    
+    if (reviewMode === 'generated') setReview(data);
+    else setImportedReview(data);
+  } catch (err) {
+    setReviewError(err instanceof Error ? err.message : 'Review thất bại');
+  } finally {
+    setIsReviewing(false);
   }
+}
+
+async function runEnhance() {
+  const casesToEnhance = reviewMode === 'generated' ? testCases : importedReviewCases;
+  const reviewToUse = reviewMode === 'generated' ? review : importedReview;
+  
+  if (!reviewToUse || casesToEnhance.length === 0) {
+    setReviewError('Cần chạy Review trước khi Enhance');
+    return;
+  }
+
+  setIsEnhancing(true);
+  setReviewError('');
+  try {
+    const enhanced = await callApi<GeneratedTestCase[]>('/api/ai/enhance', {
+      mode: 'enhance',
+      requirement_description: description,
+      test_cases: casesToEnhance,
+      review_result: reviewToUse,
+    }, t.generateWorkspace.errors.requestFailed);
+
+    if (reviewMode === 'generated') {
+      setTestCases(enhanced);
+      setReview(null); // Clear review sau khi enhance
+    } else {
+      setImportedReviewCases(enhanced);
+      setImportedReview(null);
+    }
+    setSuccessMessage(`✅ Đã enhance ${enhanced.length} test case!`);
+  } catch (err) {
+    setReviewError(err instanceof Error ? err.message : 'Enhance thất bại');
+  } finally {
+    setIsEnhancing(false);
+  }
+}
 
   async function saveToLibrary() {
     setIsSaving(true);
