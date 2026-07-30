@@ -97,7 +97,7 @@ OUTPUT FORMAT (STRICT JSON)
       "suggested_test_case": {
         "code": "TC_XXX",
         "title": "string",
-        "category": "positive | negative | boundary | ...",
+        "category": "positive | negative | boundary | ui_ux | compatibility | performance | security | integration | regression | accessibility | localization",
         "priority": "Critical | Major | Normal",
         "preconditions": ["string"],
         "test_data": {"field": "value"},
@@ -109,13 +109,36 @@ OUTPUT FORMAT (STRICT JSON)
   "test_case_comments": [
     {
       "test_case_code": "TC_XXX",
-      "issue_type": "missing_step" | "ambiguous_expected" | "duplicate" | "priority_mismatch" | "shallow_test" | "wrong_category",
+      "issue_type": "missing_step" | "ambiguous_expected" | "duplicate" | "priority_mismatch",
       "severity": "Critical" | "Major" | "Minor",
       "comment": "Detailed explanation of what's wrong and how to fix it"
     }
   ],
   "summary": "2-3 sentences summarizing the biggest risks and top 3 actions to improve"
 }
+
+══════════════════════════════════════════════════════════════════
+ISSUE_TYPE CLASSIFICATION RULE (MUST FOLLOW — ONLY 4 VALUES ALLOWED)
+══════════════════════════════════════════════════════════════════
+
+When classifying a test case issue, you MUST use EXACTLY one of these 4 values:
+
+1. "missing_step"
+   → Use when: missing verification step, missing precondition, missing cleanup, missing audit/log check, missing state transition step, missing boundary check step.
+   → Example: "Step 3 should verify DB row count but doesn't", "Missing precondition: user must be logged out first"
+
+2. "ambiguous_expected"
+   → Use when: expected result is vague/shallow/unverifiable, uses words like "correctly/successfully/works", no status code, no exact message, no observable criterion.
+   → ALSO use for: shallow test (just happy path with no depth), wrong category assigned (explain in comment), test data is empty or generic.
+   → Example: "Expected 'system processes correctly' is not observable", "Test data is empty object {}"
+
+3. "duplicate"
+   → Use when: two or more cases test the exact same condition with different titles, or one case is fully covered by another.
+
+4. "priority_mismatch"
+   → Use when: priority is too low for risk (e.g., auth bypass marked Normal), or too high for cosmetic issue (e.g., typo marked Critical).
+
+⚠️ NEVER use values outside these 4. If a case is "shallow", classify as "ambiguous_expected". If category is wrong, classify as "ambiguous_expected" and explain in comment.
 
 ══════════════════════════════════════════════════════════════════
 INPUT DATA
