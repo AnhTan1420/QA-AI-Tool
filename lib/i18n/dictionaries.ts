@@ -95,7 +95,7 @@ const vi = {
       timestamp: { title: 'Timestamp Converter', group: 'Converter', description: 'Đổi Unix timestamp sang ngày giờ local.' },
       'fake-file-generator': { title: 'Fake File Generator', group: 'Generator', description: 'Tạo file giả (TXT, CSV, JSON, PNG, PDF) theo kích thước tuỳ chọn để test upload.' },
       'nric-generator': { title: 'Singapore NRIC/FIN Generator & Validator', group: 'Generator', description: 'Sinh và kiểm tra checksum số NRIC/FIN Singapore hợp lệ để dùng làm dữ liệu test.' },
-      'lorem-ipsum-generator': { title: 'Dummy Text Generator (Lorem Ipsum)', group: 'Generator', description: 'Sinh đoạn văn bản giả Lorem Ipsum theo số từ/câu/đoạn.' },
+      'lorem-ipsum-generator': { title: 'Dummy Text Generator', group: 'Generator', description: 'Sinh đoạn văn bản giả theo số từ/câu/đoạn.' },
     },
     fakeFile: {
       typeLabel: 'Loại file',
