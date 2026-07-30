@@ -1,10 +1,20 @@
+-- =========================================================================
+-- MIGRATION NOTE (2026): role "senior_qa" da bi go bo khoi he thong.
+-- Neu database cua ban duoc tao truoc thay doi nay va co the con user voi
+-- role = 'senior_qa', hay chay 2 lenh sau TRUOC khi ap dung lai file nay,
+-- de tranh loi vi pham check constraint:
+--
+--   update profiles set role = 'admin' where role = 'senior_qa';
+--   update project_members set role = 'admin' where role = 'senior_qa';
+-- =========================================================================
+
 create extension if not exists vector;
 create extension if not exists pgcrypto; -- dam bao gen_random_uuid() luon co san
 
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text,
-  role text not null default 'qa' check (role in ('qa','senior_qa','admin')),
+  role text not null default 'qa' check (role in ('qa','admin')),
   avatar_url text,
   created_at timestamptz default now()
 );
@@ -20,7 +30,7 @@ create table if not exists projects (
 create table if not exists project_members (
   project_id uuid references projects(id) on delete cascade,
   user_id uuid references profiles(id) on delete cascade,
-  role text not null default 'qa' check (role in ('qa','senior_qa','admin')),
+  role text not null default 'qa' check (role in ('qa','admin')),
   joined_at timestamptz default now(),
   primary key (project_id, user_id)
 );
@@ -314,18 +324,18 @@ create policy test_cases_member_update on test_cases for update using (
     select 1 from test_case_sets s
     join project_members pm on pm.project_id = s.project_id
     where s.id = test_cases.set_id and pm.user_id = auth.uid()
-      and (test_cases.status <> 'approved' or pm.role in ('senior_qa','admin'))
+      and (test_cases.status <> 'approved' or pm.role = 'admin')
   )
 );
 
--- Xoa test case chi danh cho senior_qa/admin cua project - tranh QA thuong xoa nham
+-- Xoa test case chi danh cho admin cua project - tranh QA thuong xoa nham
 -- case nguoi khac dang review.
 drop policy if exists test_cases_senior_delete on test_cases;
 create policy test_cases_senior_delete on test_cases for delete using (
   exists (
     select 1 from test_case_sets s
     join project_members pm on pm.project_id = s.project_id
-    where s.id = test_cases.set_id and pm.user_id = auth.uid() and pm.role in ('senior_qa', 'admin')
+    where s.id = test_cases.set_id and pm.user_id = auth.uid() and pm.role = 'admin'
   )
 );
 

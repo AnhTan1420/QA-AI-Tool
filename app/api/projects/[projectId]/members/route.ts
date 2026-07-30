@@ -5,12 +5,16 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 const inviteSchema = z.object({
   email: z.string().email(),
-  role: z.enum(['qa', 'admin']).default('admin'),
+  role: z.enum(['qa', 'admin']).default('qa'),
 });
 
 const updateRoleSchema = z.object({
   user_id: z.string().uuid(),
-  role: z.enum(['qa', 'senior_qa', 'admin']),
+  role: z.enum(['qa', 'admin']),
+});
+
+const removeMemberSchema = z.object({
+  user_id: z.string().uuid(),
 });
 
 /** Danh sach thanh vien cua 1 project, kem thong tin profile (RLS da gioi han theo project_members). */
@@ -159,6 +163,75 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ pr
     return NextResponse.json({ success: true, data });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Không thể cập nhật vai trò';
+    return NextResponse.json({ success: false, error: message }, { status: 400 });
+  }
+}
+
+/**
+ * Xoa 1 thanh vien khoi project. RLS (project_members_manage_admin) da gioi han
+ * chi admin cua project moi DELETE duoc project_members, nen o day chi can guard
+ * them 1 truong hop nghiep vu: khong cho xoa admin cuoi cung (tranh project bi
+ * "mo coi", khong con ai quan ly thanh vien).
+ */
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ projectId: string }> }) {
+  try {
+    const { projectId } = await params;
+    const payload = removeMemberSchema.parse(await req.json());
+
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'Bạn cần đăng nhập.' }, { status: 401 });
+    }
+
+    const { data: membership } = await supabase
+      .from('project_members')
+      .select('role')
+      .eq('project_id', projectId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!membership || membership.role !== 'admin') {
+      return NextResponse.json({ success: false, error: 'Chỉ admin của project mới được xóa thành viên.' }, { status: 403 });
+    }
+
+    const { data: target } = await supabase
+      .from('project_members')
+      .select('role')
+      .eq('project_id', projectId)
+      .eq('user_id', payload.user_id)
+      .maybeSingle();
+
+    if (target?.role === 'admin') {
+      const { count } = await supabase
+        .from('project_members')
+        .select('user_id', { count: 'exact', head: true })
+        .eq('project_id', projectId)
+        .eq('role', 'admin');
+
+      if ((count ?? 0) <= 1) {
+        return NextResponse.json(
+          { success: false, error: 'Không thể xóa admin cuối cùng trong project.' },
+          { status: 400 }
+        );
+      }
+    }
+
+    const { error } = await supabase
+      .from('project_members')
+      .delete()
+      .eq('project_id', projectId)
+      .eq('user_id', payload.user_id);
+
+    if (error) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, data: { user_id: payload.user_id } });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Không thể xóa thành viên';
     return NextResponse.json({ success: false, error: message }, { status: 400 });
   }
 }
