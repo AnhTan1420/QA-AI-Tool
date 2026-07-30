@@ -56,6 +56,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const [isReviewing, setIsReviewing] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [reviewError, setReviewError] = useState('');
+  const [showImportedCases, setShowImportedCases] = useState(false);
 
   function getCategoryLabel(value: TestCaseCategory) {
     return TEST_CASE_CATEGORIES.find((category) => category.value === value)?.label ?? value;
@@ -73,6 +74,15 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       return acc;
     }, {});
   }, [testCases]);
+
+  const groupedImportedCases = useMemo(() => {
+    return (importedReviewCases ?? []).reduce<Record<string, GeneratedTestCase[]>>((acc, testCase) => {
+      const cat = testCase?.category ?? 'uncategorized';
+      acc[cat] ??= [];
+      acc[cat].push(testCase);
+      return acc;
+    }, {});
+  }, [importedReviewCases]);
 
   const coverageTone = review && review.coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600';
   const isDemoProject = projectId === 'demo';
@@ -156,6 +166,7 @@ async function runEnhance() {
     } else {
       setImportedReviewCases(enhanced);
       setImportedReview(null);
+      setShowImportedCases(true);
     }
     setSuccessMessage(`✅ Đã enhance ${enhanced.length} test case!`);
   } catch (err) {
@@ -205,8 +216,12 @@ async function runEnhance() {
     setTestCases((current) => [...(current ?? []), { ...testCase, code: testCase.code || `TC-${String((current ?? []).length + 1).padStart(3, '0')}` }]);
   }
 
-  function exportExcel() {
-    const safeTestCases = testCases ?? [];
+  function acceptSuggestedImportedCase(testCase: GeneratedTestCase) {
+    setImportedReviewCases((current) => [...(current ?? []), { ...testCase, code: testCase.code || `TC-${String((current ?? []).length + 1).padStart(3, '0')}` }]);
+  }
+
+  function exportCasesToExcel(cases: GeneratedTestCase[], filename: string) {
+    const safeTestCases = cases ?? [];
     const excelData = safeTestCases.map((tc, index) => ({
       'STT': index + 1,
       'Test Case Code': tc.code,
@@ -228,7 +243,15 @@ async function runEnhance() {
       { wch: 10 }, { wch: 25 }, { wch: 25 }, { wch: 50 }, { wch: 30 },
     ];
 
-    XLSX.writeFile(workbook, `qaforge-${projectId}-test-cases.xlsx`);
+    XLSX.writeFile(workbook, filename);
+  }
+
+  function exportExcel() {
+    exportCasesToExcel(testCases ?? [], `qaforge-${projectId}-test-cases.xlsx`);
+  }
+
+  function exportImportedExcel() {
+    exportCasesToExcel(importedReviewCases ?? [], `qaforge-${projectId}-imported-reviewed.xlsx`);
   }
 
   function downloadOldCasesTemplate() {
@@ -503,7 +526,43 @@ async function runEnhance() {
                 {importedReviewFileName && (
                   <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
                     <span className="font-semibold text-slate-700">{importedReviewFileName} ({importedReviewCases.length} cases)</span>
-                    <button type="button" onClick={() => { setImportedReviewCases([]); setImportedReviewFileName(''); setImportedReview(null); }} className="font-bold text-red-600 hover:underline">Xóa</button>
+                    <button type="button" onClick={() => { setImportedReviewCases([]); setImportedReviewFileName(''); setImportedReview(null); setShowImportedCases(false); }} className="font-bold text-red-600 hover:underline">Xóa</button>
+                  </div>
+                )}
+
+                {importedReviewCases.length > 0 && (
+                  <div className="mt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowImportedCases((v) => !v)}
+                        className="text-xs font-bold text-purple-600 hover:underline"
+                      >
+                        {showImportedCases ? 'Ẩn danh sách test case' : `Xem ${importedReviewCases.length} test case`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={exportImportedExcel}
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 hover:border-emerald-200"
+                      >
+                        Export Excel (.xlsx)
+                      </button>
+                    </div>
+
+                    {showImportedCases && (
+                      <div className="mt-3 max-h-96 space-y-5 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+                        {Object.entries(groupedImportedCases).map(([category, items]) => (
+                          <div key={category}>
+                            <h3 className="mb-3 text-xs font-black uppercase tracking-wide text-slate-500">{getCategoryLabel(category as TestCaseCategory)}</h3>
+                            <div className="space-y-3">
+                              {(items ?? []).map((testCase) => (
+                                <TestCaseCard key={`${testCase?.code}-${testCase?.title}`} testCase={testCase} />
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -533,7 +592,7 @@ async function runEnhance() {
                         <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
                           <p className="font-bold text-amber-900">{gap.requirement_text}</p>
                           {gap.suggested_test_case && (
-                            <button onClick={() => acceptSuggestedCase(gap.suggested_test_case!)} className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white hover:bg-amber-700">
+                            <button onClick={() => (reviewMode === 'generated' ? acceptSuggestedCase : acceptSuggestedImportedCase)(gap.suggested_test_case!)} className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white hover:bg-amber-700">
                               + Thêm test case đề xuất
                             </button>
                           )}
