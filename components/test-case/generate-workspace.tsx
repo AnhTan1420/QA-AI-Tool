@@ -486,7 +486,7 @@ async function runEnhance() {
               onClick={() => setRightTab('results')}
               className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${rightTab === 'results' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
             >
-              📋 Kết quả sinh test case
+              Test Cases Generated
               <span className={`rounded-full px-2 py-0.5 text-xs ${rightTab === 'results' ? 'bg-white/20' : 'bg-slate-100'}`}>{safeTestCasesCount}</span>
             </button>
             <button
@@ -494,7 +494,7 @@ async function runEnhance() {
               onClick={() => setRightTab('review')}
               className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${rightTab === 'review' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
             >
-              🧪 Review & Enhance
+              Review & Enhance
               {review && rightTab !== 'review' && <span className="h-2 w-2 rounded-full bg-emerald-400" title="Đã có kết quả review" />}
             </button>
           </div>
