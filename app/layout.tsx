@@ -18,7 +18,7 @@ const jakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: 'QAForge - QA Toolkit & AI Test Case Generator',
+  title: 'QAJD - QA Toolkit & AI Test Case Generator',
   description:
     'Nền tảng QA Toolkit và AI Test Case Generator có RAG, review agent độc lập và requirement traceability.',
 };
