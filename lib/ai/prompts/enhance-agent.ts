@@ -20,7 +20,7 @@ SCHEMA MỖI TEST CASE (phải đúng 100%):
   "code": "TC_XXX",
   "title": "string",
   "category": "positive" | "negative" | "boundary" | "ui_ux" | "compatibility" | "performance" | "security" | "integration" | "regression" | "accessibility" | "localization",
-  "priority": "P1" | "P2" | "P3" | "P4",
+  "priority": "Critical" | "Major" | "Normal",
   "preconditions": ["string"],
   "test_data": {"key": "value"},
   "steps": [

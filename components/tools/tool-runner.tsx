@@ -30,7 +30,7 @@ const TOOL_SLUGS: ToolSlug[] = [
 
 function JsonFormatter() {
   const { t } = useLanguage();
-  const [input, setInput] = useState('{"project":"QAForge","phase":1}');
+  const [input, setInput] = useState('{"project":"QAJD","phase":1}');
   const result = useMemo(() => {
     try {
       return { ok: true, value: JSON.stringify(JSON.parse(input), null, 2) };
@@ -96,7 +96,7 @@ function RegexTester() {
 
 function HashGenerator() {
   const { t } = useLanguage();
-  const [input, setInput] = useState('QAForge');
+  const [input, setInput] = useState('QAJD');
   const [hash, setHash] = useState('');
 
   async function generate(algorithm: 'SHA-1' | 'SHA-256') {
@@ -137,7 +137,7 @@ function TimestampTool() {
 type FakeFileType = 'txt' | 'csv' | 'json' | 'png' | 'pdf';
 
 function buildTextPayload(sizeBytes: number): string {
-  const line = 'QAForge fake file - line for upload testing.\n';
+  const line = 'QAJD fake file - line for upload testing.\n';
   const repeats = Math.max(1, Math.ceil(sizeBytes / line.length));
   return line.repeat(repeats).slice(0, sizeBytes);
 }
@@ -168,7 +168,7 @@ function buildJsonPayload(sizeBytes: number): string {
 
 function buildPdfBytes(sizeBytes: number): string {
   const header = '%PDF-1.4\n';
-  const content = 'BT /F1 18 Tf 72 720 Td (QAForge Fake PDF File - generated for QA upload testing) Tj ET';
+  const content = 'BT /F1 18 Tf 72 720 Td (QAJD Fake PDF File - generated for QA upload testing) Tj ET';
   const objects = [
     '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
     '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
@@ -227,7 +227,7 @@ function FakeFileGenerator() {
   const { t } = useLanguage();
   const [fileType, setFileType] = useState<FakeFileType>('txt');
   const [sizeKb, setSizeKb] = useState(10);
-  const [fileName, setFileName] = useState('qaforge-fake-file');
+  const [fileName, setFileName] = useState('qajd-fake-file');
   const [lastGenerated, setLastGenerated] = useState<{ name: string; size: number } | null>(null);
 
   function handleGenerate() {
@@ -271,13 +271,13 @@ function FakeFileGenerator() {
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-      const finalName = `${fileName || 'qaforge-fake-file'}.png`;
+      const finalName = `${fileName || 'qajd-fake-file'}.png`;
       downloadBlob(bytes, finalName, 'image/png');
       setLastGenerated({ name: finalName, size: bytes.byteLength });
       return;
     }
 
-    const finalName = `${fileName || 'qaforge-fake-file'}.${ext}`;
+    const finalName = `${fileName || 'qajd-fake-file'}.${ext}`;
     downloadBlob(content, finalName, mimeType);
     setLastGenerated({ name: finalName, size: new Blob([content]).size });
   }
@@ -301,7 +301,7 @@ function FakeFileGenerator() {
         </label>
         <label className="block">
           <span className="field-label">{t.tools.fakeFile.nameLabel}</span>
-          <input value={fileName} onChange={(event) => setFileName(event.target.value)} className="field-input" placeholder="qaforge-fake-file" />
+          <input value={fileName} onChange={(event) => setFileName(event.target.value)} className="field-input" placeholder="qajd-fake-file" />
         </label>
       </div>
 

@@ -5,6 +5,9 @@ import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import TestCaseForm from '@/components/test-case-form';
+import { getPriorityStyle } from '@/lib/test-case-taxonomy';
+import VersionHistory from '@/components/test-case/version-history';
+import CommentsPanel from '@/components/test-case/comments-panel';
 
 type TestCase = {
   id: string;
@@ -88,7 +91,7 @@ export default function TestCaseDetailPage() {
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-3">
               <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-semibold">{tc.code}</span>
-              <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-semibold">{tc.priority}</span>
+              <span className={`px-2 py-1 rounded text-xs font-semibold ${getPriorityStyle(tc.priority)}`}>{tc.priority}</span>
               <span className="px-2 py-1 bg-gray-100 text-gray-600 rounded text-xs capitalize">{tc.category}</span>
             </div>
             <div className="flex items-center gap-2">
@@ -138,6 +141,13 @@ export default function TestCaseDetailPage() {
             <p className="text-sm font-semibold text-green-800 mb-1">Final expected result:</p>
             <p className="text-sm text-green-700">{tc.expected_result}</p>
           </div>
+        </div>
+      )}
+
+      {!isEditing && (
+        <div className="mt-6 grid gap-6 lg:grid-cols-2">
+          <VersionHistory testCaseId={tc.id} current={tc} />
+          <CommentsPanel testCaseId={tc.id} />
         </div>
       )}
     </div>

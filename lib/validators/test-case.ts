@@ -46,16 +46,43 @@ function normalizeCategoryValue(value: unknown): unknown {
 
 const lenientCategorySchema = z.preprocess(normalizeCategoryValue, testCaseCategorySchema);
 
-export const prioritySchema = z.enum(['P1', 'P2', 'P3', 'P4']);
+export const prioritySchema = z.enum(['Critical', 'Major', 'Normal']);
 
-// Chap nhan "p1"/"P1 "/1 (number) ... va chuan hoa ve "P1".."P4".
+// Chap nhan cac bien the cu/thang do khac (P1-P4, so, Blocker/High/Medium/Low...)
+// va chuan hoa ve 3 muc: Critical | Major | Normal.
+// Mapping tu thang P1-P4 cu: P1 -> Critical, P2 -> Major, P3/P4 -> Normal.
 function normalizePriorityValue(value: unknown): unknown {
-  if (typeof value === 'number' && value >= 1 && value <= 4) return `P${value}`;
+  if (typeof value === 'number') {
+    if (value === 1) return 'Critical';
+    if (value === 2) return 'Major';
+    if (value >= 3) return 'Normal';
+    return value;
+  }
   if (typeof value !== 'string') return value;
-  const trimmed = value.trim().toUpperCase();
-  if (/^P[1-4]$/.test(trimmed)) return trimmed;
-  if (/^[1-4]$/.test(trimmed)) return `P${trimmed}`;
-  return value;
+  const trimmed = value.trim();
+  const upper = trimmed.toUpperCase();
+
+  if (upper === 'CRITICAL') return 'Critical';
+  if (upper === 'MAJOR') return 'Major';
+  if (upper === 'NORMAL') return 'Normal';
+
+  const legacyMap: Record<string, 'Critical' | 'Major' | 'Normal'> = {
+    P1: 'Critical',
+    P2: 'Major',
+    P3: 'Normal',
+    P4: 'Normal',
+    '1': 'Critical',
+    '2': 'Major',
+    '3': 'Normal',
+    '4': 'Normal',
+    BLOCKER: 'Critical',
+    HIGH: 'Critical',
+    MEDIUM: 'Major',
+    LOW: 'Normal',
+    MINOR: 'Normal',
+    TRIVIAL: 'Normal',
+  };
+  return legacyMap[upper] ?? value;
 }
 
 const lenientPrioritySchema = z.preprocess(normalizePriorityValue, prioritySchema);

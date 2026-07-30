@@ -69,7 +69,7 @@ create table if not exists test_cases (
   code text not null,
   title text not null,
   category text not null check (category in ('positive','negative','boundary','ui_ux','compatibility','performance','security','integration','regression','accessibility','localization')),
-  priority text not null default 'P2' check (priority in ('P1','P2','P3','P4')),
+  priority text not null default 'Major' check (priority in ('Critical','Major','Normal')),
   preconditions jsonb default '[]'::jsonb,
   test_data jsonb default '{}'::jsonb,
   steps jsonb not null default '[]'::jsonb,
@@ -398,3 +398,45 @@ create policy ai_usage_logs_select_self on ai_usage_logs for select using (user_
 
 drop policy if exists ai_usage_logs_insert_self on ai_usage_logs;
 create policy ai_usage_logs_insert_self on ai_usage_logs for insert with check (user_id = auth.uid());
+
+-- ----------------------------------------------------------------------------
+-- Migration: doi thang priority tu P1..P4 sang Critical/Major/Normal.
+-- An toan chay lai nhieu lan (idempotent) - chi migrate neu constraint cu con ton tai.
+-- Mapping: P1 -> Critical, P2 -> Major, P3/P4 -> Normal.
+-- ----------------------------------------------------------------------------
+do $$
+begin
+  if exists (
+    select 1 from information_schema.constraint_column_usage
+    where table_name = 'test_cases' and column_name = 'priority'
+  ) then
+    alter table test_cases alter column priority drop default;
+    update test_cases set priority = case priority
+      when 'P1' then 'Critical'
+      when 'P2' then 'Major'
+      when 'P3' then 'Normal'
+      when 'P4' then 'Normal'
+      else priority
+    end
+    where priority in ('P1','P2','P3','P4');
+
+    alter table test_cases drop constraint if exists test_cases_priority_check;
+    alter table test_cases add constraint test_cases_priority_check
+      check (priority in ('Critical','Major','Normal'));
+    alter table test_cases alter column priority set default 'Major';
+  end if;
+end $$;
+
+-- ----------------------------------------------------------------------------
+-- Realtime: bat publication cho bang comments de UI comment tren test case
+-- co the subscribe qua supabase-js .channel(...).on('postgres_changes', ...).
+-- ----------------------------------------------------------------------------
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and tablename = 'comments'
+  ) then
+    alter publication supabase_realtime add table comments;
+  end if;
+end $$;

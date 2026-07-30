@@ -2,9 +2,10 @@
 
 import type { getDictionary } from '@/lib/i18n/dictionaries';
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import TestCaseForm from '@/components/test-case-form';
+import { getPriorityStyle } from '@/lib/test-case-taxonomy';
 
 type TestCase = {
   id: string;
@@ -17,7 +18,6 @@ type TestCase = {
 
 export default function TestCaseLibraryPage() {
   const { projectId } = useParams() as { projectId: string };
-  const router = useRouter();
   const [cases, setCases] = useState<TestCase[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
@@ -140,16 +140,16 @@ export default function TestCaseLibraryPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <button
-              onClick={() => router.back()}
+            <Link
+              href={`/projects/${projectId}`}
               className="text-sm text-gray-500 hover:text-gray-800 flex items-center gap-1 transition-colors"
-              title="Quay lại trang trước"
+              title="Quay lại trang project"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
               Quay lại
-            </button>
+            </Link>
           </div>
           <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">Test Case Library</p>
         </div>
@@ -250,7 +250,9 @@ export default function TestCaseLibraryPage() {
                       {tc.category}
                     </span>
                   </td>
-                  <td className="px-6 py-4 font-semibold text-gray-700">{tc.priority}</td>
+                  <td className="px-6 py-4">
+                    <span className={`rounded px-2 py-1 text-xs font-semibold ${getPriorityStyle(tc.priority)}`}>{tc.priority}</span>
+                  </td>
                   <td className="px-6 py-4">
                     <select
                       value={tc.status}

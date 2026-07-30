@@ -26,7 +26,7 @@ const CATEGORIES = [
   'performance', 'security', 'integration', 'regression', 'accessibility', 'localization',
 ];
 
-const PRIORITIES = ['P1', 'P2', 'P3', 'P4'];
+const PRIORITIES = ['Critical', 'Major', 'Normal'];
 
 const STATUSES = ['draft', 'in_review', 'approved'];
 
@@ -42,7 +42,7 @@ export default function TestCaseForm({ initialData, onSubmit, onCancel, submitLa
     code: initialData?.code || '',
     title: initialData?.title || '',
     category: initialData?.category || 'positive',
-    priority: initialData?.priority || 'P2',
+    priority: initialData?.priority || 'Major',
     preconditions: initialData?.preconditions?.length ? initialData.preconditions : [''],
     test_data: initialData?.test_data || {},
     steps: initialData?.steps?.length

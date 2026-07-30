@@ -12,7 +12,7 @@ const JSON_SCHEMA_CONTRACT = `{
   "code": "string, VD: TC_LOGIN_001",
   "title": "string",
   "category": "MOT trong cac gia tri: positive | negative | boundary | ui_ux | compatibility | performance | security | integration | regression | accessibility | localization",
-  "priority": "MOT trong: P1 | P2 | P3 | P4",
+  "priority": "MOT trong: Critical | Major | Normal",
   "preconditions": ["string", "..."],
   "test_data": { "ten_truong": "gia_tri (LUON la string)" },
   "steps": [

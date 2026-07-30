@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 
 /**
- * Trang đầu tiên của QAForge cố tình đơn giản: không phải landing page marketing
+ * Trang đầu tiên của QAJD cố tình đơn giản: không phải landing page marketing
  * nữa, mà chỉ là một cổng kiểm tra phiên đăng nhập.
  * - Đã đăng nhập -> vào thẳng /dashboard.
  * - Chưa đăng nhập -> vào thẳng /login (màn hình đăng nhập đơn giản).

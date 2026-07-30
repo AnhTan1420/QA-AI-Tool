@@ -59,7 +59,7 @@ export default function RegisterPage() {
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-600 text-white">
               <Sparkles className="h-4 w-4" strokeWidth={2.5} />
             </span>
-            QAForge
+            QAJD
           </Link>
           <LanguageToggle />
         </div>

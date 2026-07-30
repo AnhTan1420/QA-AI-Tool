@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/server';
 import { getLocale } from '@/lib/i18n/get-locale';
 import { getDictionary } from '@/lib/i18n/dictionaries';
+import { getPriorityStyle } from '@/lib/test-case-taxonomy';
 
 export default async function GenerateResultPage({ params }: { params: Promise<{ projectId: string; setId: string }> }) {
   const { projectId, setId } = await params;
@@ -82,7 +83,9 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
             <span className="font-mono font-bold text-blue-700">{testCase.code}</span>
             <span className="font-semibold text-slate-950">{testCase.title}</span>
             <span className="text-slate-600">{testCase.category}</span>
-            <span className="font-bold text-slate-700">{testCase.priority}</span>
+            <span>
+              <span className={`rounded px-2 py-0.5 text-xs font-bold ${getPriorityStyle(testCase.priority)}`}>{testCase.priority}</span>
+            </span>
             <span className="text-slate-600">{testCase.status}</span>
           </Link>
         ))}

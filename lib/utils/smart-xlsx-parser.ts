@@ -27,7 +27,7 @@ const VALID_CATEGORIES = [
   'performance', 'security', 'integration', 'regression', 'accessibility', 'localization',
 ];
 
-const VALID_PRIORITIES = ['P1', 'P2', 'P3', 'P4'];
+const VALID_PRIORITIES = ['CRITICAL', 'MAJOR', 'NORMAL'];
 
 function normalizeHeader(header: unknown): string {
   return String(header ?? '').toLowerCase().trim().replace(/[_\-]/g, ' ').replace(/\s+/g, ' ');
@@ -207,19 +207,17 @@ function inferCategoryFromTitle(title: string): TestCaseCategory | null {
 
 function parsePriority(raw: unknown): GeneratedTestCase['priority'] {
   const str = String(raw ?? '').toUpperCase().trim();
-  if (VALID_PRIORITIES.includes(str)) return str as GeneratedTestCase['priority'];
-  // Số thứ tự thô
-  if (str === '1') return 'P1';
-  if (str === '2') return 'P2';
-  if (str === '3') return 'P3';
-  if (str === '4') return 'P4';
+  if (VALID_PRIORITIES.includes(str)) return (str.charAt(0) + str.slice(1).toLowerCase()) as GeneratedTestCase['priority'];
+  // Số thứ tự thô (thang P1-P4 cũ hoặc 1-4)
+  if (str === '1' || str === 'P1') return 'Critical';
+  if (str === '2' || str === 'P2') return 'Major';
+  if (str === '3' || str === '4' || str === 'P3' || str === 'P4') return 'Normal';
   // Các thang mức độ phổ biến trong sheet QA nội bộ (Jira/TestRail/BugHerd...):
-  // Blocker/Critical > Major/High > Normal/Medium > Minor/Low/Trivial.
-  if (str.includes('BLOCKER') || str.includes('CRITICAL') || str.includes('HIGH')) return 'P1';
-  if (str.includes('MAJOR') || str.includes('MEDIUM')) return 'P2';
-  if (str.includes('NORMAL') || str.includes('LOW')) return 'P3';
-  if (str.includes('MINOR') || str.includes('TRIVIAL')) return 'P4';
-  return 'P2';
+  // Blocker/Critical > Major/High > Normal/Medium/Minor/Low/Trivial.
+  if (str.includes('BLOCKER') || str.includes('CRITICAL') || str.includes('HIGH')) return 'Critical';
+  if (str.includes('MAJOR') || str.includes('MEDIUM')) return 'Major';
+  if (str.includes('NORMAL') || str.includes('LOW') || str.includes('MINOR') || str.includes('TRIVIAL')) return 'Normal';
+  return 'Major';
 }
 
 export function parseSmartXlsx(rows: Record<string, unknown>[]): {

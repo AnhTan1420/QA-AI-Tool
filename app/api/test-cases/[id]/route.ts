@@ -53,6 +53,9 @@ export async function PUT(_req: NextRequest, { params }: { params: Promise<{ id:
     const payload = updateSchema.parse(body);
 
     const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
     const { data: current, error: fetchError } = await supabase
       .from('test_cases')
@@ -67,11 +70,14 @@ export async function PUT(_req: NextRequest, { params }: { params: Promise<{ id:
       );
     }
 
+    const { test_case_sets: _omit, ...snapshotData } = current as any;
+
     const { error: versionError } = await supabase
       .from('test_case_versions')
       .insert({
         test_case_id: id,
-        snapshot: current,
+        snapshot: snapshotData,
+        edited_by: user?.id ?? null,
       });
 
     if (versionError) {

@@ -1,4 +1,4 @@
-# QAForge — AI Test Case Generator & QA Toolkit
+# QAJD — AI Test Case Generator & QA Toolkit
 
 Công cụ nội bộ cho QA: sinh test case bằng AI (có Senior QA Review Agent độc lập chấm coverage), thư viện test case theo project, và bộ QA Utility Toolkit chạy client-side.
 

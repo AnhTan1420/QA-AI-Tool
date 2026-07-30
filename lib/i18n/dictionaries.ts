@@ -15,7 +15,7 @@ const vi = {
     projects: 'Projects',
   },
   sidebar: {
-    brand: 'QAForge',
+    brand: 'QAJD',
     loggedIn: 'Đã đăng nhập',
     notLoggedIn: 'Chưa đăng nhập',
     loginNow: 'Đăng nhập ngay →',
@@ -40,7 +40,7 @@ const vi = {
     },
     register: {
       eyebrow: 'Register',
-      title: 'Tạo tài khoản QAForge',
+      title: 'Tạo tài khoản QAJD',
       subtitle: 'Tài khoản mới mặc định role "qa", có thể được mời vào project sau.',
       fullNameLabel: 'Họ tên',
       fullNamePlaceholder: 'Nguyễn Văn QA',
@@ -58,7 +58,7 @@ const vi = {
   dashboard: {
     eyebrow: 'Overview',
     greeting: 'Chào,',
-    titleFallback: 'QAForge Dashboard',
+    titleFallback: 'QAJD Dashboard',
     subtitle: 'Theo dõi workflow tạo test case, review coverage và truy cập nhanh các công cụ tester.',
     metricProjects: 'Projects của bạn',
     metricTestCases: 'Test case đã lưu',
@@ -80,7 +80,7 @@ const vi = {
     clientSideNote: 'Tool chạy 100% client-side, không gọi AI.',
     notFound: 'Tool chưa tồn tại.',
     jsonInvalid: 'JSON không hợp lệ',
-    base64Placeholder: 'QAForge xin chào tester Việt Nam',
+    base64Placeholder: 'QAJD xin chào tester Việt Nam',
     base64Output: (encoded: string, decoded: string) => `Encode:\n${encoded}\n\nDecode nếu input là Base64:\n${decoded}`,
     base64InvalidInput: 'Input hiện tại không phải Base64 hợp lệ.',
     uuidCountLabel: 'Số lượng',
@@ -280,7 +280,7 @@ const vi = {
     preconditionsPrefix: 'Preconditions',
     expectedPrefix: 'Expected',
     finalPrefix: 'Final',
-    sampleDescription: `Tính năng đăng nhập email/password cho web app QAForge.\nNgười dùng nhập email và mật khẩu, bấm Đăng nhập. Nếu thông tin hợp lệ, hệ thống chuyển tới dashboard. Nếu sai email/mật khẩu, hiển thị lỗi rõ ràng. Nếu tài khoản chưa xác thực email, yêu cầu xác thực trước khi đăng nhập. Form phải validate email hợp lệ, không cho submit khi bỏ trống, hỗ trợ tiếng Việt.`,
+    sampleDescription: `Tính năng đăng nhập email/password cho web app QAJD.\nNgười dùng nhập email và mật khẩu, bấm Đăng nhập. Nếu thông tin hợp lệ, hệ thống chuyển tới dashboard. Nếu sai email/mật khẩu, hiển thị lỗi rõ ràng. Nếu tài khoản chưa xác thực email, yêu cầu xác thực trước khi đăng nhập. Form phải validate email hợp lệ, không cho submit khi bỏ trống, hỗ trợ tiếng Việt.`,
     defaultLanguage: 'Tiếng Việt',
     errors: {
       generateFailed: 'Generate failed',
@@ -328,7 +328,7 @@ const en: Dictionary = {
     projects: 'Projects',
   },
   sidebar: {
-    brand: 'QAForge',
+    brand: 'QAJD',
     loggedIn: 'Signed in',
     notLoggedIn: 'Not signed in',
     loginNow: 'Sign in now →',
@@ -353,7 +353,7 @@ const en: Dictionary = {
     },
     register: {
       eyebrow: 'Register',
-      title: 'Create a QAForge account',
+      title: 'Create a QAJD account',
       subtitle: 'New accounts default to the "qa" role and can be invited to projects later.',
       fullNameLabel: 'Full name',
       fullNamePlaceholder: 'Jane QA',
@@ -371,7 +371,7 @@ const en: Dictionary = {
   dashboard: {
     eyebrow: 'Overview',
     greeting: 'Hi,',
-    titleFallback: 'QAForge Dashboard',
+    titleFallback: 'QAJD Dashboard',
     subtitle: 'Track the test case generation workflow, review coverage and quickly reach tester tools.',
     metricProjects: 'Your projects',
     metricTestCases: 'Saved test cases',
@@ -393,7 +393,7 @@ const en: Dictionary = {
     clientSideNote: 'This tool runs 100% client-side and never calls the AI.',
     notFound: 'This tool does not exist.',
     jsonInvalid: 'Invalid JSON',
-    base64Placeholder: 'Hello from QAForge testers',
+    base64Placeholder: 'Hello from QAJD testers',
     base64Output: (encoded: string, decoded: string) => `Encoded:\n${encoded}\n\nDecoded (if input is Base64):\n${decoded}`,
     base64InvalidInput: 'The current input is not valid Base64.',
     uuidCountLabel: 'Count',
@@ -593,7 +593,7 @@ const en: Dictionary = {
     preconditionsPrefix: 'Preconditions',
     expectedPrefix: 'Expected',
     finalPrefix: 'Final',
-    sampleDescription: `Email/password login feature for the QAForge web app.\nThe user enters an email and password, then clicks Sign in. If the information is valid, the system redirects to the dashboard. If the email/password is wrong, a clear error is shown. If the account's email is not yet verified, verification is required before signing in. The form must validate the email format, disallow submission when fields are empty, and support Vietnamese.`,
+    sampleDescription: `Email/password login feature for the QAJD web app.\nThe user enters an email and password, then clicks Sign in. If the information is valid, the system redirects to the dashboard. If the email/password is wrong, a clear error is shown. If the account's email is not yet verified, verification is required before signing in. The form must validate the email format, disallow submission when fields are empty, and support Vietnamese.`,
     defaultLanguage: 'English',
     errors: {
       generateFailed: 'Generate failed',

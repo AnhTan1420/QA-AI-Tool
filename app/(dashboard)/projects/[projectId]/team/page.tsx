@@ -5,7 +5,7 @@ import { useLanguage } from '@/lib/i18n/language-context';
 
 type Member = {
   user_id: string;
-  role: 'qa' | 'admin';
+  role: 'qa' | 'senior_qa' | 'admin';
   joined_at: string;
   profiles: { full_name: string | null; avatar_url: string | null } | null;
 };
@@ -17,8 +17,10 @@ export default function TeamPage({ params }: { params: Promise<{ projectId: stri
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Member['role']>('admin');
+  const [role, setRole] = useState<'qa' | 'admin'>('admin');
   const [isInviting, setIsInviting] = useState(false);
+  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+  const [roleUpdateError, setRoleUpdateError] = useState<Record<string, string>>({});
 
   async function loadMembers() {
     setLoading(true);
@@ -59,6 +61,26 @@ export default function TeamPage({ params }: { params: Promise<{ projectId: stri
       setError(err instanceof Error ? err.message : t.team.errors.inviteFailed);
     } finally {
       setIsInviting(false);
+    }
+  }
+
+  async function updateMemberRole(userId: string, newRole: Member['role']) {
+    setRoleUpdateError((prev) => ({ ...prev, [userId]: '' }));
+    // Cập nhật lạc quan để UI phản hồi ngay, revert nếu API lỗi.
+    const previous = members;
+    setMembers((current) => current.map((m) => (m.user_id === userId ? { ...m, role: newRole } : m)));
+    try {
+      const response = await fetch(`/api/projects/${projectId}/members`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, role: newRole }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? 'Không thể cập nhật vai trò');
+      setEditingUserId(null);
+    } catch (err) {
+      setMembers(previous);
+      setRoleUpdateError((prev) => ({ ...prev, [userId]: err instanceof Error ? err.message : 'Không thể cập nhật vai trò' }));
     }
   }
 
@@ -104,8 +126,44 @@ export default function TeamPage({ params }: { params: Promise<{ projectId: stri
                 <div>
                   <p className="font-bold text-slate-950">{member.profiles?.full_name ?? member.user_id}</p>
                   <p className="text-xs text-slate-500">{t.team.joinedPrefix} {new Date(member.joined_at).toLocaleDateString(locale === 'vi' ? 'vi-VN' : 'en-US')}</p>
+                  {roleUpdateError[member.user_id] && (
+                    <p className="mt-1 text-xs font-semibold text-red-600">{roleUpdateError[member.user_id]}</p>
+                  )}
                 </div>
-                <span className="rounded-full bg-slate-100 px-3 py-1 font-mono text-xs font-bold text-slate-700">{member.role}</span>
+
+                {editingUserId === member.user_id ? (
+                  <div className="flex items-center gap-2">
+                    <select
+                      autoFocus
+                      defaultValue={member.role}
+                      onChange={(e) => updateMemberRole(member.user_id, e.target.value as Member['role'])}
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 font-mono text-xs font-bold text-slate-700"
+                    >
+                      <option value="qa">qa</option>
+                      <option value="senior_qa">senior_qa</option>
+                      <option value="admin">admin</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setEditingUserId(null)}
+                      className="text-xs font-bold text-slate-400 hover:text-slate-700"
+                    >
+                      Hủy
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setEditingUserId(member.user_id)}
+                    className="group flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 hover:bg-blue-50"
+                    title="Sửa vai trò"
+                  >
+                    <span className="font-mono text-xs font-bold text-slate-700 group-hover:text-blue-700">{member.role}</span>
+                    <svg className="h-3.5 w-3.5 text-slate-400 group-hover:text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                )}
               </div>
             ))}
           </div>
