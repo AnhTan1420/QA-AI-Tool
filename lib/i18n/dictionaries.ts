@@ -408,7 +408,7 @@ const en: Dictionary = {
       timestamp: { title: 'Timestamp Converter', group: 'Converter', description: 'Convert a Unix timestamp to a local date/time.' },
       'fake-file-generator': { title: 'Fake File Generator', group: 'Generator', description: 'Generate dummy files (TXT, CSV, JSON, PNG, PDF) at a chosen size for upload testing.' },
       'nric-generator': { title: 'Singapore NRIC/FIN Generator & Validator', group: 'Generator', description: 'Generate and checksum-validate Singapore NRIC/FIN numbers for test data.' },
-      'lorem-ipsum-generator': { title: 'Dummy Text Generator (Lorem Ipsum)', group: 'Generator', description: 'Generate Lorem Ipsum placeholder text by word/sentence/paragraph count.' },
+      'lorem-ipsum-generator': { title: 'Dummy Text Generator', group: 'Generator', description: 'Generate placeholder text by word/sentence/paragraph count.' },
     },
     fakeFile: {
       typeLabel: 'File type',
