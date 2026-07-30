@@ -32,57 +32,257 @@ Mở `http://localhost:3000`, bấm **Đăng ký** để tạo tài khoản đ�
 
 ```
 app/
-  (auth)/login, register        # Supabase Auth (email/password + Google OAuth)
-  (dashboard)/                  # Layout có sidebar, mọi route con yêu cầu đăng nhập
-    dashboard/                  # Overview: số project, số test case
-    projects/                   # List + tạo project
-      [projectId]/
-        generate/                # Wizard: description -> Generation Agent -> Review Agent
-        test-cases/              # Thư viện test case đã lưu (list + detail)
-        team/                    # Quản lý thành viên & role (qa/senior_qa/admin)
-    tools/                     # QA Utility Toolkit (JSON, Base64, UUID, Regex, Hash, Timestamp)
-    settings/                  # Xem cấu hình model routing hiện tại (đọc từ .env)
+  (auth)/
+    login/page.tsx              # Đăng nhập email/password + Google OAuth
+    register/page.tsx           # Tạo tài khoản mới
+  (dashboard)/
+    layout.tsx                  # Dashboard layout: sidebar, language switch, header
+    dashboard/page.tsx          # Overview metrics, quick actions
+    projects/page.tsx           # Project list + tạo project
+    projects/[projectId]/
+      page.tsx                  # Project detail tabs: generate, test cases, team
+      generate/page.tsx         # Generate workflow + review/enhance
+      test-cases/page.tsx       # Test case library list + pagination + bulk actions
+      test-cases/[caseId]/page.tsx # Chi tiết + edit + delete + version/comments
+      team/page.tsx             # Quản lý thành viên và role
+    tools/page.tsx               # QA Utility Toolkit: JSON, Base64, UUID, Regex, Hash, Timestamp
   api/
-    ai/generate                 # Generation Agent — validate input/output bằng Zod
-    ai/review                   # Senior QA Review Agent — LỜI GỌI AI ĐỘC LẬP, không share context
-    ai/embed                    # Tạo embedding cho RAG (pgvector)
-    ai/generate-code            # Sinh code automation Playwright từ 1 test case
-    projects, projects/[id]/members
-    test-case-sets              # Tạo requirement + test_case_set (bước bắt buộc trước khi lưu)
-    test-cases, test-cases/[id], test-cases/bulk
+    ai/
+      generate/route.ts         # Generation Agent endpoint, valid input/output bằng Zod
+      review/route.ts           # Review Agent endpoint, independent audit prompt
+      embed/route.ts            # Tạo embedding cho RAG và dùng cho search/recall
+    projects/route.ts           # Project list + create
+    projects/[projectId]/route.ts # Project detail
+    projects/[projectId]/members/route.ts # Mời/quản lý project members
+    test-case-sets/route.ts     # Requirement & test_case_set lifecycle
+    test-cases/route.ts         # Create, update, delete, bulk delete test cases
+    test-cases/[id]/route.ts    # Test case detail endpoints + comments + versions
+    test-cases/bulk/route.ts    # Export / bulk operations
 
 lib/
-  ai/provider.ts                # Model routing theo tác vụ (generation/review/classification),
-                                 # tự fallback Gemini -> Groq
-  ai/gemini.ts, ai/groq.ts      # Gọi provider cụ thể, nhận danh sách model từ provider.ts
-  ai/parse.ts                   # Parse JSON bền hơn khi model lỡ bọc trong markdown fence
-  ai/prompts/                   # System prompt cho Generation Agent & Review Agent
-  validators/test-case.ts       # Zod schema — MỌI input/output AI đều đi qua đây trước khi
-                                 # lưu DB hoặc trả về client
-  supabase/client.ts            # Dùng trong Client Component (anon key + RLS)
-  supabase/server.ts            # Dùng trong Server Component/Route Handler (anon key + RLS,
-                                 # đọc/ghi cookie session)
-  supabase/admin.ts             # Service role — CHỈ dùng cho tác vụ hệ thống (vd: tra cứu user
-                                 # theo email khi mời thành viên), không bao giờ import ở client
+  ai/
+    provider.ts                 # Model routing theo tác vụ (generation/review/classification)
+    gemini.ts                   # Gemini provider integration
+    groq.ts                     # Groq fallback provider
+    parse.ts                    # Extract JSON from AI responses (markdown fences, noise)
+    prompts/
+      generation-agent.ts       # Prompt builder cho Generation Agent
+      review-agent.ts           # Prompt builder cho Review Agent
+      enhance-agent.ts          # Prompt builder cho Review/Enhance flow
+  i18n/
+    config.ts                  # Locale type và cookie name
+    dictionaries.ts            # Vietnamese + English translations
+    get-locale.ts              # Locale detection từ cookie/request
+    language-context.tsx       # Client-side language provider + `t` hook
+  supabase/
+    client.ts                  # Browser Supabase client (anon key, RLS)
+    server.ts                  # Server-side Supabase client (cookie session, RLS)
+    admin.ts                   # Service-role only utilities (user lookup, invite)
+  test-case-taxonomy.ts        # Taxonomy options and style helpers
+  utils/
+    smart-xlsx-parser.ts       # XLSX import parser for old test case data
+  validators/
+    test-case.ts               # Zod schemas for request/input and AI output validation
 
-proxy.ts                        # Thay middleware.ts (Next.js 16) — refresh session +
-                                 # redirect /login nếu truy cập route cần đăng nhập mà chưa
-                                 # có session
-schema.sql                      # Toàn bộ schema + RLS + trigger, chạy 1 lần trong Supabase
+proxy.ts                        # Session refresh + redirect /login for protected dashboard routes
+schema.sql                      # Supabase schema with RLS, triggers, vector extension, ai log tables
 ```
 
-## 4. Nguyên tắc quan trọng khi sửa code
+## 4. Data model & ERD
 
-- **Không bao giờ tin JSON thô từ AI.** Mọi response từ Gemini/Groq phải đi qua schema trong `lib/validators/test-case.ts` trước khi lưu DB hoặc trả về client (xem `app/api/ai/generate/route.ts` làm ví dụ).
-- **Review Agent phải độc lập.** Không truyền test case cũ tham khảo, không share lịch sử hội thoại với Generation Agent — nếu không model sẽ có xu hướng tự thuận với chính nó thay vì đánh giá khách quan.
-- **Không hard-code model ID.** Luôn đọc từ `AI_MODEL_*`/`GROQ_MODEL_*` trong `.env` — model Gemini/Groq deprecate thường xuyên.
-- **`test_cases` không có cột `project_id` trực tiếp** — luôn join qua `test_case_sets.project_id`. Đây là chỗ dễ gây lỗi runtime nhất nếu quên khi viết query mới.
-- **RLS là tuyến phòng thủ chính**, không phải lớp kiểm tra ở API. Route handler vẫn nên validate input bằng Zod, nhưng đừng tự ý bypass RLS bằng `supabase/admin.ts` trừ khi thật sự cần (tra cứu `auth.users`).
+```
+profiles --< projects
+       \      \
+        \      > project_members
+         \          |
+          `-------< requirements
+                   \      \
+                    \      > test_case_sets
+                     \         |
+                      `------< test_cases
+                       |        \
+                       |         > test_case_versions
+                       |         > comments
+                       |         > requirement_traceability
+                       > ai_reviews
+                       > test_case_imports
+                         > test_case_embeddings
+```
 
-## 5. Việc còn dang dở (roadmap Giai đoạn 2–3)
+- `profiles(id)` liên kết user Supabase với `full_name`, `role`, `avatar_url`.
+- `projects(id)` chứa project metadata, `owner_id` và `created_at`.
+- `project_members` quản lý member role: `qa`, `senior_qa`, `admin`.
+- `requirements` là source requirement/description cho generation.
+- `test_case_sets` là batch generation/review set, liên kết `project_id` + `requirement_id`.
+- `test_cases` lưu từng test case riêng, tham chiếu `set_id`; status có thể là `draft`, `in_review`, `approved`.
+- `ai_reviews` lưu review payload từ Review Agent và coverage score.
+- `requirement_traceability` nối requirement clause với từng test case được cover.
+- `comments` là comment realtime trên test case.
+- `test_case_imports` / `test_case_embeddings` support import file RAG, embedding index.
+```
 
-- Version history cho test case (bảng `test_case_versions` đã có, chưa có UI ghi/đọc).
-- Comment realtime trên test case (bảng `comments` đã có RLS, chưa có UI).
-- RAG thật sự: `ai/embed` đã tạo được embedding và `test_case_embeddings` đã có index ivfflat, nhưng chưa có luồng UI upload file test case cũ → tự động embed → tự động truy hồi khi generate.
-- Requirement Traceability Matrix (`requirement_traceability`) có bảng, chưa có UI.
-- Mời thành viên qua email hiện quét tối đa 200 user đầu tiên trong `auth.users` — đủ cho MVP nhưng nên thay bằng Admin API có filter theo email khi scale lớn hơn.
+## 5. ERD chi tiết
+
+```
+profiles
+  id PK
+  full_name
+  role
+  avatar_url
+  created_at
+
+projects
+  id PK
+  name
+  description
+  owner_id FK profiles(id)
+  created_at
+
+project_members
+  project_id FK projects(id)
+  user_id FK profiles(id)
+  role
+  joined_at
+  PK(project_id,user_id)
+
+requirements
+  id PK
+  project_id FK projects(id)
+  title
+  description
+  source_file_url
+  created_by FK profiles(id)
+  created_at
+
+test_case_sets
+  id PK
+  project_id FK projects(id)
+  requirement_id FK requirements(id)
+  status
+  generated_by_model
+  created_by FK profiles(id)
+  created_at
+
+test_cases
+  id PK
+  set_id FK test_case_sets(id)
+  code
+  title
+  category
+  priority
+  preconditions JSONB
+  test_data JSONB
+  steps JSONB
+  expected_result
+  status
+  created_at
+  updated_at
+
+ai_reviews
+  id PK
+  set_id FK test_case_sets(id)
+  coverage_score
+  review_payload JSONB
+  model_used
+  reviewed_at
+
+comments
+  id PK
+  test_case_id FK test_cases(id)
+  user_id FK profiles(id)
+  content
+  created_at
+
+requirement_traceability
+  id PK
+  set_id FK test_case_sets(id)
+  requirement_clause
+  test_case_id FK test_cases(id)
+  is_covered
+
+test_case_imports
+  id PK
+  project_id FK projects(id)
+  requirement_id FK requirements(id)
+  file_url
+  raw_content JSONB
+  imported_by FK profiles(id)
+  created_at
+
+test_case_embeddings
+  id PK
+  test_case_import_id FK test_case_imports(id)
+  content_snippet
+  embedding vector(768)
+  created_at
+```
+
+## 6. What’s unique in this codebase
+
+- Full AI workflow with two separate agents:
+  - `Generation Agent` builds test cases from a requirement.
+  - `Review Agent` audits coverage and detects gaps independently.
+- Strict Zod validation for every AI response and every write path.
+- Supabase RLS-first architecture: client components use anon key + RLS, server code uses cookie sessions.
+- Localized UI with Vietnamese + English dictionaries and a language switcher.
+- Structured test case data model: `preconditions`, `steps`, `test_data`, `expected_result`, plus test case versions/comments.
+- Support for old test case imports via Excel + embedding for future RAG.
+
+## 7. How AI is wired
+
+- `lib/ai/provider.ts` chooses provider/model by task and falls back Gemini -> Groq.
+- `lib/ai/gemini.ts` and `lib/ai/groq.ts` contain provider-specific request logic.
+- Prompt builders are in `lib/ai/prompts/` and produce:
+  - detailed JSON schema output
+  - adversarial/negative coverage guidance
+  - review-gap detection and enhancement suggestions
+- `app/api/ai/generate/route.ts` calls the generation prompt and validates output with `generatedTestCasesSchema`.
+- `app/api/ai/review/route.ts` runs the Review Agent with the generated cases and returns coverage/gap analysis.
+
+## 8. Running and testing
+
+- `npm install`
+- `cp .env.example .env.local`
+- Fill in Supabase and AI environment variables
+- `npm run dev`
+- `http://localhost:3000`
+
+### Env notes
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` (only for admin service utilities, never expose in client)
+- `AI_MODEL_GENERATION`, `AI_MODEL_REVIEW`, `AI_MODEL_CLASSIFICATION`
+- `GROQ_API_KEY`, `GROQ_MODEL_GENERATION`, `GROQ_MODEL_REVIEW`
+
+## 9. Future ideas
+
+- Add a full RAG-based requirement assistant that uses imported old test case embeddings to seed generation.
+- Add version diff UI and rollback for `test_case_versions`.
+- Add comment threads and @mention support in `comments`.
+- Implement `requirement_traceability` dashboard for QA coverage reviews.
+- Add an audit trail for AI usage with a cost dashboard using `ai_usage_logs`.
+- Add browser automation scaffolds from generated test cases (Playwright / Selenium code export).
+
+## 10. Quick wins for contributors
+
+- Convert remaining UI text to centralized i18n keys.
+- Add tests for `lib/ai/parse.ts` and `lib/validators/test-case.ts`.
+- Build the missing `generate/page.tsx` UI states for imported test cases and review details.
+- Add `test_case_sets` list page under project detail.
+- Add RLS-friendly query helpers in `lib/supabase/admin.ts` for project member invite/search.
+
+## 11. Diagram summary
+
+```
+User -> Auth -> profiles
+  |
+  +-> projects -> project_members
+         |
+         +-> requirements -> test_case_sets -> test_cases -> comments
+                                      |            \-> test_case_versions
+                                      |            \-> requirement_traceability
+                                      \-> ai_reviews
+                                      \-> test_case_imports -> test_case_embeddings
+```
+
+This README now reflects the actual structure, database model, AI flow, and product ideas in the current codebase.
