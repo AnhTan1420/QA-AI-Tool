@@ -436,14 +436,11 @@ WHERE tcs.project_id = 'uuid';
 
 ### Phase 3 — Planned
 
-- [ ] **CI/CD Webhook Integration** — Auto-generate test cases from PR descriptions, commit messages, and deployment events via webhooks
-
-### Phase 4 — Automation test with AI
-
-- [ ] 1. Open a test case detail
-- [ ] 2. Click **Generate Playwright Code**
-- [ ] 3. The AI will produce executable Playwright TypeScript code
-- [ ] 4. Copy and use in your test suite
+- [ ] Automation test with AI
+1. Open a test case detail
+2. Click **Generate Playwright Code**
+3. The AI will produce executable Playwright TypeScript code
+4. Copy and use in test suite
 
 
 ---
