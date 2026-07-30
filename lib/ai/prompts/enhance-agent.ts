@@ -5,17 +5,23 @@ export function buildEnhancePrompt(input: {
   test_cases: GeneratedTestCase[];
   review_result: ReviewResult;
 }) {
-  return `Bạn đóng vai Senior QA Lead. Dựa trên feedback review, hãy SỬA LẠI và CẢI THIỆN toàn bộ bộ test case.
+  return `You are acting as a Senior QA Lead. Based on the review feedback, REVISE and IMPROVE the entire test case suite.
 
-QUY TẮC TUYỆT ĐỐI:
-1. Output CHỈ là JSON array trực tiếp, KHÔNG wrap trong object, KHÔNG thêm key "test_cases".
-2. Mỗi phần tử trong array là object đúng schema dưới đây.
-3. Giữ nguyên code (TC_XXX) của case đã sửa, chỉ sửa nội dung.
-4. Tạo test case MỚI cho mỗi requirement gap.
-5. Loại bỏ case trùng lặp/thừa.
-6. Coverage phải đạt tối thiểu 90%.
+YOUR OBJECTIVES:
+- Increase the completeness and depth of the test case suite.
+- Add unusual/adversarial/edge cases if the requirement or review feedback indicates blind spots.
+- Remove shallow happy-path cases and duplicate cases.
+- Convert all vague expected results into observable + verifiable outcomes.
 
-SCHEMA MỖI TEST CASE (phải đúng 100%):
+ABSOLUTE RULES:
+1. Output MUST ONLY be a direct JSON array, DO NOT wrap in an object, DO NOT add a "test_cases" key.
+2. Each element in the array must be an object matching the exact schema below.
+3. Keep the original code (TC_XXX) of revised cases, only modify the content.
+4. Create NEW test cases for every requirement gap.
+5. Remove duplicate/redundant cases.
+6. Coverage must reach at least 90%.
+
+SCHEMA FOR EACH TEST CASE (must be 100% accurate):
 {
   "code": "TC_XXX",
   "title": "string",
@@ -29,12 +35,12 @@ SCHEMA MỖI TEST CASE (phải đúng 100%):
   "final_expected_result": "string"
 }
 
-LƯU Ý: field cuối cùng phải là "final_expected_result", KHÔNG PHẢI "expected_result".
+NOTE: the last field must be "final_expected_result", NOT "expected_result".
 
 [REQUIREMENT]
 ${input.requirement_description}
 
-[TEST CASES HIỆN TẠI]
+[CURRENT TEST CASES]
 ${JSON.stringify(input.test_cases, null, 2)}
 
 [REVIEW FEEDBACK]

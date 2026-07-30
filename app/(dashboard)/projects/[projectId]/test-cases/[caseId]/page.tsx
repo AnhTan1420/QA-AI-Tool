@@ -1,6 +1,6 @@
 'use client';
 
-import type { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/language-context';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -23,6 +23,7 @@ type TestCase = {
 };
 
 export default function TestCaseDetailPage() {
+  const { t } = useLanguage();
   const { projectId, caseId } = useParams() as { projectId: string; caseId: string };
   const router = useRouter();
   const [tc, setTc] = useState<TestCase | null>(null);
@@ -57,15 +58,15 @@ export default function TestCaseDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!confirm('Bạn có chắc muốn xóa test case này?')) return;
+    if (!confirm(t.testCaseDetail.deleteConfirm)) return;
     const res = await fetch(`/api/test-cases/${caseId}`, { method: 'DELETE' });
     if (res.ok) {
       router.push(`/projects/${projectId}/test-cases`);
     }
   };
 
-  if (loading) return <div className="p-6 text-gray-500">Đang tải...</div>;
-  if (!tc) return <div className="p-6 text-red-500">Không tìm thấy test case</div>;
+  if (loading) return <div className="p-6 text-gray-500">{t.common.loading}</div>;
+  if (!tc) return <div className="p-6 text-red-500">{t.testCaseDetail.notFound}</div>;
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -73,17 +74,17 @@ export default function TestCaseDetailPage() {
         href={`/projects/${projectId}/test-cases`}
         className="text-sm text-blue-600 hover:text-blue-800 mb-4 inline-flex items-center gap-1"
       >
-        ← Quay lại thư viện
+        {t.testCaseDetail.back}
       </Link>
 
       {isEditing ? (
         <div className="bg-white rounded-xl border border-gray-200 p-6">
-          <h2 className="text-lg font-bold mb-4">Chỉnh sửa test case</h2>
+          <h2 className="text-lg font-bold mb-4">{t.testCaseDetail.editTitle}</h2>
           <TestCaseForm
             initialData={tc}
             onSubmit={handleUpdate}
             onCancel={() => setIsEditing(false)}
-            submitLabel="Lưu thay đổi"
+            submitLabel={t.testCaseDetail.saveChanges}
           />
         </div>
       ) : (
@@ -99,13 +100,13 @@ export default function TestCaseDetailPage() {
                 onClick={() => setIsEditing(true)}
                 className="px-3 py-1.5 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50"
               >
-                Chỉnh sửa
+                {t.testCaseDetail.editButton}
               </button>
               <button
                 onClick={handleDelete}
                 className="px-3 py-1.5 rounded-lg border border-red-200 text-red-600 text-sm font-medium hover:bg-red-50"
               >
-                Xóa
+                {t.testCaseDetail.deleteButton}
               </button>
             </div>
           </div>
@@ -113,16 +114,16 @@ export default function TestCaseDetailPage() {
           <h1 className="text-xl font-bold text-gray-900">{tc.title}</h1>
 
           <div>
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">PRECONDITIONS</h3>
+            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">{t.testCaseDetail.preconditionsHeading}</h3>
             <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
               {tc.preconditions?.length ? tc.preconditions.map((p, i) => (
                 <li key={i}>{p}</li>
-              )) : <li className="text-gray-400 italic">Không có</li>}
+              )) : <li className="text-gray-400 italic">{t.testCaseDetail.noPreconditions}</li>}
             </ul>
           </div>
 
           <div>
-            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">CÁC BƯỚC THỰC HIỆN</h3>
+            <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">{t.testCaseDetail.stepsHeading}</h3>
             <div className="space-y-3">
               {tc.steps.map((step) => (
                 <div key={step.step_number} className="bg-gray-50 rounded-lg p-4">
@@ -130,7 +131,7 @@ export default function TestCaseDetailPage() {
                     {step.step_number}. {step.action}
                   </p>
                   <p className="text-sm text-blue-600">
-                    Expected: {step.expected_result}
+                    {t.testCaseDetail.expectedPrefix}: {step.expected_result}
                   </p>
                 </div>
               ))}
@@ -138,7 +139,7 @@ export default function TestCaseDetailPage() {
           </div>
 
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-            <p className="text-sm font-semibold text-green-800 mb-1">Final expected result:</p>
+            <p className="text-sm font-semibold text-green-800 mb-1">{t.testCaseDetail.finalExpectedHeading}</p>
             <p className="text-sm text-green-700">{tc.expected_result}</p>
           </div>
         </div>

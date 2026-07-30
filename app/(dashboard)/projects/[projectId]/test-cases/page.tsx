@@ -1,6 +1,6 @@
 'use client';
 
-import type { getDictionary } from '@/lib/i18n/dictionaries';
+import { useLanguage } from '@/lib/i18n/language-context';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
@@ -17,6 +17,7 @@ type TestCase = {
 };
 
 export default function TestCaseLibraryPage() {
+  const { t } = useLanguage();
   const { projectId } = useParams() as { projectId: string };
   const [cases, setCases] = useState<TestCase[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,7 +107,7 @@ export default function TestCaseLibraryPage() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Bạn có chắc muốn xóa ${selectedIds.size} test case đã chọn?`)) return;
+    if (!confirm(t.testCasesList.bulkDeleteConfirm(selectedIds.size))) return;
 
     const res = await fetch('/api/test-cases', {
       method: 'DELETE',
@@ -143,15 +144,15 @@ export default function TestCaseLibraryPage() {
             <Link
               href={`/projects/${projectId}`}
               className="text-sm text-gray-500 hover:text-gray-800 flex items-center gap-1 transition-colors"
-              title="Quay lại trang project"
+              title={t.testCasesList.backToProjectTitle}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
-              Quay lại
+              {t.testCasesList.backToProject}
             </Link>
           </div>
-          <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">Test Case Library</p>
+          <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">{t.testCasesList.eyebrow}</p>
         </div>
         <div className="flex gap-3">
           <button
@@ -161,13 +162,13 @@ export default function TestCaseLibraryPage() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
-            Export Excel
+            {t.testCasesList.exportButton}
           </button>
           <button
             onClick={() => setShowCreate(true)}
             className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
           >
-            + Tạo test case
+            {t.testCasesList.createButton}
           </button>
         </div>
       </div>
@@ -175,11 +176,11 @@ export default function TestCaseLibraryPage() {
       {showCreate && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl p-6">
-            <h2 className="text-lg font-bold mb-4">Tạo test case mới</h2>
+            <h2 className="text-lg font-bold mb-4">{t.testCasesList.createModalTitle}</h2>
             <TestCaseForm
               onSubmit={handleCreate}
               onCancel={() => setShowCreate(false)}
-              submitLabel="Tạo test case"
+              submitLabel={t.testCasesList.createModalSubmit}
             />
           </div>
         </div>
@@ -187,7 +188,7 @@ export default function TestCaseLibraryPage() {
 
       {selectedCount > 0 && (
         <div className="mb-4 flex items-center justify-between bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-          <span className="text-sm text-red-700 font-medium">Đã chọn {selectedCount} test case</span>
+          <span className="text-sm text-red-700 font-medium">{t.testCasesList.bulkDeleteLabel(selectedCount)}</span>
           <button
             onClick={handleBulkDelete}
             className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 flex items-center gap-1.5"
@@ -195,7 +196,7 @@ export default function TestCaseLibraryPage() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
-            Xóa đã chọn
+            {t.testCasesList.bulkDeleteButton}
           </button>
         </div>
       )}
@@ -212,21 +213,21 @@ export default function TestCaseLibraryPage() {
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
               </th>
-              <th className="text-left px-6 py-3">CODE</th>
-              <th className="text-left px-6 py-3">TITLE</th>
-              <th className="text-left px-6 py-3">CATEGORY</th>
-              <th className="text-left px-6 py-3">PRIORITY</th>
-              <th className="text-left px-6 py-3">STATUS</th>
+                <th className="text-left px-6 py-3">{t.testCasesList.colCode}</th>
+              <th className="text-left px-6 py-3">{t.testCasesList.colTitle}</th>
+              <th className="text-left px-6 py-3">{t.testCasesList.colCategory}</th>
+              <th className="text-left px-6 py-3">{t.testCasesList.colPriority}</th>
+              <th className="text-left px-6 py-3">{t.testCasesList.colStatus}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">Đang tải...</td>
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">{t.testCasesList.loading}</td>
               </tr>
             ) : paginatedCases.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">Chưa có test case nào</td>
+                <td colSpan={6} className="px-6 py-8 text-center text-gray-400">{t.testCasesList.empty}</td>
               </tr>
             ) : (
               paginatedCases.map((tc) => (
@@ -259,9 +260,9 @@ export default function TestCaseLibraryPage() {
                       onChange={(e) => handleStatusChange(tc.id, e.target.value)}
                       className="rounded-lg border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="draft">Draft</option>
-                      <option value="in_review">In Review</option>
-                      <option value="approved">Approved</option>
+                      <option value="draft">{t.testCasesList.statusDraft}</option>
+                      <option value="in_review">{t.testCasesList.statusInReview}</option>
+                      <option value="approved">{t.testCasesList.statusApproved}</option>
                     </select>
                   </td>
                 </tr>
@@ -274,7 +275,7 @@ export default function TestCaseLibraryPage() {
         {!loading && cases.length > 0 && (
           <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100">
             <div className="flex items-center gap-2 text-sm text-gray-500">
-              <span>Hiển thị</span>
+              <span>{t.testCasesList.paginationShowLabel}</span>
               <select
                 value={pageSize}
                 onChange={(e) => handlePageSizeChange(Number(e.target.value))}
@@ -285,7 +286,7 @@ export default function TestCaseLibraryPage() {
                 <option value={50}>50</option>
                 <option value={100}>100</option>
               </select>
-              <span>/ trang · {cases.length} test case</span>
+              <span>{t.testCasesList.paginationPerPage} · {cases.length} {t.testCasesList.paginationTotalSuffix}</span>
             </div>
 
             <div className="flex items-center gap-2">
@@ -294,7 +295,7 @@ export default function TestCaseLibraryPage() {
                 disabled={page === 1}
                 className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                ← Trước
+                {t.testCasesList.paginationPrev}
               </button>
 
               <div className="flex items-center gap-1">
@@ -318,7 +319,7 @@ export default function TestCaseLibraryPage() {
                 disabled={page === totalPages}
                 className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
-                Sau →
+                {t.testCasesList.paginationNext}
               </button>
             </div>
           </div>
