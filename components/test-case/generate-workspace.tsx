@@ -12,6 +12,10 @@ import { parseSmartXlsx } from '@/lib/utils/smart-xlsx-parser';
 
 const VALID_CATEGORY_VALUES = TEST_CASE_CATEGORIES.map((c) => c.value);
 
+// Thin, modern, self-hiding scrollbar (webkit + firefox) — reused on every scrollable panel
+const SCROLLBAR =
+  '[scrollbar-width:thin] [scrollbar-color:#cbd5e1_transparent] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300/70 [&::-webkit-scrollbar-thumb]:transition-colors hover:[&::-webkit-scrollbar-thumb]:bg-slate-400';
+
 async function callApi<T>(url: string, body: unknown, requestFailedMessage: (url: string) => string): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
@@ -343,13 +347,13 @@ async function runEnhance() {
   const safeTestCasesCount = (testCases ?? []).length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 rounded-[28px] bg-gradient-to-br from-slate-50 via-white to-blue-50/40 p-1">
       {/* Button quay lại - luôn về trang tổng quan project (cố định, không phụ thuộc history) */}
       <Link
         href={isDemoProject ? '/projects' : `/projects/${projectId}`}
-        className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors"
+        className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium text-slate-500 transition-all hover:bg-white hover:text-slate-800 hover:shadow-sm"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg className="w-4 h-4 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
         </svg>
         Quay lại project
@@ -357,19 +361,23 @@ async function runEnhance() {
 
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr] h-[calc(100vh-10rem)]">
         {/* ── Wizard panel ── */}
-        <section className="space-y-5 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm overflow-y-auto">
+        <section className={`space-y-6 rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-[0_2px_20px_-4px_rgba(15,23,42,0.06)] backdrop-blur-sm overflow-y-auto ${SCROLLBAR}`}>
           <div>
-            <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.wizardEyebrow}</p>
-            <h1 className="mt-2 text-3xl font-black text-slate-950">{t.generateWorkspace.title}</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-600">{t.generateWorkspace.subtitle}</p>
+            <p className="text-xs font-black uppercase tracking-widest text-blue-600">{t.generateWorkspace.wizardEyebrow}</p>
+            <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">{t.generateWorkspace.title}</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-500">{t.generateWorkspace.subtitle}</p>
           </div>
 
           <label className="block">
             <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
-              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-black text-white">1</span>
+              <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-[11px] font-black text-white shadow-sm shadow-blue-200">1</span>
               {t.generateWorkspace.requirementLabel}
             </span>
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-64 w-full rounded-2xl border border-slate-200 p-4 text-sm leading-6 outline-none focus:border-blue-300" />
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              className={`mt-2 min-h-64 w-full rounded-2xl border border-slate-200 bg-slate-50/40 p-4 text-sm leading-6 text-slate-800 outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100 ${SCROLLBAR}`}
+            />
           </label>
 
           <div>
@@ -377,13 +385,12 @@ async function runEnhance() {
               <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[11px] font-black text-white">2</span>
                 {t.generateWorkspace.oldCasesLabel}
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">Tùy chọn</span>
               </span>
-              <button type="button" onClick={downloadOldCasesTemplate} className="text-xs font-bold text-blue-600 hover:underline">
+              <button type="button" onClick={downloadOldCasesTemplate} className="text-xs font-bold text-blue-600 transition-colors hover:text-blue-700 hover:underline">
                 {t.generateWorkspace.downloadTemplate}
               </button>
             </div>
-            <label className="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-slate-200 p-5 text-center hover:border-blue-300">
+            <label className="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/30 p-5 text-center transition-all hover:border-blue-300 hover:bg-blue-50/30">
               <input
                 type="file"
                 accept=".xlsx,.xls"
@@ -394,13 +401,16 @@ async function runEnhance() {
                   event.target.value = '';
                 }}
               />
+              <svg className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M12 12v9m0-9l-3 3m3-3l3 3" />
+              </svg>
               <span className="text-sm font-semibold text-slate-700">{isParsingOldCases ? t.generateWorkspace.chooseFileReading : t.generateWorkspace.chooseFile}</span>
               <span className="text-xs text-slate-400">{t.generateWorkspace.fileHint}</span>
             </label>
             {oldCasesFileName && !isParsingOldCases && (
               <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
                 <span className="font-semibold text-slate-700">{oldCasesFileName} {t.generateWorkspace.loadedSuffix(oldCases.length)}</span>
-                <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-600 hover:underline">{t.generateWorkspace.removeFile}</button>
+                <button type="button" onClick={clearOldCasesFile} className="font-bold text-red-500 transition-colors hover:text-red-600 hover:underline">{t.generateWorkspace.removeFile}</button>
               </div>
             )}
             {oldCasesWarning && <p className="mt-1 text-xs font-semibold text-amber-600">{oldCasesWarning}</p>}
@@ -414,11 +424,11 @@ async function runEnhance() {
             <div className="mt-3 grid gap-4 sm:grid-cols-2">
               <label className="block">
                 <span className="text-xs font-semibold text-slate-500">{t.generateWorkspace.languageLabel}</span>
-                <input value={language} onChange={(event) => setLanguage(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3" />
+                <input value={language} onChange={(event) => setLanguage(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 text-sm outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100" />
               </label>
               <label className="block">
                 <span className="text-xs font-semibold text-slate-500">{t.generateWorkspace.detailLevelLabel}</span>
-                <select value={detailLevel} onChange={(event) => setDetailLevel(event.target.value as typeof detailLevel)} className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3">
+                <select value={detailLevel} onChange={(event) => setDetailLevel(event.target.value as typeof detailLevel)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 text-sm outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100">
                   <option value="concise">{t.generateWorkspace.detailConcise}</option>
                   <option value="standard">{t.generateWorkspace.detailStandard}</option>
                   <option value="detailed">{t.generateWorkspace.detailDetailed}</option>
@@ -435,14 +445,21 @@ async function runEnhance() {
                 <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">{selectedCategories.length}/{TEST_CASE_CATEGORIES.length}</span>
               </span>
               <div className="flex gap-3 text-xs font-bold">
-                <button type="button" onClick={() => setSelectedCategories(VALID_CATEGORY_VALUES)} className="text-blue-600 hover:underline">Chọn tất cả</button>
-                <button type="button" onClick={() => setSelectedCategories([])} className="text-slate-400 hover:underline">Bỏ chọn</button>
+                <button type="button" onClick={() => setSelectedCategories(VALID_CATEGORY_VALUES)} className="text-blue-600 transition-colors hover:text-blue-700 hover:underline">Chọn tất cả</button>
+                <button type="button" onClick={() => setSelectedCategories([])} className="text-slate-400 transition-colors hover:text-slate-600 hover:underline">Bỏ chọn</button>
               </div>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {TEST_CASE_CATEGORIES.map((category) => (
-                <label key={category.value} className={`flex cursor-pointer gap-3 rounded-2xl border p-3 text-sm transition-colors ${selectedCategories.includes(category.value) ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 hover:border-blue-200'}`}>
-                  <input type="checkbox" checked={selectedCategories.includes(category.value)} onChange={() => toggleCategory(category.value)} className="mt-0.5" />
+                <label
+                  key={category.value}
+                  className={`flex cursor-pointer gap-3 rounded-2xl border p-3 text-sm transition-all duration-150 ${
+                    selectedCategories.includes(category.value)
+                      ? 'border-blue-300 bg-blue-50/60 shadow-sm shadow-blue-100'
+                      : 'border-slate-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-sm'
+                  }`}
+                >
+                  <input type="checkbox" checked={selectedCategories.includes(category.value)} onChange={() => toggleCategory(category.value)} className="mt-0.5 accent-blue-600" />
                   <span>
                     <span className="block font-bold text-slate-800">{getCategoryLabel(category.value)}</span>
                     <span className="text-xs text-slate-500">{getCategoryDescription(category.value)}</span>
@@ -453,7 +470,7 @@ async function runEnhance() {
           </div>
 
           {error && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+            <div className="animate-[fadeIn_0.2s_ease] rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
               {error}
               {errorDetails.length > 0 && (
                 <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-normal text-red-600">
@@ -462,17 +479,29 @@ async function runEnhance() {
               )}
             </div>
           )}
-          {successMessage && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
+          {successMessage && <div className="animate-[fadeIn_0.2s_ease] rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{successMessage}</div>}
           {isDemoProject && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">{t.generateWorkspace.demoNotice}</div>}
 
-          <div className="flex flex-wrap gap-3">
-            <button disabled={isPending || selectedCategories.length === 0} onClick={() => startTransition(() => generate().catch((err) => { setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed); setErrorDetails((err as any)?.details ?? []); }))} className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50">
+          <div className="flex flex-wrap gap-3 pt-1">
+            <button
+              disabled={isPending || selectedCategories.length === 0}
+              onClick={() => startTransition(() => generate().catch((err) => { setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed); setErrorDetails((err as any)?.details ?? []); }))}
+              className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:shadow-md hover:shadow-blue-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+            >
               {isPending ? t.generateWorkspace.generating : t.generateWorkspace.generateButton}
             </button>
-            <button disabled={isSaving || safeTestCasesCount === 0} onClick={saveToLibrary} className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">
+            <button
+              disabled={isSaving || safeTestCasesCount === 0}
+              onClick={saveToLibrary}
+              className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
               {isSaving ? t.generateWorkspace.saving : t.generateWorkspace.saveButton}
             </button>
-            <button disabled={safeTestCasesCount === 0} onClick={exportExcel} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 hover:border-emerald-200 disabled:opacity-50">
+            <button
+              disabled={safeTestCasesCount === 0}
+              onClick={exportExcel}
+              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 transition-all hover:border-emerald-200 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
               {t.generateWorkspace.exportButton}
             </button>
           </div>
@@ -480,37 +509,41 @@ async function runEnhance() {
 
         {/* ── Right column: tab Kết quả / Review & Enhance ── */}
         <section className="flex flex-col overflow-hidden">
-          <div className="mb-4 flex shrink-0 gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+          <div className="mb-4 flex shrink-0 gap-1.5 rounded-2xl border border-slate-200/70 bg-white/90 p-1.5 shadow-sm backdrop-blur-sm">
             <button
               type="button"
               onClick={() => setRightTab('results')}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${rightTab === 'results' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all duration-200 ${
+                rightTab === 'results' ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-sm shadow-blue-200' : 'text-slate-500 hover:bg-slate-50'
+              }`}
             >
               Test Cases Generated
-              <span className={`rounded-full px-2 py-0.5 text-xs ${rightTab === 'results' ? 'bg-white/20' : 'bg-slate-100'}`}>{safeTestCasesCount}</span>
+              <span className={`rounded-full px-2 py-0.5 text-xs transition-colors ${rightTab === 'results' ? 'bg-white/20' : 'bg-slate-100'}`}>{safeTestCasesCount}</span>
             </button>
             <button
               type="button"
               onClick={() => setRightTab('review')}
-              className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors ${rightTab === 'review' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+              className={`flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-all duration-200 ${
+                rightTab === 'review' ? 'bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white shadow-sm shadow-purple-200' : 'text-slate-500 hover:bg-slate-50'
+              }`}
             >
               Review & Enhance
-              {review && rightTab !== 'review' && <span className="h-2 w-2 rounded-full bg-emerald-400" title="Đã có kết quả review" />}
+              {review && rightTab !== 'review' && <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" title="Đã có kết quả review" />}
             </button>
           </div>
 
-          <div className="flex-1 space-y-5 overflow-y-auto">
+          <div className={`flex-1 space-y-5 overflow-y-auto pr-1 ${SCROLLBAR}`}>
           {rightTab === 'results' && (
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-[0_2px_20px_-4px_rgba(15,23,42,0.06)] backdrop-blur-sm">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <p className="text-sm font-bold uppercase tracking-wide text-blue-600">{t.generateWorkspace.generatedSetEyebrow}</p>
-                <h2 className="mt-2 text-2xl font-black text-slate-950">{safeTestCasesCount} {t.generateWorkspace.testCasesSuffix}</h2>
+                <p className="text-xs font-black uppercase tracking-widest text-blue-600">{t.generateWorkspace.generatedSetEyebrow}</p>
+                <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-950">{safeTestCasesCount} {t.generateWorkspace.testCasesSuffix}</h2>
               </div>
               {review && (
-                <div className="text-right">
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{t.generateWorkspace.coverageLabel}</p>
-                  <p className={`text-4xl font-black ${coverageTone}`}>{review.coverage_score}%</p>
+                <div className="rounded-2xl bg-slate-50 px-4 py-2 text-right">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{t.generateWorkspace.coverageLabel}</p>
+                  <p className={`text-3xl font-black ${coverageTone}`}>{review.coverage_score}%</p>
                 </div>
               )}
             </div>
@@ -524,9 +557,20 @@ async function runEnhance() {
                   </div>
                 </div>
               ))}
-              {safeTestCasesCount === 0 && <div className="rounded-2xl border border-dashed border-slate-200 p-10 text-center text-slate-500">{t.generateWorkspace.emptyState}</div>}
+              {safeTestCasesCount === 0 && (
+                <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center text-slate-500">
+                  <svg className="h-8 w-8 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <span className="text-sm">{t.generateWorkspace.emptyState}</span>
+                </div>
+              )}
               {safeTestCasesCount > 0 && (
-                <button type="button" onClick={() => setRightTab('review')} className="w-full rounded-2xl border border-dashed border-purple-200 bg-purple-50/50 py-3 text-sm font-bold text-purple-700 hover:bg-purple-50">
+                <button
+                  type="button"
+                  onClick={() => setRightTab('review')}
+                  className="w-full rounded-2xl border border-dashed border-purple-200 bg-purple-50/50 py-3 text-sm font-bold text-purple-700 transition-all hover:border-purple-300 hover:bg-purple-50 hover:shadow-sm"
+                >
                   Bộ test case đã sẵn sàng → Chuyển sang Review & Enhance
                 </button>
               )}
@@ -536,25 +580,25 @@ async function runEnhance() {
 
           {/* ── Review Card ── */}
           {rightTab === 'review' && (
-          <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-[0_2px_20px_-4px_rgba(15,23,42,0.06)] backdrop-blur-sm">
             <div className="mb-5">
-              <p className="text-sm font-bold uppercase tracking-wide text-purple-600">Bước 1 · Chọn nguồn cần review</p>
-              <h2 className="mt-1 text-xl font-black text-slate-950">Review & Enhance với AI</h2>
-              <p className="mt-1 text-sm text-slate-500">AI sẽ chấm coverage so với requirement, chỉ ra lỗ hổng và cho phép tự động cải thiện bộ test case.</p>
+              <p className="text-xs font-black uppercase tracking-widest text-purple-600">Bước 1 · Chọn nguồn cần review</p>
+              <h2 className="mt-1 text-xl font-black tracking-tight text-slate-950">Review & Enhance với AI</h2>
+              <p className="mt-1 text-sm leading-6 text-slate-500">AI sẽ chấm coverage so với requirement, chỉ ra lỗ hổng và cho phép tự động cải thiện bộ test case.</p>
             </div>
 
             {/* Toggle mode */}
-            <div className="mb-5 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
+            <div className="mb-5 grid grid-cols-2 gap-1.5 rounded-2xl bg-slate-100 p-1">
               <button
                 onClick={() => setReviewMode('generated')}
-                className={`rounded-xl px-3 py-2.5 text-xs font-bold transition-colors ${reviewMode === 'generated' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-200 ${reviewMode === 'generated' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 Bộ vừa generate
                 <span className="mt-0.5 block font-normal text-[10px] text-slate-400">{safeTestCasesCount} test case ở tab Kết quả</span>
               </button>
               <button
                 onClick={() => setReviewMode('imported')}
-                className={`rounded-xl px-3 py-2.5 text-xs font-bold transition-colors ${reviewMode === 'imported' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                className={`rounded-xl px-3 py-2.5 text-xs font-bold transition-all duration-200 ${reviewMode === 'imported' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
               >
                 File Excel import
                 <span className="mt-0.5 block font-normal text-[10px] text-slate-400">Review bộ test case cũ từ .xlsx</span>
@@ -564,7 +608,7 @@ async function runEnhance() {
             {/* Import file area (chỉ hiện khi mode = imported) */}
             {reviewMode === 'imported' && (
               <div className="mb-5 rounded-2xl border border-slate-100 bg-slate-50/60 p-4">
-                <label className="flex cursor-pointer flex-col items-center justify-center gap-1 rounded-2xl border-2 border-dashed border-slate-200 bg-white p-4 text-center hover:border-purple-300">
+                <label className="flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-slate-200 bg-white p-4 text-center transition-all hover:border-purple-300 hover:bg-purple-50/20">
                   <input
                     type="file"
                     accept=".xlsx,.xls"
@@ -575,13 +619,16 @@ async function runEnhance() {
                       event.target.value = '';
                     }}
                   />
+                  <svg className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M12 12v9m0-9l-3 3m3-3l3 3" />
+                  </svg>
                   <span className="text-sm font-semibold text-slate-700">Chọn file .xlsx để review</span>
                   <span className="text-xs text-slate-400">File sẽ được parse và review bởi AI</span>
                 </label>
                 {importedReviewFileName && (
                   <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
                     <span className="font-semibold text-slate-700">{importedReviewFileName} ({importedReviewCases.length} cases)</span>
-                    <button type="button" onClick={() => { setImportedReviewCases([]); setImportedReviewFileName(''); setImportedReview(null); setShowImportedCases(false); }} className="font-bold text-red-600 hover:underline">Xóa</button>
+                    <button type="button" onClick={() => { setImportedReviewCases([]); setImportedReviewFileName(''); setImportedReview(null); setShowImportedCases(false); }} className="font-bold text-red-500 transition-colors hover:text-red-600 hover:underline">Xóa</button>
                   </div>
                 )}
 
@@ -591,21 +638,21 @@ async function runEnhance() {
                       <button
                         type="button"
                         onClick={() => setShowImportedCases((v) => !v)}
-                        className="text-xs font-bold text-purple-600 hover:underline"
+                        className="text-xs font-bold text-purple-600 transition-colors hover:text-purple-700 hover:underline"
                       >
                         {showImportedCases ? 'Ẩn danh sách test case' : `Xem ${importedReviewCases.length} test case`}
                       </button>
                       <button
                         type="button"
                         onClick={exportImportedExcel}
-                        className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 hover:border-emerald-200"
+                        className="rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 transition-all hover:border-emerald-200 hover:shadow-sm"
                       >
                         Export Excel (.xlsx)
                       </button>
                     </div>
 
                     {showImportedCases && (
-                      <div className="mt-3 max-h-96 space-y-5 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 p-4">
+                      <div className={`mt-3 max-h-96 space-y-5 overflow-y-auto rounded-2xl border border-slate-100 bg-slate-50/50 p-4 ${SCROLLBAR}`}>
                         {Object.entries(groupedImportedCases).map(([category, items]) => (
                           <div key={category}>
                             <h3 className="mb-3 text-xs font-black uppercase tracking-wide text-slate-500">{getCategoryLabel(category as TestCaseCategory)}</h3>
@@ -627,13 +674,13 @@ async function runEnhance() {
               <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-700">Chưa có test case nào được generate. Hãy generate ở bước 1 trước, hoặc chuyển sang "File Excel import".</p>
             )}
 
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-purple-600">Bước 2 · Chạy review & xem kết quả</p>
-            {reviewError && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 mb-3">{reviewError}</div>}
+            <p className="mb-2 text-xs font-black uppercase tracking-widest text-purple-600">Bước 2 · Chạy review & xem kết quả</p>
+            {reviewError && <div className="animate-[fadeIn_0.2s_ease] rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 mb-3">{reviewError}</div>}
 
             {/* Review result */}
             {(reviewMode === 'generated' ? review : importedReview) && (
-              <div className="space-y-4 mb-4">
-                <div className="flex items-center justify-between">
+              <div className="animate-[fadeIn_0.25s_ease] space-y-4 mb-4">
+                <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
                   <span className="text-sm font-bold text-slate-700">Coverage Score</span>
                   <span className={`text-2xl font-black ${(reviewMode === 'generated' ? review! : importedReview!).coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600'}`}>
                     {(reviewMode === 'generated' ? review! : importedReview!).coverage_score}%
@@ -642,13 +689,13 @@ async function runEnhance() {
 
                 {(reviewMode === 'generated' ? review! : importedReview!).requirement_gaps?.length > 0 && (
                   <div>
-                    <p className="text-xs font-bold uppercase text-amber-600 mb-2">Requirement Gaps</p>
+                    <p className="text-xs font-black uppercase tracking-wide text-amber-600 mb-2">Requirement Gaps</p>
                     <div className="space-y-2">
                       {(reviewMode === 'generated' ? review! : importedReview!).requirement_gaps.map((gap, i) => (
-                        <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
+                        <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm transition-shadow hover:shadow-sm">
                           <p className="font-bold text-amber-900">{gap.requirement_text}</p>
                           {gap.suggested_test_case && (
-                            <button onClick={() => (reviewMode === 'generated' ? acceptSuggestedCase : acceptSuggestedImportedCase)(gap.suggested_test_case!)} className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white hover:bg-amber-700">
+                            <button onClick={() => (reviewMode === 'generated' ? acceptSuggestedCase : acceptSuggestedImportedCase)(gap.suggested_test_case!)} className="mt-2 rounded-lg bg-amber-600 px-3 py-1 text-xs font-bold text-white transition-all hover:bg-amber-700 active:scale-[0.98]">
                               + Thêm test case đề xuất
                             </button>
                           )}
@@ -660,10 +707,10 @@ async function runEnhance() {
 
                 {(reviewMode === 'generated' ? review! : importedReview!).test_case_comments?.length > 0 && (
                   <div>
-                    <p className="text-xs font-bold uppercase text-slate-500 mb-2">Comments</p>
+                    <p className="text-xs font-black uppercase tracking-wide text-slate-500 mb-2">Comments</p>
                     <div className="space-y-2">
                       {(reviewMode === 'generated' ? review! : importedReview!).test_case_comments.map((comment, i) => (
-                        <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                        <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm transition-shadow hover:shadow-sm">
                           <p className="font-bold text-slate-900">{comment.test_case_code} – <span className="text-purple-600">{comment.issue_type}</span></p>
                           <p className="mt-1 text-slate-600">{comment.comment}</p>
                         </div>
@@ -679,7 +726,7 @@ async function runEnhance() {
               <button
                 disabled={isReviewing || (reviewMode === 'generated' && safeTestCasesCount === 0) || (reviewMode === 'imported' && importedReviewCases.length === 0)}
                 onClick={runReview}
-                className="rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50"
+                className="rounded-xl bg-gradient-to-r from-purple-600 to-fuchsia-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-purple-200 transition-all hover:shadow-md hover:shadow-purple-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
               >
                 {isReviewing ? 'Đang review...' : '▶ Chạy Review'}
               </button>
@@ -688,7 +735,7 @@ async function runEnhance() {
                 <button
                   disabled={isEnhancing}
                   onClick={runEnhance}
-                  className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-bold text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+                  className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-bold text-purple-700 transition-all hover:bg-purple-100 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isEnhancing ? 'Đang enhance...' : '✨ Enhance with AI'}
                 </button>
