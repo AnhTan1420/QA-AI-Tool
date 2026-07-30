@@ -330,6 +330,9 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
    - **Regex Tester** — Test patterns with live matching
    - **Hash Generator** — MD5, SHA-1, SHA-256
    - **Timestamp Converter** — Unix ↔ ISO 8601
+   - **Fake File Generator** — Generate dummy files (TXT, CSV, JSON, PNG, PDF) at chosen size for upload testing
+   - **Singapore NRIC/FIN Generator & Validator** — Generate and checksum-validate Singapore NRIC/FIN numbers for test data
+   - **Dummy Text Generator** — Generate placeholder text by word/sentence/paragraph count
 
 ---
 
