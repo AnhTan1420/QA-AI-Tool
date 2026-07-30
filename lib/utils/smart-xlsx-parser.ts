@@ -114,7 +114,7 @@ function parseSteps(raw: unknown): { step_number: number; action: string; expect
       steps.push({
         step_number: steps.length + 1,
         action: match1[1].trim(),
-        expected_result: (match1[2] || match1[3] || '').trim(),
+        expected_result: (match1[2] || match1[3] || '').trim() || 'Xem Final Expected Result',
       });
       continue;
     }
@@ -122,7 +122,7 @@ function parseSteps(raw: unknown): { step_number: number; action: string; expect
     // Nếu dòng này là "Expected: ..." thì gán cho step trước đó
     const matchExp = line.match(patternExpected);
     if (matchExp && steps.length > 0) {
-      steps[steps.length - 1].expected_result = matchExp[1].trim();
+      steps[steps.length - 1].expected_result = matchExp[1].trim() || 'Xem Final Expected Result';
       continue;
     }
 
@@ -133,7 +133,7 @@ function parseSteps(raw: unknown): { step_number: number; action: string; expect
       steps.push({
         step_number: steps.length + 1,
         action: line,
-        expected_result: nextMatch ? nextMatch[1].trim() : '',
+        expected_result: (nextMatch ? nextMatch[1].trim() : '') || 'Xem Final Expected Result',
       });
       i++; // skip next line
       continue;
@@ -143,7 +143,7 @@ function parseSteps(raw: unknown): { step_number: number; action: string; expect
     steps.push({
       step_number: steps.length + 1,
       action: line,
-      expected_result: '',
+      expected_result: 'Xem Final Expected Result',
     });
   }
 
