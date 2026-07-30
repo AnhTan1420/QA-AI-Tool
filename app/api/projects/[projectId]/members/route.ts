@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 const inviteSchema = z.object({
   email: z.string().email(),
-  role: z.enum(['qa', 'senior_qa', 'admin']).default('qa'),
+  role: z.enum(['qa', 'admin']).default('admin'),
 });
 
 /** Danh sach thanh vien cua 1 project, kem thong tin profile (RLS da gioi han theo project_members). */
