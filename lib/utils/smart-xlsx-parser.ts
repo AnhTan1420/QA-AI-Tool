@@ -16,7 +16,7 @@ const COLUMN_ALIASES: Record<keyof ColumnMapping, string[]> = {
   title: ['title', 'tiêu đề', 'test case title', 'name', 'summary', 'description', 'mô tả', 'case name', 'scenario'],
   category: ['category', 'loại', 'type', 'phân loại', 'test type', 'kind', 'tag', 'nhóm', 'group'],
   priority: ['priority', 'độ ưu tiên', 'mức độ', 'mức độ ưu tiên', 'severity', 'level', 'rank'],
-  preconditions: ['preconditions', 'pre-conditions', 'điều kiện tiên quyết', 'precondition', 'prerequisite', 'setup', 'chuẩn bị', 'điều kiện'],
+  preconditions: ['preconditions', 'pre-conditions', 'pre condition', 'điều kiện tiên quyết', 'precondition', 'prerequisite', 'setup', 'chuẩn bị', 'điều kiện'],
   testData: ['test data', 'dữ liệu test', 'data', 'input data', 'test input', 'dữ liệu', 'input', 'sample data'],
   steps: ['steps', 'các bước', 'step detail', 'procedure', 'actions', 'test steps', 'procedure', 'actions to perform', 'hành động', 'thao tác'],
   expectedResult: ['final expected result', 'expected result', 'kết quả mong đợi', 'result', 'expected', 'outcome', 'kết quả', 'final result', 'expected outcome'],
@@ -38,10 +38,15 @@ function detectColumns(headers: unknown[]): ColumnMapping {
   const usedIndexes = new Set<number>();
 
   const findBestMatch = (aliases: string[]): number | undefined => {
+    // Chuan hoa ca alias theo cung quy tac voi header (bo dau '-'/'_', gop
+    // khoang trang) - neu khong, alias viet lien ("pre-conditions") se khong
+    // khop voi header co dau cach quanh dau gach noi ("PRE - CONDITION" ->
+    // "pre condition") du ve ngu nghia la cung 1 cot.
+    const normalizedAliases = aliases.map((a) => normalizeHeader(a));
     for (let i = 0; i < headers.length; i++) {
       if (usedIndexes.has(i)) continue;
       const h = normalizeHeader(headers[i]);
-      if (aliases.some((a) => h === a || h.includes(a) || a.includes(h))) {
+      if (normalizedAliases.some((a) => h === a || h.includes(a) || a.includes(h))) {
         usedIndexes.add(i);
         return i;
       }
@@ -150,11 +155,11 @@ function parseSteps(raw: unknown): { step_number: number; action: string; expect
   return steps.length > 0 ? steps : [{ step_number: 1, action: str, expected_result: 'Xem Final Expected Result' }];
 }
 
-function parseCategory(raw: unknown): TestCaseCategory {
+function parseCategory(raw: unknown, title?: string): TestCaseCategory {
   const str = String(raw ?? '').toLowerCase().trim().replace(/[\s/-]+/g, '_');
   if (VALID_CATEGORIES.includes(str)) return str as TestCaseCategory;
 
-  // Fuzzy match
+  // Fuzzy match giá trị cột category thô (VD "Function", "GUI/Function"...)
   const map: Record<string, TestCaseCategory> = {
     positive: 'positive', happy: 'positive', main: 'positive', success: 'positive',
     negative: 'negative', fail: 'negative', error: 'negative', invalid: 'negative',
@@ -171,16 +176,49 @@ function parseCategory(raw: unknown): TestCaseCategory {
   for (const [key, val] of Object.entries(map)) {
     if (str.includes(key)) return val;
   }
+
+  // Nhiều sheet QA nội bộ dùng hệ "checkpoint category" riêng (VD "Function",
+  // "GUI/Function"...) không khớp taxonomy của hệ thống. Trước khi mặc định về
+  // "positive", thử suy luận thêm từ chính tiêu đề test case (title thường bắt
+  // đầu bằng "Verify that ... rejects/hides/is invalid..." rất rõ nghĩa).
+  if (title) {
+    const inferred = inferCategoryFromTitle(title);
+    if (inferred) return inferred;
+  }
+
   return 'positive';
+}
+
+function inferCategoryFromTitle(title: string): TestCaseCategory | null {
+  const t = title.toLowerCase();
+  const rules: [RegExp, TestCaseCategory][] = [
+    [/\b(reject|rejects|invalid|fail|fails|error|cannot|can not|incorrect|denied|not display(ed)?|does not|is not|restrict(s|ed)?)\b/, 'negative'],
+    [/\b(empty|blank|zero|negative amount|maximum|minimum|boundary|exceed|limit|null)\b/, 'boundary'],
+    [/\b(permission|role|access|unauthorized|xss|sql injection)\b/, 'security'],
+    [/\b(display|shown|hidden|hide|button|column|template|format|dropdown|ui\b)\b/, 'ui_ux'],
+    [/\bregression\b/, 'regression'],
+    [/\b(export|import file|api\b|accounting entry|journal|callback)\b/, 'integration'],
+  ];
+  for (const [re, cat] of rules) {
+    if (re.test(t)) return cat;
+  }
+  return null;
 }
 
 function parsePriority(raw: unknown): GeneratedTestCase['priority'] {
   const str = String(raw ?? '').toUpperCase().trim();
   if (VALID_PRIORITIES.includes(str)) return str as GeneratedTestCase['priority'];
-  // Nếu là số
-  if (str === '1' || str.includes('HIGH')) return 'P1';
-  if (str === '2' || str.includes('MEDIUM')) return 'P2';
-  if (str === '3' || str.includes('LOW')) return 'P3';
+  // Số thứ tự thô
+  if (str === '1') return 'P1';
+  if (str === '2') return 'P2';
+  if (str === '3') return 'P3';
+  if (str === '4') return 'P4';
+  // Các thang mức độ phổ biến trong sheet QA nội bộ (Jira/TestRail/BugHerd...):
+  // Blocker/Critical > Major/High > Normal/Medium > Minor/Low/Trivial.
+  if (str.includes('BLOCKER') || str.includes('CRITICAL') || str.includes('HIGH')) return 'P1';
+  if (str.includes('MAJOR') || str.includes('MEDIUM')) return 'P2';
+  if (str.includes('NORMAL') || str.includes('LOW')) return 'P3';
+  if (str.includes('MINOR') || str.includes('TRIVIAL')) return 'P4';
   return 'P2';
 }
 
@@ -224,7 +262,7 @@ export function parseSmartXlsx(rows: Record<string, unknown>[]): {
 
     const steps = parseSteps(get('steps'));
     const testData = parseTestData(get('testData'));
-    const category = parseCategory(get('category'));
+    const category = parseCategory(get('category'), title);
     const priority = parsePriority(get('priority'));
     const finalExpected = String(get('expectedResult') ?? '').trim() || 'N/A';
 
