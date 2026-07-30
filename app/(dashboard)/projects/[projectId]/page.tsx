@@ -11,6 +11,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
 
   let projectName = projectId;
   let projectDescription = '';
+  let isAdmin = false;
 
   if (projectId !== 'demo') {
     const supabase = await createClient();
@@ -18,6 +19,19 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
     if (data) {
       projectName = data.name;
       projectDescription = data.description ?? '';
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      const { data: membership } = await supabase
+        .from('project_members')
+        .select('role')
+        .eq('project_id', projectId)
+        .eq('user_id', user.id)
+        .maybeSingle();
+      isAdmin = membership?.role === 'admin';
     }
   }
 
@@ -29,7 +43,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
         <p className="text-body mt-2 max-w-2xl">{projectDescription || t.projectDetail.defaultDescription}</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className={`grid gap-4 ${isAdmin || projectId === 'demo' ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
         <Link
           href={`/projects/${projectId}/generate`}
           className="group relative overflow-hidden rounded-[var(--radius-card)] bg-brand-600 p-6 text-white shadow-[var(--shadow-soft)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[var(--shadow-glow-brand)]"
@@ -53,13 +67,15 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
           <p className="text-body mt-2 text-sm">{t.projectDetail.testCasesDesc}</p>
         </Link>
 
-        <Link href={`/projects/${projectId}/team`} className="surface-card-interactive p-6">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-ink-100 text-ink-700">
-            <Users className="h-5 w-5" strokeWidth={2.25} />
-          </span>
-          <h2 className="text-h3 mt-4">{t.projectDetail.teamTitle}</h2>
-          <p className="text-body mt-2 text-sm">{t.projectDetail.teamDesc}</p>
-        </Link>
+        {(isAdmin || projectId === 'demo') && (
+          <Link href={`/projects/${projectId}/team`} className="surface-card-interactive p-6">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-ink-100 text-ink-700">
+              <Users className="h-5 w-5" strokeWidth={2.25} />
+            </span>
+            <h2 className="text-h3 mt-4">{t.projectDetail.teamTitle}</h2>
+            <p className="text-body mt-2 text-sm">{t.projectDetail.teamDesc}</p>
+          </Link>
+        )}
       </div>
     </div>
   );

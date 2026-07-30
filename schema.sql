@@ -338,14 +338,14 @@ create policy test_cases_member_update on test_cases for update using (
   )
 );
 
--- Xoa test case chi danh cho senior_qa/admin cua project - tranh QA thuong xoa nham
--- case nguoi khac dang review.
+-- Xoa test case: cho phep moi thanh vien project (qa hoac admin) - truoc day
+-- chi gioi han senior_qa/admin nhung thuc te qa van can tu xoa duoc case cua minh.
 drop policy if exists test_cases_senior_delete on test_cases;
 create policy test_cases_senior_delete on test_cases for delete using (
   exists (
     select 1 from test_case_sets s
     join project_members pm on pm.project_id = s.project_id
-    where s.id = test_cases.set_id and pm.user_id = auth.uid() and pm.role in ('senior_qa', 'admin')
+    where s.id = test_cases.set_id and pm.user_id = auth.uid() and pm.role in ('qa', 'senior_qa', 'admin')
   )
 );
 

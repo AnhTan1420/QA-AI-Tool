@@ -1,7 +1,9 @@
 'use client';
 
 import { use, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
+  ArrowLeft,
   UserPlus,
   X,
   Search,
@@ -164,7 +166,13 @@ export default function TeamPage({ params }: { params: Promise<{ projectId: stri
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-eyebrow">{t.team.eyebrow}</p>
+          <Link
+            href={`/projects/${projectId}`}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:text-brand-700"
+          >
+            <ArrowLeft className="h-4 w-4" /> {t.common.back}
+          </Link>
+          <p className="text-eyebrow mt-4">{t.team.eyebrow}</p>
           <h1 className="text-h1 mt-2">{t.team.title}</h1>
           <p className="text-body mt-2 max-w-2xl">{t.team.subtitle}</p>
         </div>
