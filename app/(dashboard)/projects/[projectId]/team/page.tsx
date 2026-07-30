@@ -17,7 +17,7 @@ export default function TeamPage({ params }: { params: Promise<{ projectId: stri
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<Member['role']>('qa');
+  const [role, setRole] = useState<Member['role']>('admin');
   const [isInviting, setIsInviting] = useState(false);
 
   async function loadMembers() {
