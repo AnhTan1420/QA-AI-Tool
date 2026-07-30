@@ -1,11 +1,13 @@
 -- =========================================================================
--- MIGRATION NOTE (2026): role "senior_qa" da bi go bo khoi he thong.
--- Neu database cua ban duoc tao truoc thay doi nay va co the con user voi
--- role = 'senior_qa', hay chay 2 lenh sau TRUOC khi ap dung lai file nay,
--- de tranh loi vi pham check constraint:
+-- Luu y: schema nay duoc dong bo lai cho KHOP voi database Supabase hien tai
+-- cua project (van con role "senior_qa" o profiles/project_members va trong
+-- 2 policy tren test_cases). Neu sau nay muon bo han senior_qa, hay chay:
 --
 --   update profiles set role = 'admin' where role = 'senior_qa';
 --   update project_members set role = 'admin' where role = 'senior_qa';
+--
+-- roi moi doi cac dong check(...) va policy ben duoi tu ('qa','senior_qa','admin')
+-- ve ('qa','admin').
 -- =========================================================================
 
 create extension if not exists vector;
@@ -14,7 +16,7 @@ create extension if not exists pgcrypto; -- dam bao gen_random_uuid() luon co sa
 create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text,
-  role text not null default 'qa' check (role in ('qa','admin')),
+  role text not null default 'qa' check (role in ('qa','senior_qa','admin')),
   avatar_url text,
   created_at timestamptz default now()
 );
@@ -30,7 +32,7 @@ create table if not exists projects (
 create table if not exists project_members (
   project_id uuid references projects(id) on delete cascade,
   user_id uuid references profiles(id) on delete cascade,
-  role text not null default 'qa' check (role in ('qa','admin')),
+  role text not null default 'qa' check (role in ('qa','senior_qa','admin')),
   joined_at timestamptz default now(),
   primary key (project_id, user_id)
 );
@@ -196,6 +198,9 @@ create policy projects_select_member on projects for select using (
 drop policy if exists projects_insert_owner on projects;
 create policy projects_insert_owner on projects for insert with check (owner_id = auth.uid());
 
+-- Chi admin cua project moi duoc xoa project (dung is_project_admin dinh nghia ben duoi,
+-- nen policy nay duoc tao lai o cuoi sau khi ham da ton tai - xem duoi).
+
 -- ----------------------------------------------------------------------------
 -- Helper functions SECURITY DEFINER de kiem tra quyen thanh vien/admin project.
 -- BAT BUOC dung cach nay thay vi EXISTS(select ... from project_members ...) truc tiep
@@ -234,6 +239,11 @@ $$;
 drop policy if exists project_members_select_member on project_members;
 create policy project_members_select_member on project_members for select using (
   is_project_member(project_members.project_id)
+);
+
+drop policy if exists projects_delete_admin on projects;
+create policy projects_delete_admin on projects for delete using (
+  is_project_admin(projects.id)
 );
 
 -- Admin cua project duoc quan ly toan bo thanh vien. Rieng INSERT con cho phep
@@ -324,18 +334,18 @@ create policy test_cases_member_update on test_cases for update using (
     select 1 from test_case_sets s
     join project_members pm on pm.project_id = s.project_id
     where s.id = test_cases.set_id and pm.user_id = auth.uid()
-      and (test_cases.status <> 'approved' or pm.role = 'admin')
+      and (test_cases.status <> 'approved' or pm.role in ('senior_qa','admin'))
   )
 );
 
--- Xoa test case chi danh cho admin cua project - tranh QA thuong xoa nham
+-- Xoa test case chi danh cho senior_qa/admin cua project - tranh QA thuong xoa nham
 -- case nguoi khac dang review.
 drop policy if exists test_cases_senior_delete on test_cases;
 create policy test_cases_senior_delete on test_cases for delete using (
   exists (
     select 1 from test_case_sets s
     join project_members pm on pm.project_id = s.project_id
-    where s.id = test_cases.set_id and pm.user_id = auth.uid() and pm.role = 'admin'
+    where s.id = test_cases.set_id and pm.user_id = auth.uid() and pm.role in ('senior_qa', 'admin')
   )
 );
 
