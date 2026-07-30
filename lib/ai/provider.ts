@@ -5,10 +5,14 @@ import { generateWithGroq } from "./groq";
 export type AITask = 'generation' | 'review' | 'classification';
 
 /**
- * Model routing theo tac vu (muc II cua spec):
- * - generation / review: model manh nhat (AI_MODEL_GENERATION / AI_MODEL_REVIEW)
- * - classification: model nhe/re hon (AI_MODEL_CLASSIFICATION)
- * Moi bien deu doc tu .env - khong hard-code model ID trong code.
+ * Model routing theo tác vụ (mục II của spec):
+ * - generation / review: model mạnh nhất (AI_MODEL_GENERATION / AI_MODEL_REVIEW)
+ * - classification: model nhẹ/rẻ hơn (AI_MODEL_CLASSIFICATION)
+ * Mỗi biến đều đọc từ .env - không hard-code model ID trong code.
+ * 
+ * Lưu ý: maxOutputTokens được cấu hình cố định ở từng provider:
+ *   - Gemini: 4096 tokens (lib/ai/gemini.ts)
+ *   - Groq: 3500 tokens   (lib/ai/groq.ts)
  */
 function getGeminiModelsForTask(task: AITask): string[] {
   const primaryByTask: Record<AITask, string | undefined> = {
@@ -22,22 +26,22 @@ function getGeminiModelsForTask(task: AITask): string[] {
   const models = [primary, fallback].filter((m): m is string => Boolean(m));
   if (models.length === 0) {
     throw new Error(
-      `Thieu bien moi truong model cho tac vu "${task}" (vi du AI_MODEL_${task.toUpperCase()}).`
+      `Thiếu biến môi trường model cho tác vụ "${task}" (ví dụ AI_MODEL_${task.toUpperCase()}).`
     );
   }
   return models;
 }
 
 function getGroqModelsForTask(): string[] {
-  // Groq chi dung nhu fallback toc do cao khi Gemini loi - dung chung 1 cap model
-  // cho moi tac vu, khai bao qua GROQ_MODEL_PRIMARY / GROQ_MODEL_FALLBACK.
+  // Groq chỉ dùng như fallback tốc độ cao khi Gemini lỗi - dùng chung 1 cặp model
+  // cho mọi tác vụ, khai báo qua GROQ_MODEL_PRIMARY / GROQ_MODEL_FALLBACK.
   return [process.env.GROQ_MODEL_PRIMARY, process.env.GROQ_MODEL_FALLBACK].filter(
     (m): m is string => Boolean(m)
   );
 }
 
 /**
- * Goi AI sinh JSON theo tac vu (Gemini truoc, fallback Groq khi Gemini loi ha tang/rate-limit).
+ * Gọi AI sinh JSON theo tác vụ (Gemini trước, fallback Groq khi Gemini lỗi hạ tầng/rate-limit).
  */
 export async function runAIAgent(fullPrompt: string, task: AITask = 'generation') {
   const systemPrompt = "You are a professional QA Assistant. Return ONLY valid JSON format.";
@@ -59,16 +63,16 @@ export async function runAIAgent(fullPrompt: string, task: AITask = 'generation'
 }
 
 /**
- * Tao vector embedding (RAG) bang Gemini Embedding API.
+ * Tạo vector embedding (RAG) bằng Gemini Embedding API.
  */
 export async function createEmbedding(content: string) {
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error('Thieu GOOGLE_GEMINI_API_KEY trong bien moi truong server.');
+    throw new Error('Thiếu GOOGLE_GEMINI_API_KEY trong biến môi trường server.');
   }
   const embeddingModel = process.env.AI_MODEL_EMBEDDING;
   if (!embeddingModel) {
-    throw new Error('Thieu bien moi truong AI_MODEL_EMBEDDING.');
+    throw new Error('Thiếu biến môi trường AI_MODEL_EMBEDDING.');
   }
 
   const ai = new GoogleGenAI({ apiKey });
