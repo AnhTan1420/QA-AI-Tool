@@ -433,6 +433,7 @@ WHERE tcs.project_id = 'uuid';
 - [ ] **RAG Pipeline** — Complete flow: upload old test cases → auto-embed → retrieve during generation
 - [ ] **Requirement Traceability Matrix** — `requirement_traceability` table exists, needs UI
 - [ ] **AI Document Reader** — Enhance AI to read and parse Figma designs, Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams for smarter test case generation
+- [ ] **Can access project environemt** - read the UI, auto create test data
 
 ### Phase 3 — Planned
 
