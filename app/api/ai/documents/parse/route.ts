@@ -6,7 +6,7 @@ import { parseDocumentRequestSchema, documentExtractionResultSchema, type Parsed
 import { extractDocxText, extractPdfText, capText } from '@/lib/documents/text-extractors';
 import { fetchAndParseFigmaFile } from '@/lib/documents/figma-client';
 
-export const maxDuration = 90;
+export const maxDuration = 120;
 export const runtime = 'nodejs';
 
 /**

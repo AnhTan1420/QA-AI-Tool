@@ -6,7 +6,7 @@ import { generateRequestSchema, generatedTestCasesSchema, generationAnalysisSche
 import { unwrapArrayResponse } from '@/lib/ai/parse';
 import { computeDocumentCoverage } from '@/lib/documents/coverage';
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const runtime = 'nodejs';
 
 /**
