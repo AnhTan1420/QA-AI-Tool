@@ -5,6 +5,12 @@ import { SCROLLBAR } from './shared';
 import { DocumentReaderPanel } from './document-reader-panel';
 import type { GenerateWorkspaceState } from './use-generate-workspace';
 
+/** Danh sach preset cho dropdown "Ngon ngu" (ngon ngu OUTPUT cua test case sinh
+ * ra - khac voi ngon ngu giao dien UI o LanguageToggle). Truoc day la 1 o input
+ * text tu do go, doi thanh dropdown de tranh nguoi dung go sai/khong nhat quan
+ * ten ngon ngu (VD "Viet", "vi", "Vietnamese" deu co the bi AI hieu khac nhau). */
+const LANGUAGE_OPTIONS = ['Tiếng Việt', 'English', '日本語', '한국어', '中文', 'Français', 'Español', 'Deutsch'];
+
 /** Left column: requirement input, old-cases import, language/detail, taxonomy, and actions. */
 export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }) {
   const { t } = workspace;
@@ -81,7 +87,21 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <label className="block">
             <span className="text-xs font-semibold text-slate-500">{t.generateWorkspace.languageLabel}</span>
-            <input value={workspace.language} onChange={(event) => workspace.setLanguage(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 text-sm outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100" />
+            <select
+              value={workspace.language}
+              onChange={(event) => workspace.setLanguage(event.target.value)}
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 text-sm outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100"
+            >
+              {/* Neu gia tri dang luu (VD tu du an cu, hoac tu ngon ngu UI mac dinh)
+                  khong khop bat ky preset nao ben duoi, them no nhu 1 option rieng
+                  de khong "mat" du lieu dang co cua workspace.language. */}
+              {!LANGUAGE_OPTIONS.includes(workspace.language) && workspace.language && (
+                <option value={workspace.language}>{workspace.language}</option>
+              )}
+              {LANGUAGE_OPTIONS.map((lang) => (
+                <option key={lang} value={lang}>{lang}</option>
+              ))}
+            </select>
           </label>
           <label className="block">
             <span className="text-xs font-semibold text-slate-500">{t.generateWorkspace.detailLevelLabel}</span>
