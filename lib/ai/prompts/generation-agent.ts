@@ -73,6 +73,17 @@ export function buildGenerationPrompt(input: GenerationPromptInput) {
   const categoriesForMin = input.selected_categories.length > 0 ? input.selected_categories : ['positive', 'negative', 'boundary'];
   const minCases = perCategoryMin * categoriesForMin.length;
 
+  // Truoc day khong co rang buoc nao ve DO CHI TIET cua tung step rieng le - chi co
+  // "detail_level" duoc nhet vao text "Detail level: standard" o cuoi prompt ma
+  // khong co huong dan cu the nao gan voi no, nen model thuong viet step qua so
+  // sai ("Nhap du lieu hop le", "Submit form", "Kiem tra ket qua") du prompt da
+  // yeu cau "ONE atomic action per step". Ep 1 SO STEP TOI THIEU cho tung case
+  // theo detail_level, cong voi yeu cau cu the hoa (ten field/nut/man hinh, gia
+  // tri that lay tu test_data) o PHASE 2.6 ben duoi, de "detail_level" thuc su
+  // anh huong den DO SAU cua tung case, khong chi so LUONG case.
+  const minStepsByDetail: Record<string, number> = { concise: 3, standard: 5, detailed: 7 };
+  const minSteps = minStepsByDetail[input.detail_level] ?? 5;
+
   const oldCasesFormatted = input.retrieved_old_test_cases.length > 0
     ? input.retrieved_old_test_cases.map((tc, idx) => `
 === REFERENCE TEST CASE #${idx + 1} ===
@@ -223,11 +234,18 @@ PHASE 2: GENERATION STANDARDS (INVIOABLE)
    • Include both valid and invalid data sets.
    • For boundary tests, explicitly state the boundary value (reuse the exact values you listed in analysis.fields_ep_bva).
 
-6. STEPS:
-   • ONE atomic action per step. NEVER combine actions.
-   • Each step MUST have an expected_result that is OBSERVABLE and VERIFIABLE.
-   • BAD: "System processes correctly"
-   • GOOD: "System returns HTTP 400 with error code AUTH_003 and does NOT create session token"
+6. STEPS — GRANULARITY BAR (this is the #1 quality gate; a case failing this gets INSTANT REJECTION):
+   • MINIMUM ${minSteps} steps per test case at this detail_level (setup/navigation steps count). A case with fewer steps almost always means 2+ actions got silently merged into one — split it.
+   • ONE atomic user/system action per step. NEVER combine actions (e.g. "Nhập email và mật khẩu rồi bấm Login" is 3 steps, not 1: enter email → enter password → click Login).
+   • Every "action" MUST name the CONCRETE UI element/target, not a generic verb:
+     - Reference the exact screen/page/section name (from a document atom's "screen_or_section" if one was attached, otherwise from the requirement text).
+     - Reference the exact field/button/link label as it would appear to a user (e.g. "Nhấn nút 'Xác nhận thanh toán'", NOT "Submit the form").
+     - Reference the exact value being entered, taken verbatim from this case's own "test_data" (e.g. "Nhập '9999999999999999' vào field 'Số thẻ'", NOT "Nhập số thẻ không hợp lệ").
+   • BAD (too vague, INSTANT REJECTION): "Nhập dữ liệu hợp lệ", "Submit the form", "Kiểm tra kết quả", "Verify the response", "Thao tác trên hệ thống".
+   • GOOD: "1. Mở màn hình 'Thanh toán đơn hàng' → Expected: field 'Số thẻ' hiển thị placeholder 'XXXX XXXX XXXX XXXX'." / "2. Nhập '4111111111111111' vào field 'Số thẻ' → Expected: field không hiển thị lỗi, border chuyển sang màu xanh (valid state)." / "3. Nhấn nút 'Xác nhận thanh toán' → Expected: hệ thống trả về HTTP 200, hiển thị toast 'Thanh toán thành công', đơn hàng chuyển trạng thái 'PAID'."
+   • Each step's expected_result MUST be OBSERVABLE and VERIFIABLE at THAT step (not deferred entirely to final_expected_result) — status code, error code, exact UI text/toast/label, DB field value, log entry, etc.
+   • Setup/navigation steps (login, open a screen, seed a precondition) count toward the ${minSteps}-step minimum and still need their own expected_result — do not fold them silently into "preconditions" if they are actions the tester actually performs during the test, not state that already exists beforehand.
+   • The LAST step MUST be the one action/assertion that most directly produces the case's "final_expected_result" (e.g. the final read-back/verification step), so a reader can see the causal link between the last action and the final outcome.
 
 7. FINAL EXPECTED RESULT:
    • MUST describe the end-state of system, database, UI, and any side effects.
@@ -269,6 +287,7 @@ CHECKLIST:
 □ Every document atom_id from PHASE 0.5 (if any were attached) appears both in analysis.document_atom_plan and in source_requirement_ids of ≥1 test case — 100% mapping, zero orphan atoms.
 □ Every analysis.risk_ranking entry's resulting_priority matches the priority of its corresponding test case.
 □ No two cases test the exact same condition (deduplication).
+□ Every test case has AT LEAST ${minSteps} steps, and no step's "action" is a vague verb without a concrete field/button/screen name and a real value from that case's own test_data (recheck PHASE 2.6 — this is the single most common rejection reason).
 □ Every expected_result contains a measurable/observable criterion.
 □ Every Critical business path has ≥1 negative case.
 □ At least 20% of cases are edge/adversarial/chaos scenarios (from analysis.attack_and_chaos_vectors).
@@ -286,6 +305,7 @@ ${input.requirement_description || '(empty — see mục 2 / PHASE 0.5 above)'}
 [MANDATORY CONFIGURATION]
 - Categories (MUST cover all): ${categoryConstraint}
 - Minimum cases: ${minCases} total, with AT LEAST ${perCategoryMin} cases per selected category (see PHASE 2.8)
+- Minimum steps per test case: ${minSteps} (see PHASE 2.6) — each step names a concrete field/button/screen and a real value from that case's test_data, not a generic verb
 - Language: ${input.language}
 - Detail level: ${input.detail_level}
 

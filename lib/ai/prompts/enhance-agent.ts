@@ -52,6 +52,8 @@ GATE 2 — Observability
 GATE 3 — Atomicity
 • Does each step contain EXACTLY ONE action?
 • If NO → split the step.
+• Does each step's "action" name a CONCRETE field/button/screen label and a real value (not "nhập dữ liệu hợp lệ", "submit form", "verify result")?
+• If NO → rewrite the action with the actual label/value, pulling the value from that case's own test_data.
 
 GATE 4 — Data Concreteness
 • Is every test data field filled with a real, specific value?
