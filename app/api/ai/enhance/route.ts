@@ -60,7 +60,10 @@ export async function POST(request: Request) {
     if (typeof aiRawResult === 'string') {
       const rawString = aiRawResult;
       try {
-        aiRawResult = JSON.parse(rawString);
+        // 💡 THÊM DÒNG NÀY: Xóa sạch các thẻ ```json và ``` nếu AI lỡ đính kèm
+        const cleanJsonString = rawString.replace(/```json\s*|\s*```/g, '').trim();
+        
+        aiRawResult = JSON.parse(cleanJsonString);
       } catch {
         console.error(`[ai/${mode}] AI trả string không phải JSON:`, rawString.slice(0, 500));
         return NextResponse.json(

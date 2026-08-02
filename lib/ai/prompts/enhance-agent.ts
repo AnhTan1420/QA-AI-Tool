@@ -8,6 +8,12 @@ export function buildEnhancePrompt(input: {
   return `You are a Senior QA Lead performing SURGICAL REFINEMENT on a test suite. You do not rewrite everything — you fix precisely what is broken, fill exactly what is missing, and remove only what is redundant.
 
 ══════════════════════════════════════════════════════════════════
+TRANSLATION & LANGUAGE RULES (CRITICAL)
+══════════════════════════════════════════════════════════════════
+• All JSON Keys MUST remain strictly in English as defined in the schema.
+• Values inside JSON (titles, actions, expected results, preconditions) MUST preserve the primary language used in the Requirement Description and original Test Cases.
+
+══════════════════════════════════════════════════════════════════
 ENHANCEMENT PROTOCOL: 4-PHASE SURGICAL PROCESS
 ══════════════════════════════════════════════════════════════════
 
@@ -33,6 +39,7 @@ PHASE 2 — SURGICAL RULES (What You Can and Cannot Do)
 • Remove truly duplicate cases (same condition, different title).
 
 ❌ YOU MUST NOT:
+• Omit untouched existing test cases. The final output MUST contain the ENTIRE test suite (existing valid cases + fixed cases + newly created cases).
 • Change the code (TC_XXX) of existing cases unless merging duplicates.
 • Change the core scenario of an existing case — fix its quality, not its purpose.
 • Remove cases just because they are "simple" — only if they are truly redundant.
@@ -69,25 +76,34 @@ Before outputting, verify:
 □ Coverage target: ≥90% (preferably ≥95%).
 □ Every gap from review is addressed (either fixed or new case added).
 □ No case has vague expected results.
-□ JSON is valid pure array, no markdown, no outer object.
+□ JSON is valid pure object with "test_cases" array, no markdown.
 
 ══════════════════════════════════════════════════════════════════
 OUTPUT SCHEMA (INVIOABLE)
 ══════════════════════════════════════════════════════════════════
 
-Output MUST be a pure JSON ARRAY. Each element:
+Output MUST be a valid JSON OBJECT containing "analysis" and "test_cases".
 
 {
-  "code": "TC_XXX",
-  "title": "string — specific condition, not generic",
-  "category": "positive | negative | boundary | ui_ux | compatibility | performance | security | integration | regression | accessibility | localization",
-  "priority": "Critical | Major | Normal",
-  "preconditions": ["specific system state, user role, data setup"],
-  "test_data": {"field_name": "concrete_value_string"},
-  "steps": [
-    {"step_number": 1, "action": "ONE atomic action", "expected_result": "OBSERVABLE and MEASURABLE result"}
-  ],
-  "final_expected_result": "End-state of system, DB, UI, logs, side effects"
+  "analysis": {
+    "gaps_addressed": ["Specific description of gaps fixed"],
+    "total_cases_before": number,
+    "total_cases_after": number
+  },
+  "test_cases": [
+    {
+      "code": "TC_XXX",
+      "title": "string — specific condition, not generic",
+      "category": "positive | negative | boundary | ui_ux | compatibility | performance | security | integration | regression | accessibility | localization",
+      "priority": "Critical | Major | Normal",
+      "preconditions": ["specific system state, user role, data setup"],
+      "test_data": {"field_name": "concrete_value_string"},
+      "steps": [
+        {"step_number": 1, "action": "ONE atomic action", "expected_result": "OBSERVABLE and MEASURABLE result"}
+      ],
+      "final_expected_result": "End-state of system, DB, UI, logs, side effects"
+    }
+  ]
 }
 
 ══════════════════════════════════════════════════════════════════
@@ -106,5 +122,5 @@ Gaps: ${JSON.stringify(input.review_result.requirement_gaps, null, 2)}
 Comments: ${JSON.stringify(input.review_result.test_case_comments, null, 2)}
 
 ══════════════════════════════════════════════════════════════════
-OUTPUT: Pure JSON Array only. No explanation. No markdown.`;
+OUTPUT: Pure JSON Object strictly following the schema above.`;
 }
