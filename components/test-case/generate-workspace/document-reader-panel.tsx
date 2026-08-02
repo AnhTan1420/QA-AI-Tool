@@ -76,6 +76,27 @@ export function DocumentReaderPanel({ workspace }: { workspace: GenerateWorkspac
         >
           {dr.figmaImportButton}
         </button>
+
+        <div className="flex items-center gap-2 py-0.5">
+          <span className="h-px flex-1 bg-slate-200" />
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{dr.figmaFileDivider}</span>
+          <span className="h-px flex-1 bg-slate-200" />
+        </div>
+
+        <label className="flex cursor-pointer items-center justify-center gap-1.5 rounded-xl border border-dashed border-slate-300 bg-white px-3 py-2 text-center text-xs font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:text-blue-600">
+          <input
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg,.webp"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) workspace.handleFigmaFileImport(file);
+              event.target.value = '';
+            }}
+          />
+          {workspace.isParsingDocument ? dr.parsing : dr.figmaFileUploadLabel}
+        </label>
+        <span className="text-[10px] text-slate-400">{dr.figmaFileHint}</span>
       </div>
 
       {workspace.documentError && <p className="mt-2 text-xs font-semibold text-red-600">{workspace.documentError}</p>}

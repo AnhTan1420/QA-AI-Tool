@@ -403,6 +403,34 @@ export function useGenerateWorkspace(projectId: string) {
     }
   }
 
+  /** Fallback for when the user has no Figma Personal Access Token / API access: upload
+   * a design EXPORTED out of Figma instead (PDF, PNG, JPEG, WebP — via Figma's own
+   * "Export" panel). This is intentionally routed through the SAME source_type as any
+   * diagram/ERD/UI-mockup image (`diagram_image`), because that's exactly what it is once
+   * exported — Gemini Vision reads it region-by-region, including multi-frame PDFs (Gemini
+   * natively treats PDF pages as images, no separate OCR/conversion step needed). */
+  async function handleFigmaFileImport(file: File) {
+    setIsParsingDocument(true);
+    setDocumentError('');
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+      const mimeType =
+        file.type || (ext === 'pdf' ? 'application/pdf' : `image/${ext === 'jpg' ? 'jpeg' : ext}`);
+
+      const parsed = await postJson<ParsedDocument>('/api/ai/documents/parse', {
+        source_type: 'diagram_image',
+        file_name: file.name,
+        mime_type: mimeType,
+        data_base64: await fileToBase64(file),
+      }, t.generateWorkspace.errors.requestFailed);
+      setDocuments((current) => [...current, parsed]);
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : 'Đọc file Figma export thất bại');
+    } finally {
+      setIsParsingDocument(false);
+    }
+  }
+
   function removeDocument(id: string) {
     setDocuments((current) => current.filter((doc) => doc.id !== id));
     setDocumentCoverage(null);
@@ -457,7 +485,7 @@ export function useGenerateWorkspace(projectId: string) {
     // AI Document Reader (Figma / Markdown / logic document / FS / ERD / diagram)
     documents, isParsingDocument, documentError, documentCoverage,
     figmaUrl, setFigmaUrl, figmaToken, setFigmaToken,
-    handleDocumentFile, handleFigmaImport, removeDocument,
+    handleDocumentFile, handleFigmaImport, handleFigmaFileImport, removeDocument,
 
     // Generate action + status
     isPending, handleGenerateClick, generatingStep,
