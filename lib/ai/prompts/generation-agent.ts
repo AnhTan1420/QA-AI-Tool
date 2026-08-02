@@ -1,4 +1,5 @@
 import type { GeneratedTestCase, TestCaseCategory } from '@/lib/validators/test-case';
+import type { ParsedDocument } from '@/lib/validators/document';
 
 export type GenerationPromptInput = {
   requirement_description: string;
@@ -6,6 +7,9 @@ export type GenerationPromptInput = {
   selected_categories: TestCaseCategory[];
   language: string;
   detail_level: string;
+  // AI Document Reader: Figma design / Markdown / logic document / FS / ERD / diagram,
+  // da duoc atomize truoc (xem PHASE 0.5 ben duoi + lib/documents/coverage.ts).
+  document_context: ParsedDocument[];
 };
 
 const JSON_SCHEMA_CONTRACT = `{
@@ -44,6 +48,16 @@ Final Expected Result: ${tc.final_expected_result}
 === END #${idx + 1} ===
 `).join('\n')
     : '(No old test cases were imported)';
+
+  const documentContextFormatted = input.document_context.length > 0
+    ? input.document_context.map((doc, idx) => `
+=== DOCUMENT #${idx + 1}: ${doc.title} (source: ${doc.source_type}) ===
+Summary: ${doc.summary}
+Atoms (${doc.atoms.length} — each MUST be mapped to source_requirement_ids of at least one test case):
+${doc.atoms.map(a => `  [${a.atom_id}] (${a.atom_type}${a.screen_or_section ? `, ${a.screen_or_section}` : ''}) ${a.label} — ${a.detail}`).join('\n')}
+=== END DOCUMENT #${idx + 1} ===
+`).join('\n')
+    : '(No documents were attached via the AI Document Reader — proceed using only the requirement description below.)';
 
   return `You are a Principal QA Architect and Lead Product Analyst with 20+ years building mission-critical Enterprise systems (banking, healthcare, aerospace). You do NOT write shallow tests. You think in 7 layers before outputting a single case.
 
@@ -100,6 +114,22 @@ LAYER 7 — BLIND-SPOT CHECK & SELF-VERIFICATION
 • Check: Did I cover every "if", "when", "unless", "should", "must"?
 • Check: Are there any categories from [${categoryConstraint}] that have ZERO cases?
 • Check: Are expected results OBSERVABLE and VERIFIABLE (not vague like "works correctly")?
+
+══════════════════════════════════════════════════════════════════
+PHASE 0.5: DOCUMENT CONTEXT INGESTION (Figma / Markdown / FS / ERD / Diagrams)
+══════════════════════════════════════════════════════════════════
+
+${documentContextFormatted}
+
+MANDATORY MAPPING RULE — 100% ATOM COVERAGE (skip this block entirely if no documents are listed above):
+• Every atom above has a unique atom_id (e.g. "FIG_login_email_input", "FS-3.2.1", "ERD-users.status").
+• EVERY SINGLE atom_id MUST appear in the source_requirement_ids array of AT LEAST ONE test case you output. Zero orphan atoms — this is not optional.
+• One test case MAY reference multiple atoms (e.g. a login case can cite both a Figma field atom and an FS validation-rule atom) — put ALL atom_ids it exercises into that case's source_requirement_ids.
+• A purely cosmetic/decorative atom (a static label with no behavior to verify) still needs a lightweight ui_ux case (e.g. "Verify label text matches design") rather than being silently dropped. Omission is only acceptable when an atom is an exact literal duplicate of another atom you already mapped.
+• "entity_field" atoms (ERD) with constraints are first-class boundary/negative test sources: a NOT NULL field needs an empty-value negative case, a UNIQUE field needs a duplicate-value negative case, an FK needs an orphan-reference negative case.
+• "relationship" atoms (ERD) are integration/regression test sources — verify cascade behavior (does deleting the parent cascade, restrict, or orphan the child?).
+• "flow_step"/"state" atoms (diagrams) are state-transition test sources per LAYER 3 above — every decision branch shown in the diagram needs its own case.
+• "screen_element" atoms (Figma/UI mockups) are UI/UX + functional test sources — fold the literal visible label/placeholder text into your expected_result assertions so results stay pixel-accurate to the design, not generic.
 
 ══════════════════════════════════════════════════════════════════
 PHASE 1: LEARN FROM OLD TEST CASES (RAG)
@@ -181,6 +211,7 @@ CHECKLIST:
 □ Every requirement sentence has ≥1 test case mapping to it.
 □ Every "if/else/when/unless/must/should" in requirement is tested.
 □ Every selected category [${categoryConstraint}] has ≥1 case.
+□ Every document atom_id from PHASE 0.5 (Figma/FS/ERD/diagram, if any were attached) appears in source_requirement_ids of ≥1 test case — 100% mapping, zero orphan atoms.
 □ No two cases test the exact same condition (deduplication).
 □ Every expected_result contains a measurable/observable criterion.
 □ Every Critical business path has ≥1 negative case.

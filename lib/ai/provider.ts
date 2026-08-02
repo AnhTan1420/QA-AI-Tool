@@ -1,17 +1,24 @@
 import { GoogleGenAI } from "@google/genai";
 import { generateWithGemini } from "./gemini";
 import { generateWithGroq } from "./groq";
+import { generateWithGeminiVision, type VisionImageInput } from "./vision";
 
-export type AITask = 'generation' | 'review' | 'classification';
+export type { VisionImageInput };
+export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction';
 
 /**
  * Model routing theo tác vụ (mục II của spec):
  * - generation / review: model mạnh nhất (AI_MODEL_GENERATION / AI_MODEL_REVIEW)
  * - classification: model nhẹ/rẻ hơn (AI_MODEL_CLASSIFICATION)
+ * - document_extraction: model đọc/atomize tài liệu (Figma/Markdown/FS/logic-doc/
+ *   PDF/DOCX + ảnh ERD/diagram/UI mockup) cho AI Document Reader — dùng
+ *   AI_MODEL_DOCUMENT_EXTRACTION, PHẢI là model Gemini hỗ trợ multimodal (đa số
+ *   dòng Gemini flash đều hỗ trợ) vì nhánh ảnh (runDocumentVisionAgent) tái sử
+ *   dụng cùng danh sách model này.
  * Mỗi biến đều đọc từ .env - không hard-code model ID trong code.
  * 
  * Lưu ý: maxOutputTokens được cấu hình cố định ở từng provider:
- *   - Gemini: 4096 tokens (lib/ai/gemini.ts)
+ *   - Gemini: 4096 tokens (lib/ai/gemini.ts, lib/ai/vision.ts)
  *   - Groq: 3500 tokens   (lib/ai/groq.ts)
  */
 function getGeminiModelsForTask(task: AITask): string[] {
@@ -19,6 +26,7 @@ function getGeminiModelsForTask(task: AITask): string[] {
     generation: process.env.AI_MODEL_GENERATION,
     review: process.env.AI_MODEL_REVIEW,
     classification: process.env.AI_MODEL_CLASSIFICATION,
+    document_extraction: process.env.AI_MODEL_DOCUMENT_EXTRACTION,
   };
   const primary = primaryByTask[task];
   const fallback = process.env.AI_MODEL_FALLBACK;
@@ -59,6 +67,24 @@ export async function runAIAgent(fullPrompt: string, task: AITask = 'generation'
         "Hệ thống AI hiện đang quá tải (Vượt quá Rate Limit của cả Gemini lẫn Groq). Vui lòng đợi khoảng 1 phút rồi thử lại."
       );
     }
+  }
+}
+
+/**
+ * Gọi Gemini ở chế độ vision để đọc ảnh diagram/ERD/UI mockup cho AI Document
+ * Reader (xem lib/documents/, lib/ai/prompts/document-extraction-agent.ts).
+ * KHÔNG fallback sang Groq — groq-sdk trong project này chỉ được dùng cho text.
+ */
+export async function runDocumentVisionAgent(fullPrompt: string, images: VisionImageInput[]) {
+  const systemPrompt = "You are a meticulous Document Vision Analyst for a QA test-case tool. Return ONLY valid JSON format.";
+
+  try {
+    return await generateWithGeminiVision(systemPrompt, fullPrompt, images, getGeminiModelsForTask('document_extraction'));
+  } catch (error) {
+    console.error("❌ [Provider] Gemini Vision thất bại (không có fallback Groq cho vision):", error);
+    throw new Error(
+      "Không thể phân tích ảnh/diagram lúc này (Gemini Vision lỗi hoặc quá tải). Vui lòng thử lại sau."
+    );
   }
 }
 

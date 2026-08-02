@@ -344,6 +344,20 @@ const en: Dictionary = {
       accessibility: 'Basic WCAG, keyboard, labels, contrast.',
       localization: 'Vietnamese, date/time, currency and diacritics.',
     } as Record<string, string>,
+    documentReader: {
+      label: 'AI Document Reader (Figma, Markdown, FS, ERD, Diagram)',
+      hint: 'Attach a Figma design, a Markdown/FS/logic document, an ERD, or a diagram — the AI reads it and maps every element to a test case.',
+      chooseFile: 'Choose a file (.md, .txt, .pdf, .docx, diagram/ERD image)',
+      parsing: 'Analyzing document...',
+      fileHint: 'Images (.png/.jpg) are read via AI Vision; PDF/DOCX/MD/TXT are text-extracted and analyzed.',
+      figmaUrlPlaceholder: 'Figma link (figma.com/design/...)',
+      figmaTokenPlaceholder: 'Figma Personal Access Token',
+      figmaImportButton: 'Import Figma',
+      attachedCount: (count: number) => `${count} document(s) attached`,
+      atomsSuffix: (count: number) => `${count} atoms`,
+      coverageLabel: 'Document mapping coverage',
+      moreSuffix: 'more',
+    },
   },
 };
 

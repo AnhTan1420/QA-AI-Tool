@@ -4,9 +4,12 @@ import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { TEST_CASE_CATEGORIES } from '@/lib/test-case-taxonomy';
 import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
+import type { ParsedDocument } from '@/lib/validators/document';
+import type { DocumentCoverageResult } from '@/lib/documents/coverage';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { postJson } from '@/lib/api/client';
 import { exportCasesToExcel, downloadOldCasesTemplate as downloadTemplate, parseXlsxFile } from '@/lib/utils/test-case-excel';
+import { fileToBase64 } from '@/lib/utils/file-to-base64';
 import { VALID_CATEGORY_VALUES } from './shared';
 
 /**
@@ -25,6 +28,14 @@ export function useGenerateWorkspace(projectId: string) {
   const [oldCasesFileName, setOldCasesFileName] = useState('');
   const [isParsingOldCases, setIsParsingOldCases] = useState(false);
   const [oldCasesWarning, setOldCasesWarning] = useState('');
+
+  // ── AI Document Reader: Figma / Markdown / logic document / FS / ERD / diagram ──
+  const [documents, setDocuments] = useState<ParsedDocument[]>([]);
+  const [isParsingDocument, setIsParsingDocument] = useState(false);
+  const [documentError, setDocumentError] = useState('');
+  const [figmaUrl, setFigmaUrl] = useState('');
+  const [figmaToken, setFigmaToken] = useState('');
+  const [documentCoverage, setDocumentCoverage] = useState<DocumentCoverageResult | null>(null);
 
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [review, setReview] = useState<ReviewResult | null>(null);
@@ -89,15 +100,17 @@ export function useGenerateWorkspace(projectId: string) {
     setSuccessMessage('');
     setReview(null);
 
-    const data = await postJson<GeneratedTestCase[]>('/api/ai/generate', {
+    const result = await postJson<{ test_cases: GeneratedTestCase[]; document_coverage: DocumentCoverageResult | null }>('/api/ai/generate', {
       requirement_description: description,
       selected_categories: selectedCategories,
       language,
       detail_level: detailLevel,
       retrieved_old_test_cases: oldCases,
+      document_context: documents,
     }, t.generateWorkspace.errors.requestFailed);
 
-    setTestCases(data);
+    setTestCases(result.test_cases);
+    setDocumentCoverage(result.document_coverage);
   }
 
   function handleGenerateClick() {
@@ -245,6 +258,84 @@ export function useGenerateWorkspace(projectId: string) {
     }
   }
 
+  /** Uploads a document (.md/.txt/.pdf/.docx or a diagram/ERD/UI-mockup image) to
+   * /api/ai/documents/parse, which atomizes it and returns a ParsedDocument. Text
+   * files are read client-side (File.text()); binary files (pdf/docx/images) are
+   * base64-encoded and extracted/analyzed server-side. */
+  async function handleDocumentFile(file: File) {
+    setIsParsingDocument(true);
+    setDocumentError('');
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+      const isImage = file.type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'webp'].includes(ext);
+
+      let payload: Record<string, unknown>;
+      if (isImage) {
+        payload = {
+          source_type: 'diagram_image',
+          file_name: file.name,
+          mime_type: file.type || 'image/png',
+          data_base64: await fileToBase64(file),
+        };
+      } else if (ext === 'pdf') {
+        payload = {
+          source_type: 'document',
+          file_name: file.name,
+          file_format: 'pdf',
+          data_base64: await fileToBase64(file),
+        };
+      } else if (ext === 'docx') {
+        payload = {
+          source_type: 'document',
+          file_name: file.name,
+          file_format: 'docx',
+          data_base64: await fileToBase64(file),
+        };
+      } else {
+        payload = {
+          source_type: 'document',
+          file_name: file.name,
+          file_format: 'text',
+          content: await file.text(),
+        };
+      }
+
+      const parsed = await postJson<ParsedDocument>('/api/ai/documents/parse', payload, t.generateWorkspace.errors.requestFailed);
+      setDocuments((current) => [...current, parsed]);
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : 'Phân tích tài liệu thất bại');
+    } finally {
+      setIsParsingDocument(false);
+    }
+  }
+
+  /** Imports a live Figma file via its REST API (URL + Personal Access Token) — the
+   * design tree is walked deterministically server-side, so every text layer/component
+   * becomes an atom without relying on AI to "guess" from a screenshot. */
+  async function handleFigmaImport() {
+    if (!figmaUrl.trim()) return;
+    setIsParsingDocument(true);
+    setDocumentError('');
+    try {
+      const parsed = await postJson<ParsedDocument>('/api/ai/documents/parse', {
+        source_type: 'figma',
+        figma_url: figmaUrl.trim(),
+        figma_token: figmaToken.trim() || undefined,
+      }, t.generateWorkspace.errors.requestFailed);
+      setDocuments((current) => [...current, parsed]);
+      setFigmaUrl('');
+    } catch (err) {
+      setDocumentError(err instanceof Error ? err.message : 'Import Figma thất bại');
+    } finally {
+      setIsParsingDocument(false);
+    }
+  }
+
+  function removeDocument(id: string) {
+    setDocuments((current) => current.filter((doc) => doc.id !== id));
+    setDocumentCoverage(null);
+  }
+
   async function handleReviewImportFile(file: File) {
     setReviewError('');
     try {
@@ -290,6 +381,11 @@ export function useGenerateWorkspace(projectId: string) {
     // Old cases import (step 2)
     oldCases, oldCasesFileName, isParsingOldCases, oldCasesWarning,
     handleOldCasesFile, clearOldCasesFile, downloadOldCasesTemplate: downloadTemplate,
+
+    // AI Document Reader (Figma / Markdown / logic document / FS / ERD / diagram)
+    documents, isParsingDocument, documentError, documentCoverage,
+    figmaUrl, setFigmaUrl, figmaToken, setFigmaToken,
+    handleDocumentFile, handleFigmaImport, removeDocument,
 
     // Generate action + status
     isPending, handleGenerateClick,

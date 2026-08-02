@@ -3,6 +3,7 @@ import { runAIAgent } from '@/lib/ai/provider';
 import { buildGenerationPrompt } from '@/lib/ai/prompts/generation-agent';
 import { generateRequestSchema, generatedTestCasesSchema } from '@/lib/validators/test-case';
 import { unwrapArrayResponse } from '@/lib/ai/parse';
+import { computeDocumentCoverage } from '@/lib/documents/coverage';
 
 export const maxDuration = 60;
 export const runtime = 'nodejs';
@@ -24,6 +25,7 @@ export async function POST(req: Request) {
       selected_categories: input.selected_categories,
       language: input.language,
       detail_level: input.detail_level,
+      document_context: input.document_context,
     });
 
     const aiRawResult = await runAIAgent(promptString, 'generation');
@@ -54,7 +56,15 @@ export async function POST(req: Request) {
       );
     }
 
-    return NextResponse.json({ success: true, data: parsedTestCases.data });
+    // 3) Doi chieu atom trich xuat tu document_context (neu co) voi
+    // source_requirement_ids AI vua gan - day la buoc XAC MINH o muc code cho
+    // yeu cau "mapping 100%" trong prompt (PHASE 0.5), khong chi tin loi AI.
+    const documentCoverage = computeDocumentCoverage(input.document_context, parsedTestCases.data);
+
+    return NextResponse.json({
+      success: true,
+      data: { test_cases: parsedTestCases.data, document_coverage: documentCoverage },
+    });
   } catch (error: any) {
     console.error('❌ Lỗi API Generate Test Cases:', error);
     const message =

@@ -23,6 +23,22 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
         )}
       </div>
 
+      {workspace.documentCoverage && (
+        <div className={`mt-4 rounded-2xl border p-4 text-sm ${workspace.documentCoverage.coverage_percent >= 100 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
+          <p className={`font-black ${workspace.documentCoverage.coverage_percent >= 100 ? 'text-emerald-700' : 'text-amber-700'}`}>
+            {t.generateWorkspace.documentReader.coverageLabel}: {workspace.documentCoverage.coverage_percent}% ({workspace.documentCoverage.covered_atoms}/{workspace.documentCoverage.total_atoms})
+          </p>
+          {workspace.documentCoverage.uncovered.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-amber-700">
+              {workspace.documentCoverage.uncovered.slice(0, 10).map((item) => (
+                <li key={item.atom_id}>• [{item.atom_id}] {item.label} ({item.source_document})</li>
+              ))}
+              {workspace.documentCoverage.uncovered.length > 10 && <li>… +{workspace.documentCoverage.uncovered.length - 10} {t.generateWorkspace.documentReader.moreSuffix}</li>}
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="mt-6 space-y-5">
         {Object.entries(workspace.groupedCases).map(([category, items]) => (
           <div key={category}>

@@ -342,6 +342,20 @@ const vi = {
       accessibility: 'WCAG cơ bản, keyboard, label, contrast.',
       localization: 'Tiếng Việt, ngày giờ, tiền tệ và dấu.',
     } as Record<string, string>,
+    documentReader: {
+      label: 'AI Document Reader (Figma, Markdown, FS, ERD, Diagram)',
+      hint: 'Đính kèm thiết kế Figma, tài liệu Markdown/FS/logic, sơ đồ ERD hoặc diagram — AI sẽ đọc và map từng phần tử vào test case.',
+      chooseFile: 'Chọn file (.md, .txt, .pdf, .docx, ảnh diagram/ERD)',
+      parsing: 'Đang phân tích tài liệu...',
+      fileHint: 'Ảnh (.png/.jpg) được AI đọc bằng Vision; PDF/DOCX/MD/TXT được trích xuất và phân tích văn bản.',
+      figmaUrlPlaceholder: 'Link Figma (figma.com/design/...)',
+      figmaTokenPlaceholder: 'Figma Personal Access Token',
+      figmaImportButton: 'Import Figma',
+      attachedCount: (count: number) => `${count} tài liệu đã đính kèm`,
+      atomsSuffix: (count: number) => `${count} phần tử`,
+      coverageLabel: 'Độ phủ tài liệu',
+      moreSuffix: 'phần tử khác',
+    },
   },
 };
 

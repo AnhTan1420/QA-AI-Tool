@@ -102,6 +102,7 @@ QA-AI-Tool/
 │   │   ├── ai/
 │   │   │   ├── generate/                   # Generation Agent endpoint
 │   │   │   ├── enhance/                    # Review Agent (mode: review | enhance)
+│   │   │   ├── documents/parse/            # AI Document Reader: Figma/Markdown/FS/logic-doc/ERD/diagram → DocumentAtoms
 │   │   │   └── embed/                      # Embedding creation for RAG (not yet used by UI)
 │   │   ├── ai-reviews/                     # Persist a review result against a test case set
 │   │   ├── projects/
@@ -131,7 +132,8 @@ QA-AI-Tool/
 │   │   │   ├── index.tsx                   # Thin orchestrator
 │   │   │   ├── use-generate-workspace.ts   # All state + business logic
 │   │   │   ├── wizard-panel.tsx            # Left column: requirement, taxonomy, actions
-│   │   │   ├── results-panel.tsx           # Right column: generated test cases
+│   │   │   ├── document-reader-panel.tsx   # Left column: AI Document Reader (Figma/MD/FS/ERD/diagram)
+│   │   │   ├── results-panel.tsx           # Right column: generated test cases + document coverage
 │   │   │   ├── review-panel.tsx            # Right column: review & enhance
 │   │   │   ├── test-case-card.tsx, shared.ts
 │   │   ├── version-history.tsx
@@ -152,31 +154,39 @@ QA-AI-Tool/
 │               nric-tool.tsx, lorem-ipsum-tool.tsx
 ├── lib/
 │   ├── ai/
-│   │   ├── provider.ts                     # Model routing (Gemini → Groq fallback)
+│   │   ├── provider.ts                     # Model routing (Gemini → Groq fallback) + vision routing
 │   │   ├── gemini.ts                       # Gemini provider wrapper
+│   │   ├── vision.ts                       # Gemini multimodal (vision) wrapper for diagram/ERD/mockup images
 │   │   ├── groq.ts                         # Groq provider wrapper
 │   │   ├── parse.ts                        # Robust JSON parsing from markdown
 │   │   └── prompts/
-│   │       ├── generation-agent.ts         # Generation Agent system prompt
+│   │       ├── generation-agent.ts         # Generation Agent system prompt (incl. document-atom mapping)
 │   │       ├── review-agent.ts             # Review Agent system prompt
-│   │       └── enhance-agent.ts            # Enhance Agent system prompt
+│   │       ├── enhance-agent.ts            # Enhance Agent system prompt
+│   │       └── document-extraction-agent.ts # AI Document Reader: atomizes text docs + diagram/ERD images
+│   ├── documents/                          # AI Document Reader helpers
+│   │   ├── text-extractors.ts              # PDF/DOCX → plain text (mammoth, pdf-parse)
+│   │   ├── figma-client.ts                 # Figma REST API client + deterministic node → atom flattening
+│   │   └── coverage.ts                     # Cross-checks document atoms vs. generated test cases
 │   ├── api/
 │   │   └── client.ts                       # Shared `postJson` fetch helper for client components
 │   ├── i18n/
 │   │   ├── config.ts, get-locale.ts
 │   │   ├── language-context.tsx            # React context for the current locale
 │   │   └── dictionaries/                   # vi.ts, en.ts, index.ts
+│   ├── validators/
+│   │   ├── test-case.ts                    # Zod schemas for all AI I/O
+│   │   └── document.ts                     # Zod schemas for AI Document Reader (DocumentAtom, ParsedDocument)
 │   ├── utils/
 │   │   ├── test-case-excel.ts              # Excel export/import for test cases
 │   │   ├── smart-xlsx-parser.ts            # Best-effort column mapping for imported .xlsx
+│   │   ├── file-to-base64.ts               # Reads a File as base64 (used by the doc-reader uploads)
 │   │   ├── fake-file-payloads.ts, nric.ts, lorem-ipsum.ts, file-download.ts   # Toolkit logic
 │   ├── supabase/
 │   │   ├── client.ts                       # Browser client (anon key + RLS)
 │   │   ├── server.ts                       # Server client (cookie session)
 │   │   └── admin.ts                        # Service role (system ops only)
-│   ├── test-case-taxonomy.ts               # Category/priority labels + styling helpers
-│   └── validators/
-│       └── test-case.ts                    # Zod schemas for all AI I/O
+│   └── test-case-taxonomy.ts               # Category/priority labels + styling helpers
 ├── public/
 ├── schema.sql                              # Complete DB schema + RLS + triggers
 ├── proxy.ts                                # Session refresh + auth redirect
@@ -241,11 +251,12 @@ auth.users (1:1) ──► profiles (1:N) ──► projects (1:N) ──► tes
 ### Flow Description
 
 1. **User Input** — Enter a requirement description in the generation wizard (optionally attach an old `.xlsx` test suite as reference)
-2. **Generation Agent** — `/api/ai/generate` calls AI (Gemini, falling back to Groq) with the requirement and returns structured test cases
-3. **Zod Validation** — All AI output is parsed and validated against `lib/validators/test-case.ts` before it reaches the client
-4. **Review (on demand)** — From the "Review & Enhance" tab, the user runs the independent Review Agent (`/api/ai/enhance`, `mode: "review"`) against the generated set (or an imported `.xlsx` set); it receives only the requirement + test cases, never the generation prompt or conversation history, and returns a coverage score, requirement gaps, and per-case comments
-5. **Enhance (on demand)** — The user can then run `mode: "enhance"` to have the AI rewrite the set based on its own review
-6. **Save to Library** — Validated test cases (and the review, if one was run) are stored via `/api/test-case-sets` + `/api/test-cases/bulk`, linked to a `test_case_set`
+2. **AI Document Reader (optional)** — Attach a Figma design (via link + Personal Access Token), a Markdown/logic-document/FS (`.md`/`.txt`/`.pdf`/`.docx`), or an ERD/diagram image; `/api/ai/documents/parse` atomizes it into `DocumentAtom`s (see `lib/validators/document.ts`)
+3. **Generation Agent** — `/api/ai/generate` calls AI (Gemini, falling back to Groq) with the requirement, any RAG old cases, and any attached document atoms, and returns structured test cases. The Generation Agent is required to map every document atom into a test case's `source_requirement_ids` (PHASE 0.5 of the prompt); the API cross-checks this server-side and returns a `document_coverage` score alongside the test cases
+4. **Zod Validation** — All AI output is parsed and validated against `lib/validators/test-case.ts` before it reaches the client
+5. **Review (on demand)** — From the "Review & Enhance" tab, the user runs the independent Review Agent (`/api/ai/enhance`, `mode: "review"`) against the generated set (or an imported `.xlsx` set); it receives only the requirement + test cases, never the generation prompt or conversation history, and returns a coverage score, requirement gaps, and per-case comments
+6. **Enhance (on demand)** — The user can then run `mode: "enhance"` to have the AI rewrite the set based on its own review
+7. **Save to Library** — Validated test cases (and the review, if one was run) are stored via `/api/test-case-sets` + `/api/test-cases/bulk`, linked to a `test_case_set`
 
 ---
 
@@ -317,10 +328,15 @@ GROQ_API_KEY=your-groq-api-key
 AI_MODEL_GENERATION=gemini-3.6-flash
 AI_MODEL_REVIEW=gemini-3.5-flash-lite
 AI_MODEL_CLASSIFICATION=gemini-3.5-flash-lite
+AI_MODEL_DOCUMENT_EXTRACTION=gemini-3.6-flash    # AI Document Reader (text + vision atomization) — must support multimodal input
 AI_MODEL_FALLBACK=gemini-3.5-flash-lite    # used if a task-specific model isn't set
 AI_MODEL_EMBEDDING=gemini-embedding-001     # used by /api/ai/embed (RAG, not yet wired into UI)
 GROQ_MODEL_PRIMARY=llama-3.1-70b-versatile
 GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
+
+# AI Document Reader (optional) — server-side fallback Figma token used when the
+# user doesn't paste their own Personal Access Token in the generation wizard.
+FIGMA_ACCESS_TOKEN=your-figma-personal-access-token
 ```
 
 > Every task (`generation` / `review` / `classification`) tries its own Gemini model first, then `AI_MODEL_FALLBACK`, then Groq's `GROQ_MODEL_PRIMARY` → `GROQ_MODEL_FALLBACK` — see `lib/ai/provider.ts`.
@@ -356,9 +372,10 @@ GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
 
 1. Inside a project, go to **Generate**
 2. Enter requirement description (e.g., *"User should be able to reset password via email link"*), pick categories, and optionally upload an old `.xlsx` test suite as reference
-3. Click **Generate** — the Generation Agent returns a validated set of test cases, shown in the **Test Cases Generated** tab
-4. Switch to the **Review & Enhance** tab to run the independent Review Agent (coverage score, requirement gaps, per-case comments), then optionally **Enhance with AI** to have it rewrite the set based on its own review
-5. Click **Save to Library** to persist the set (and review, if run)
+3. (Optional) In the **AI Document Reader** step, attach a Figma design (paste the file link + a [Figma Personal Access Token](https://www.figma.com/developers/api#access-tokens)), or upload a Markdown/logic-document/Functional Spec (`.md`/`.txt`/`.pdf`/`.docx`) or an ERD/diagram image (`.png`/`.jpg`) — each is atomized into testable elements the Generation Agent must map into the resulting test cases
+4. Click **Generate** — the Generation Agent returns a validated set of test cases, shown in the **Test Cases Generated** tab; if any documents were attached, a **document mapping coverage** banner shows the resulting % and lists any unmapped elements
+5. Switch to the **Review & Enhance** tab to run the independent Review Agent (coverage score, requirement gaps, per-case comments), then optionally **Enhance with AI** to have it rewrite the set based on its own review
+6. Click **Save to Library** to persist the set (and review, if run)
 
 ### 5. Browse Test Case Library
 
@@ -392,6 +409,7 @@ GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
 |----------|--------|-------------|
 | `/api/ai/generate` | `POST` | Generate test cases from a requirement description |
 | `/api/ai/enhance` | `POST` | Review (`mode: "review"`) or rewrite (`mode: "enhance"`) a set of test cases |
+| `/api/ai/documents/parse` | `POST` | AI Document Reader — atomize a Figma file, a Markdown/logic-doc/FS (.md/.txt/.pdf/.docx), or an ERD/diagram image into `DocumentAtom`s for the Generation Agent |
 | `/api/ai/embed` | `POST` | Create a vector embedding for RAG (backend ready, not yet called by the UI) |
 | `/api/ai-reviews` | `POST` | Persist a review result against a test case set |
 | `/api/projects` | `GET`/`POST` | List / create projects |
@@ -490,7 +508,7 @@ WHERE tcs.project_id = 'uuid';
 
 - [ ] **RAG Pipeline** — Complete flow: upload old test cases → auto-embed → retrieve during generation
 - [ ] **Requirement Traceability Matrix** — `requirement_traceability` table exists, needs UI
-- [ ] **AI Document Reader** — Enhance AI to read and parse Figma designs, Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams for smarter test case generation
+- [x] **AI Document Reader** — Reads and parses Figma designs (live via the Figma REST API), Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams (PDF/DOCX/image) for smarter test case generation. Each source is "atomized" into `DocumentAtom`s (`lib/validators/document.ts`); the Generation Agent is required to map every atom into a test case's `source_requirement_ids` (PHASE 0.5 of `lib/ai/prompts/generation-agent.ts`), and `/api/ai/generate` cross-checks that mapping server-side (`lib/documents/coverage.ts`) and returns a `document_coverage` score instead of just trusting the model's word. See `components/test-case/generate-workspace/document-reader-panel.tsx` and `app/api/ai/documents/parse/route.ts`.
 - [ ] **Can access project environemt** - read the UI, auto create test data
 
 ### Phase 3 — Planned

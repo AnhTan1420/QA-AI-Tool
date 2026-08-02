@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { parsedDocumentSchema } from './document';
 
 const CATEGORY_VALUES = [
   'positive',
@@ -186,6 +187,9 @@ export const generateRequestSchema = z.object({
   language: z.string().min(2).default('Tiếng Việt'),
   detail_level: z.enum(['concise', 'standard', 'detailed']).default('standard'),
   retrieved_old_test_cases: z.array(retrievedTestCaseSchema).optional().default([]),
+  // AI Document Reader: Figma design / Markdown / logic document / FS / ERD / diagram
+  // da duoc atomize truoc qua /api/ai/documents/parse (xem lib/validators/document.ts).
+  document_context: z.array(parsedDocumentSchema).optional().default([]),
 });
 
 export const reviewRequestSchema = z.object({
