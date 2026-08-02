@@ -38,6 +38,7 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
             >
               Test Cases Generated
               <span className={`rounded-full px-2 py-0.5 text-xs transition-colors ${workspace.rightTab === 'results' ? 'bg-white/20' : 'bg-slate-100'}`}>{workspace.safeTestCasesCount}</span>
+              {workspace.isPending && <span className="h-2 w-2 animate-pulse rounded-full bg-amber-300" title="Đang generate..." />}
             </button>
             <button
               type="button"

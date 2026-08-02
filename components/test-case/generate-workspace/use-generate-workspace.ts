@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { TEST_CASE_CATEGORIES } from '@/lib/test-case-taxonomy';
 import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
@@ -58,6 +58,26 @@ export function useGenerateWorkspace(projectId: string) {
   // ── Right column: tab "Kết quả" vs "Review & Enhance" ──
   const [rightTab, setRightTab] = useState<'results' | 'review'>('results');
 
+  // ── Generate progress indicator: while the request is in flight (isPending), cycle
+  // through a small set of "what's happening" messages so the user gets visible feedback
+  // instead of the UI looking frozen for up to ~60s (the API's maxDuration). This is a
+  // client-side illusion of progress (the backend call itself isn't chunked/streamed),
+  // but it reliably signals "still working" and roughly where in the pipeline we are. ──
+  const [generatingStep, setGeneratingStep] = useState(0);
+  const generatingStepsRef = useRef(t.generateWorkspace.generatingSteps);
+  generatingStepsRef.current = t.generateWorkspace.generatingSteps;
+
+  useEffect(() => {
+    if (!isPending) {
+      setGeneratingStep(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setGeneratingStep((step) => Math.min(step + 1, generatingStepsRef.current.length - 1));
+    }, 3200);
+    return () => clearInterval(interval);
+  }, [isPending]);
+
   function getCategoryLabel(value: TestCaseCategory) {
     return TEST_CASE_CATEGORIES.find((category) => category.value === value)?.label ?? value;
   }
@@ -114,6 +134,7 @@ export function useGenerateWorkspace(projectId: string) {
   }
 
   function handleGenerateClick() {
+    setRightTab('results');
     startTransition(() => {
       generate().catch((err) => {
         setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed);
@@ -388,7 +409,7 @@ export function useGenerateWorkspace(projectId: string) {
     handleDocumentFile, handleFigmaImport, removeDocument,
 
     // Generate action + status
-    isPending, handleGenerateClick,
+    isPending, handleGenerateClick, generatingStep,
     error, errorDetails, successMessage,
 
     // Results
