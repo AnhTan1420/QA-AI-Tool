@@ -12,78 +12,58 @@ export type GenerationPromptInput = {
   document_context: ParsedDocument[];
 };
 
-const TEST_CASE_SCHEMA_CONTRACT = `{
-  "code": "string, e.g.: TC_LOGIN_001",
-  "title": "string",
-  "category": "ONE of: positive | negative | boundary | ui_ux | compatibility | performance | security | integration | regression | accessibility | localization",
-  "priority": "ONE of: Critical | Major | Normal",
-  "preconditions": ["string", "..."],
-  "test_data": { "field_name": "value (ALWAYS a string)" },
-  "steps": [
-    { "step_number": 1, "action": "string", "expected_result": "string" }
-  ],
-  "final_expected_result": "string",
-  "source_requirement_ids": ["string"]
-}`;
-
-// ── TAI SAO "analysis" LA MOT JSON KEY, KHONG PHAI <thinking> TAG ─────────────
-// generateWithGemini (lib/ai/gemini.ts) goi API voi responseMimeType: "application/json".
-// O che do nay Gemini bi rang buoc phai sinh ra DUY NHAT 1 gia tri JSON hop le cho toan
-// bo response - khong co "kenh" nao de model xuat van ban tu do (nhu <thinking>...</thinking>)
-// truoc hay xen giua JSON. Neu prompt chi noi "hay suy nghi trong the <thinking> truoc khi
-// viet mang test case", yeu cau do KHONG THE thuc thi duoc trong che do nay: model khong co
-// cho hop le nao de dat no, nen tren thuc te no se bo qua va viet thang test case ma khong
-// co buoc phan tich sau nao ca.
-//
-// Cach sua: bien buoc "deep thinking" thanh 1 KEY BAT BUOC cua JSON output (`analysis`),
-// dung TRUOC key `test_cases` trong cung 1 object. Vi JSON duoc sinh tuan tu tu trai sang
-// phai (autoregressive), key nao dung truoc trong object se THUC SU duoc model "nghi ra"
-// va viet ra truoc - dung nghia den, khong con la mong muon suong. Cach nay giu nguyen kien
-// truc 1-lan-goi-API + strict JSON hien tai (khong can tach thanh 2 lan goi AI rieng), ma
-// van bien PHASE 0 thanh 1 buoc thuc su co that, co the kiem tra duoc (log lai `analysis`
-// de debug/audit), thay vi 1 doan text "hy vong AI se lam theo".
-const ANALYSIS_SCHEMA_CONTRACT = `{
-  "input_source": "ONE of: requirement_description | document_context | both — which of mục 1 (Requirement/description) or mục 2 (AI Document Reader) actually has usable content, decided BEFORE any other field below",
-  "explicit_rules": ["every business rule / condition / constraint / exception path stated outright in the source"],
-  "implicit_rules": ["rules the source ASSUMES but never states outright"],
-  "ambiguous_terms": ["vague word or phrase found (e.g. 'valid', 'soon', 'appropriate') -> why it's ambiguous -> what test gap it creates"],
-  "actors_and_preconditions": ["actor / pre-condition / post-condition / invariant identified"],
-  "fields_ep_bva": [
-    { "field": "string", "valid_equivalence_classes": ["..."], "invalid_equivalence_classes": ["..."], "boundary_values": ["min-1, min, min+1, nominal, max-1, max, max+1, empty, overflow, unicode, ..."] }
-  ],
-  "state_transitions": ["state A -> state B on event/trigger X (flag if invalid transition, deadlock, unreachable state, or race condition)"],
-  "attack_and_chaos_vectors": ["adversarial/chaos scenario worth testing: session expiry mid-flow, token revocation mid-flow, double submit/replay, concurrent update, network partition after commit, partial failure + rollback/audit check, rate limit/quota, time/timezone/DST edge, ..."],
-  "cross_cutting_checks": ["systemic concern to verify: audit trail, notification, cache invalidation, data integrity/cascade, PII/GDPR masking, integration side effects, idempotency, ..."],
-  "risk_ranking": [ { "scenario": "string", "severity_1_10": 0, "probability_1_10": 0, "detectability_1_10": 0, "resulting_priority": "Critical | Major | Normal" } ],
-  "document_atom_plan": [ { "atom_id": "string (leave this array EMPTY if no documents were attached)", "planned_test_case_code": "TC_XXX_NNN — which case in test_cases will cover this atom" } ],
-  "coverage_self_check": ["one line PER selected category confirming it will reach the required minimum case count", "one line confirming every requirement sentence / document atom above ends up mapped to >=1 planned case"]
-}`;
-
 export function buildGenerationPrompt(input: GenerationPromptInput) {
+  // ── 1. TÍNH TOÁN CÁC BIẾN RÀNG BUỘC ──────────────────────────────────────
   const categoryConstraint = input.selected_categories.length > 0
     ? input.selected_categories.join(', ')
     : 'Any valid category from the schema';
 
-  // Truoc day chi ep 1 tong so case toi thieu = so category duoc chon (qua thap,
-  // AI de dang "lam cho du" 1 case/category la xong -> bo set nong, thieu chieu sau).
-  // Doi sang ep so case TOI THIEU CHO TUNG CATEGORY rieng, theo detail_level, de bo
-  // set luon co do phu du/sau tuong xung voi cac layer phan tich o PHASE 0.
   const perCategoryMinByDetail: Record<string, number> = { concise: 2, standard: 4, detailed: 6 };
   const perCategoryMin = perCategoryMinByDetail[input.detail_level] ?? 4;
   const categoriesForMin = input.selected_categories.length > 0 ? input.selected_categories : ['positive', 'negative', 'boundary'];
   const minCases = perCategoryMin * categoriesForMin.length;
-
-  // Truoc day khong co rang buoc nao ve DO CHI TIET cua tung step rieng le - chi co
-  // "detail_level" duoc nhet vao text "Detail level: standard" o cuoi prompt ma
-  // khong co huong dan cu the nao gan voi no, nen model thuong viet step qua so
-  // sai ("Nhap du lieu hop le", "Submit form", "Kiem tra ket qua") du prompt da
-  // yeu cau "ONE atomic action per step". Ep 1 SO STEP TOI THIEU cho tung case
-  // theo detail_level, cong voi yeu cau cu the hoa (ten field/nut/man hinh, gia
-  // tri that lay tu test_data) o PHASE 2.6 ben duoi, de "detail_level" thuc su
-  // anh huong den DO SAU cua tung case, khong chi so LUONG case.
+  
   const minStepsByDetail: Record<string, number> = { concise: 3, standard: 5, detailed: 7 };
   const minSteps = minStepsByDetail[input.detail_level] ?? 5;
 
+  // Tối ưu số lượng Token Output cho level 'concise' để tránh lỗi đứt gãy JSON
+  const omitComplexAnalysis = input.detail_level === 'concise' 
+    ? ' (SKIP this layer for concise detail_level. Return empty array [])' 
+    : '';
+
+  // ── 2. ĐỊNH NGHĨA SCHEMAS (Đã fix lỗi ép kiểu và tối ưu logic) ───────────
+  const TEST_CASE_SCHEMA_CONTRACT = `{
+  "code": "string (e.g., TC_LOGIN_001)",
+  "title": "string",
+  "category": "string (enum: positive, negative, boundary, ui_ux, compatibility, performance, security, integration, regression, accessibility, localization)",
+  "priority": "string (enum: Critical, Major, Normal)",
+  "preconditions": ["string"],
+  "test_data": { "field_name": "string (ALWAYS explicitly cast to string)" },
+  "steps": [
+    { "step_number": "number", "action": "string", "expected_result": "string" }
+  ],
+  "final_expected_result": "string",
+  "source_requirement_ids": ["string (MUST contain at least one atom_id if documents are provided)"]
+}`;
+
+  const ANALYSIS_SCHEMA_CONTRACT = `{
+  "input_source": "string (enum: requirement_description, document_context, both) — which source actually has usable content, decided BEFORE any other field",
+  "explicit_rules": ["every business rule / condition / constraint / exception path stated outright in the source"],
+  "implicit_rules": ["rules the source ASSUMES but never states outright"],
+  "ambiguous_terms": ["vague word or phrase found (e.g. 'valid', 'soon') -> why it's ambiguous -> what test gap it creates"],
+  "actors_and_preconditions": ["actor / pre-condition / post-condition / invariant identified"],
+  "fields_ep_bva": [
+    { "field": "string", "valid_equivalence_classes": ["..."], "invalid_equivalence_classes": ["..."], "boundary_values": ["min-1, min, min+1, nominal, max-1, max, max+1, empty, overflow, unicode..."] }
+  ],
+  "state_transitions": ["state A -> state B on event/trigger X (flag if invalid transition, deadlock, unreachable state)"${omitComplexAnalysis}],
+  "attack_and_chaos_vectors": ["adversarial/chaos scenario worth testing: session expiry mid-flow, token revocation, double submit, concurrent update, rate limit..."${omitComplexAnalysis}],
+  "cross_cutting_checks": ["systemic concern to verify: audit trail, notification, cache invalidation, data integrity, PII/GDPR, idempotency..."${omitComplexAnalysis}],
+  "risk_ranking": [ { "scenario": "string", "severity_1_10": "number", "probability_1_10": "number", "detectability_1_10": "number", "resulting_priority": "string (enum: Critical, Major, Normal)" } ],
+  "document_atom_plan": [ { "atom_id": "string (leave empty array if no documents attached)", "planned_test_case_code": "TC_XXX_NNN — which case in test_cases will cover this atom" } ],
+  "coverage_self_check": ["one line PER selected category confirming it will reach the required minimum case count", "one line confirming every requirement sentence / document atom ends up mapped to >=1 planned case"]
+}`;
+
+  // ── 3. CHUẨN BỊ DỮ LIỆU ĐẦU VÀO ───────────────────────────────────────────
   const oldCasesFormatted = input.retrieved_old_test_cases.length > 0
     ? input.retrieved_old_test_cases.map((tc, idx) => `
 === REFERENCE TEST CASE #${idx + 1} ===
@@ -110,12 +90,6 @@ ${doc.atoms.map(a => `  [${a.atom_id}] (${a.atom_type}${a.screen_or_section ? `,
 `).join('\n')
     : '(No documents were attached via the AI Document Reader — proceed using only the requirement description below.)';
 
-  // ── mục 1 (Requirement/description) vs mục 2 (AI Document Reader) ──────────
-  // Client cho phep generate mien la co du lieu o IT NHAT 1 trong 2 muc (xem
-  // hasEnoughInputToGenerate trong use-generate-workspace.ts + superRefine trong
-  // generateRequestSchema). Vi vay khong the mac dinh requirement_description luon
-  // co noi dung day du - phai noi ro cho model biet dang o tinh huong nao de no
-  // phan tich dung nguon co du lieu thuc, thay vi "phan tich" mot chuoi rong.
   const hasDescription = input.requirement_description.trim().length > 0;
   const hasDocuments = input.document_context.length > 0;
   const primarySourceInstruction = hasDescription && hasDocuments
@@ -124,10 +98,11 @@ ${doc.atoms.map(a => `  [${a.atom_id}] (${a.atom_type}${a.screen_or_section ? `,
       ? `ONLY mục 2 (AI Document Reader: Figma/document/FS/ERD/diagram) is provided — mục 1 (requirement_description) is empty or negligible. You MUST derive "explicit_rules"/"implicit_rules"/"actors_and_preconditions"/etc. from the DOCUMENT ATOMS in PHASE 0.5 below, NOT from the near-empty description text.`
       : `ONLY mục 1 (Requirement/description) is provided — no documents were attached via AI Document Reader. Derive the entire analysis from the description text in INPUT DATA below. Leave "analysis.document_atom_plan" as an empty array.`;
 
+  // ── 4. TRẢ VỀ PROMPT HOÀN CHỈNH ──────────────────────────────────────────
   return `You are a Principal QA Architect and Lead Product Analyst with 20+ years building mission-critical Enterprise systems (banking, healthcare, aerospace). You do NOT write shallow tests. You think in 7 layers, and you PROVE it in structured output, before a single test case is written.
 
 ══════════════════════════════════════════════════════════════════
-PHASE 0: DEEP THINKING PROTOCOL (MANDATORY — ANALYZE mục 1 / mục 2 BEFORE YOU WRITE)
+PHASE 0: DEEP THINKING PROTOCOL (MANDATORY — ANALYZE SECTION 1 / SECTION 2 BEFORE YOU WRITE)
 ══════════════════════════════════════════════════════════════════
 
 ${primarySourceInstruction}
@@ -204,21 +179,22 @@ Rules for RAG:
 • If old cases are low quality (vague expected results, shallow steps), RAISE the bar in your new cases.
 
 ══════════════════════════════════════════════════════════════════
-PHASE 2: GENERATION STANDARDS (INVIOABLE)
+PHASE 2: GENERATION STANDARDS (INVIOLABLE)
 ══════════════════════════════════════════════════════════════════
 
-1. OUTPUT FORMAT — ABSOLUTE RULE:
+1. OUTPUT FORMAT & TRANSLATION — ABSOLUTE RULE:
    • Output MUST be a pure JSON OBJECT with EXACTLY two top-level keys, in this exact order — "analysis" MUST be written first, "test_cases" second:
 {
-  "analysis": ${ANALYSIS_SCHEMA_CONTRACT.split('\n').join('\n  ')},
-  "test_cases": [ ${TEST_CASE_SCHEMA_CONTRACT.split('\n').join('\n    ')} ]
+  "analysis": ${ANALYSIS_SCHEMA_CONTRACT},
+  "test_cases": [ ${TEST_CASE_SCHEMA_CONTRACT} ]
 }
+   • TRANSLATION PRECAUTION: You MUST write the content and values of the test cases in the specified language (${input.language}). HOWEVER, you MUST keep all JSON KEYS in English exactly as defined in the schema above. NEVER translate the JSON keys.
    • No markdown, no \`\`\`json, no extra top-level keys, no prose before or after the object.
-   • Every test case in "test_cases" MUST trace back to something recorded in "analysis" (a rule, a boundary, a risk, or a document atom) — do not introduce a scenario in test_cases that has no corresponding entry in analysis.
+   • Every test case in "test_cases" MUST trace back to something recorded in "analysis".
 
 2. CODE NAMING CONVENTION:
    • Format: TC_{MODULE}_{NNN} (e.g., TC_LOGIN_001, TC_AUTH_012).
-   • Sequential, no gaps, padded to 3 digits. Must match the "planned_test_case_code" values used in analysis.document_atom_plan / risk_ranking.
+   • CRITICAL: The codes generated here MUST STRICTLY MATCH the "planned_test_case_code" you already defined in "analysis.document_atom_plan". Sequential, no gaps, padded to 3 digits.
 
 3. TITLE QUALITY:
    • MUST describe the specific condition being tested, not generic action.
@@ -236,16 +212,15 @@ PHASE 2: GENERATION STANDARDS (INVIOABLE)
 
 6. STEPS — GRANULARITY BAR (this is the #1 quality gate; a case failing this gets INSTANT REJECTION):
    • MINIMUM ${minSteps} steps per test case at this detail_level (setup/navigation steps count). A case with fewer steps almost always means 2+ actions got silently merged into one — split it.
-   • ONE atomic user/system action per step. NEVER combine actions (e.g. "Nhập email và mật khẩu rồi bấm Login" is 3 steps, not 1: enter email → enter password → click Login).
+   • ONE atomic user/system action per step. NEVER combine actions.
    • Every "action" MUST name the CONCRETE UI element/target, not a generic verb:
-     - Reference the exact screen/page/section name (from a document atom's "screen_or_section" if one was attached, otherwise from the requirement text).
-     - Reference the exact field/button/link label as it would appear to a user (e.g. "Nhấn nút 'Xác nhận thanh toán'", NOT "Submit the form").
-     - Reference the exact value being entered, taken verbatim from this case's own "test_data" (e.g. "Nhập '9999999999999999' vào field 'Số thẻ'", NOT "Nhập số thẻ không hợp lệ").
-   • BAD (too vague, INSTANT REJECTION): "Nhập dữ liệu hợp lệ", "Submit the form", "Kiểm tra kết quả", "Verify the response", "Thao tác trên hệ thống".
-   • GOOD: "1. Mở màn hình 'Thanh toán đơn hàng' → Expected: field 'Số thẻ' hiển thị placeholder 'XXXX XXXX XXXX XXXX'." / "2. Nhập '4111111111111111' vào field 'Số thẻ' → Expected: field không hiển thị lỗi, border chuyển sang màu xanh (valid state)." / "3. Nhấn nút 'Xác nhận thanh toán' → Expected: hệ thống trả về HTTP 200, hiển thị toast 'Thanh toán thành công', đơn hàng chuyển trạng thái 'PAID'."
-   • Each step's expected_result MUST be OBSERVABLE and VERIFIABLE at THAT step (not deferred entirely to final_expected_result) — status code, error code, exact UI text/toast/label, DB field value, log entry, etc.
-   • Setup/navigation steps (login, open a screen, seed a precondition) count toward the ${minSteps}-step minimum and still need their own expected_result — do not fold them silently into "preconditions" if they are actions the tester actually performs during the test, not state that already exists beforehand.
-   • The LAST step MUST be the one action/assertion that most directly produces the case's "final_expected_result" (e.g. the final read-back/verification step), so a reader can see the causal link between the last action and the final outcome.
+     - Reference the exact screen/page/section name.
+     - Reference the exact field/button/link label as it would appear to a user.
+     - Reference the exact value being entered, taken verbatim from this case's own "test_data".
+   • BAD (too vague, INSTANT REJECTION): "Nhập dữ liệu hợp lệ", "Submit the form", "Kiểm tra kết quả".
+   • GOOD: "2. Nhập '4111111111111111' vào field 'Số thẻ' → Expected: field không hiển thị lỗi."
+   • Each step's expected_result MUST be OBSERVABLE and VERIFIABLE at THAT step (status code, error code, exact UI text/toast/label).
+   • The LAST step MUST be the one action/assertion that most directly produces the case's "final_expected_result".
 
 7. FINAL EXPECTED RESULT:
    • MUST describe the end-state of system, database, UI, and any side effects.
@@ -253,23 +228,21 @@ PHASE 2: GENERATION STANDARDS (INVIOABLE)
 
 8. CATEGORY COVERAGE:
    • MANDATORY categories: ${categoryConstraint}
-   • Each selected category MUST have AT LEAST ${perCategoryMin} distinct, non-overlapping cases (not just 1). A category with only 1-2 shallow cases is an INSTANT REJECTION — go back to analysis.fields_ep_bva / attack_and_chaos_vectors / state_transitions and mine more angles for that category before finalizing test_cases.
+   • Each selected category MUST have AT LEAST ${perCategoryMin} distinct, non-overlapping cases. A category with only 1-2 shallow cases is an INSTANT REJECTION.
    • If 'security' is selected: MUST include XSS, SQLi, auth bypass, IDOR, CSRF where applicable.
    • If 'performance' is selected: MUST include load time threshold, concurrent user, large payload.
-   • If 'localization' is selected: MUST include unicode, RTL, date format, currency, diacritics.
 
 9. PRIORITY ASSIGNMENT:
-   • MUST match the "resulting_priority" you already computed per scenario in analysis.risk_ranking — do not silently reassign a different priority in test_cases without updating risk_ranking to match.
+   • MUST match the "resulting_priority" you already computed per scenario in analysis.risk_ranking.
    • Critical: Auth, payment, data deletion, security vulnerabilities, legal compliance.
    • Major: Core business logic, data integrity, integration failures.
-   • Normal: UI cosmetics, minor validation, edge cases with low business impact.
+   • Normal: UI cosmetics, minor validation, edge cases.
 
 10. AVOID THESE ANTI-PATTERNS (INSTANT REJECTION):
     • Happy-path-only suites.
     • Vague expected results ("system works", "processed successfully").
     • Steps that combine multiple actions.
     • Missing preconditions.
-    • Test data as empty objects {}.
     • Duplicate scenarios with different titles.
     • Cases that don't map to any entry in "analysis".
 
@@ -281,17 +254,15 @@ After drafting both "analysis" and "test_cases", BEFORE outputting, perform this
 
 CHECKLIST:
 □ analysis.input_source correctly reflects which of mục 1 / mục 2 actually had usable content.
-□ Every requirement sentence / document atom has ≥1 test case mapping to it (cross-check analysis.document_atom_plan against source_requirement_ids).
-□ Every "if/else/when/unless/must/should" captured in analysis.explicit_rules / implicit_rules is tested.
-□ Every selected category [${categoryConstraint}] has ≥${perCategoryMin} distinct cases (not just 1-2) — recheck against analysis.coverage_self_check.
-□ Every document atom_id from PHASE 0.5 (if any were attached) appears both in analysis.document_atom_plan and in source_requirement_ids of ≥1 test case — 100% mapping, zero orphan atoms.
-□ Every analysis.risk_ranking entry's resulting_priority matches the priority of its corresponding test case.
-□ No two cases test the exact same condition (deduplication).
-□ Every test case has AT LEAST ${minSteps} steps, and no step's "action" is a vague verb without a concrete field/button/screen name and a real value from that case's own test_data (recheck PHASE 2.6 — this is the single most common rejection reason).
+□ Every requirement sentence / document atom has ≥1 test case mapping to it.
+□ Every "if/else/when/unless/must/should" captured in analysis is tested.
+□ Every selected category [${categoryConstraint}] has ≥${perCategoryMin} distinct cases.
+□ Every document atom_id from PHASE 0.5 (if any) appears in source_requirement_ids of ≥1 test case — zero orphan atoms.
+□ Every analysis.risk_ranking entry's resulting_priority matches the priority of its test case.
+□ No two cases test the exact same condition.
+□ Every test case has AT LEAST ${minSteps} steps, and no step's "action" is a vague verb without a concrete UI element/value.
 □ Every expected_result contains a measurable/observable criterion.
-□ Every Critical business path has ≥1 negative case.
-□ At least 20% of cases are edge/adversarial/chaos scenarios (from analysis.attack_and_chaos_vectors).
-□ JSON is valid, no trailing commas, no comments inside JSON, exactly two top-level keys ("analysis", "test_cases").
+□ JSON is valid, no trailing commas, no translated keys.
 
 If ANY check fails, revise the failing part of "analysis" or "test_cases" before finalizing. Do NOT output until all checks pass.
 
@@ -304,8 +275,8 @@ ${input.requirement_description || '(empty — see mục 2 / PHASE 0.5 above)'}
 
 [MANDATORY CONFIGURATION]
 - Categories (MUST cover all): ${categoryConstraint}
-- Minimum cases: ${minCases} total, with AT LEAST ${perCategoryMin} cases per selected category (see PHASE 2.8)
-- Minimum steps per test case: ${minSteps} (see PHASE 2.6) — each step names a concrete field/button/screen and a real value from that case's test_data, not a generic verb
+- Minimum cases: ${minCases} total, with AT LEAST ${perCategoryMin} cases per selected category
+- Minimum steps per test case: ${minSteps} — each step names a concrete field/button/screen and a real value from test_data
 - Language: ${input.language}
 - Detail level: ${input.detail_level}
 

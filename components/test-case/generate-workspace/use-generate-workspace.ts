@@ -58,12 +58,6 @@ export function useGenerateWorkspace(projectId: string) {
 
   // ── Right column: tab "Kết quả" vs "Review & Enhance" ──
   const [rightTab, setRightTab] = useState<'results' | 'review'>('results');
-
-  // ── Generate progress indicator: while the request is in flight (isPending), cycle
-  // through a small set of "what's happening" messages so the user gets visible feedback
-  // instead of the UI looking frozen for up to ~60s (the API's maxDuration). This is a
-  // client-side illusion of progress (the backend call itself isn't chunked/streamed),
-  // but it reliably signals "still working" and roughly where in the pipeline we are. ──
   const [generatingStep, setGeneratingStep] = useState(0);
   const generatingStepsRef = useRef(t.generateWorkspace.generatingSteps);
   generatingStepsRef.current = t.generateWorkspace.generatingSteps;
@@ -108,12 +102,6 @@ export function useGenerateWorkspace(projectId: string) {
   const coverageTone = review && review.coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600';
   const isDemoProject = projectId === 'demo';
   const safeTestCasesCount = (testCases ?? []).length;
-
-  // ── Validation: bat buoc it nhat muc 1 (Requirement/description, >=20 ky tu co nghia)
-  // HOAC muc 2 (AI Document Reader: Figma/tai lieu dinh kem) phai co data thi moi cho
-  // generate - khop voi rule ma server (generateRequestSchema) da enforce, nhung kiem tra
-  // truoc o client de UX ro rang hon (disable nut + hien thi ly do) thay vi phai bam roi
-  // moi nhan loi tu API. ──
   const hasRequirementInput = description.trim().length >= 20;
   const hasDocumentInput = documents.length > 0;
   const hasEnoughInputToGenerate = hasRequirementInput || hasDocumentInput;
@@ -160,13 +148,6 @@ export function useGenerateWorkspace(projectId: string) {
       return;
     }
     setRightTab('results');
-    // QUAN TRONG: callback truyen vao startTransition PHAI la 1 async function (va
-    // PHAI await generate() ben trong) thi React 19 moi giu isPending = true xuyen
-    // suot request. Truoc day dung `() => { generate().catch(...) }` - day la 1
-    // callback DONG BO khong return promise, nen React coi transition da "xong" ngay
-    // lap tuc (sau khi phan than dong bo chay xong, tinh bang mili-giay), khien
-    // GeneratingModal chi loe len roi tat rup thay vi hien xuyen suot ~vai chuc giay
-    // AI dang xu ly.
     startTransition(async () => {
       try {
         await generate();
@@ -177,17 +158,6 @@ export function useGenerateWorkspace(projectId: string) {
     });
   }
 
-  // Khi generate chi dung AI Document Reader (Figma/tai lieu dinh kem, xem
-  // hasEnoughInputToGenerate o duoi), `description` co the rong hoac qua ngan.
-  // Cac API phia sau (luu requirement, review, enhance) deu doi hoi
-  // requirement_description toi thieu 1 so ky tu nhat dinh (POST
-  // /api/test-case-sets: 10 ky tu; POST /api/ai/enhance mode review/enhance:
-  // 20 ky tu - xem requestSchema trong app/api/ai/enhance/route.ts) -> phai
-  // fallback ve tieu de cac tai lieu da dung de generate, thay vi gui chuoi
-  // rong/qua ngan va bi Zod reject (400 too_small). Dung CHUNG 1 ham cho ca 3
-  // noi goi (save, review, enhance) de tranh lap lai logic va sot truong hop
-  // nhu da tung xay ra (runReview/runEnhance truoc day gui thang `description`
-  // goc, khong qua fallback nay).
   function getEffectiveRequirementDescription(): string {
     const trimmedDescription = description.trim();
     if (trimmedDescription.length >= 20) return description;
