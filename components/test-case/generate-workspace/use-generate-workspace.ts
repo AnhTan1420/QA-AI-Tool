@@ -157,11 +157,20 @@ export function useGenerateWorkspace(projectId: string) {
       return;
     }
     setRightTab('results');
-    startTransition(() => {
-      generate().catch((err) => {
+    // QUAN TRONG: callback truyen vao startTransition PHAI la 1 async function (va
+    // PHAI await generate() ben trong) thi React 19 moi giu isPending = true xuyen
+    // suot request. Truoc day dung `() => { generate().catch(...) }` - day la 1
+    // callback DONG BO khong return promise, nen React coi transition da "xong" ngay
+    // lap tuc (sau khi phan than dong bo chay xong, tinh bang mili-giay), khien
+    // GeneratingModal chi loe len roi tat rup thay vi hien xuyen suot ~vai chuc giay
+    // AI dang xu ly.
+    startTransition(async () => {
+      try {
+        await generate();
+      } catch (err) {
         setError(err instanceof Error ? err.message : t.generateWorkspace.errors.generateFailed);
         setErrorDetails((err as { details?: { path: string; message: string }[] })?.details ?? []);
-      });
+      }
     });
   }
 

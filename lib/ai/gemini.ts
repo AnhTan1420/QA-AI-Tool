@@ -31,7 +31,10 @@ export async function generateWithGemini(
         config: {
           systemInstruction: systemPrompt,
           temperature: 0.2,
-          maxOutputTokens: 8192,
+          // Da tang tu 8192: voi minCases moi (toi thieu theo tung category, xem
+          // generation-agent.ts) bo set co the len toi 30-40+ case chi tiet, de vuot
+          // 8192 token va bi cat cut JSON giua chung neu khong nang tran nay len.
+          maxOutputTokens: 16384,
           responseMimeType: "application/json", // Ép AI trả về chuẩn JSON
         },
       });

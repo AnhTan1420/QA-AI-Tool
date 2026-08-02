@@ -31,7 +31,14 @@ export function buildGenerationPrompt(input: GenerationPromptInput) {
     ? input.selected_categories.join(', ')
     : 'Any valid category from the schema';
 
-  const minCases = input.selected_categories.length > 0 ? input.selected_categories.length : 3;
+  // Truoc day chi ep 1 tong so case toi thieu = so category duoc chon (qua thap,
+  // AI de dang "lam cho du" 1 case/category la xong -> bo set nong, thieu chieu sau).
+  // Doi sang ep so case TOI THIEU CHO TUNG CATEGORY rieng, theo detail_level, de bo
+  // set luon co do phu du/sau tuong xung voi cac layer phan tich o PHASE 0.
+  const perCategoryMinByDetail: Record<string, number> = { concise: 2, standard: 4, detailed: 6 };
+  const perCategoryMin = perCategoryMinByDetail[input.detail_level] ?? 4;
+  const categoriesForMin = input.selected_categories.length > 0 ? input.selected_categories : ['positive', 'negative', 'boundary'];
+  const minCases = perCategoryMin * categoriesForMin.length;
 
   const oldCasesFormatted = input.retrieved_old_test_cases.length > 0
     ? input.retrieved_old_test_cases.map((tc, idx) => `
@@ -182,7 +189,7 @@ ${JSON_SCHEMA_CONTRACT}
 
 8. CATEGORY COVERAGE:
    • MANDATORY categories: ${categoryConstraint}
-   • Each selected category MUST have at least 1 case.
+   • Each selected category MUST have AT LEAST ${perCategoryMin} distinct, non-overlapping cases (not just 1). A category with only 1-2 shallow cases is an INSTANT REJECTION — go back to LAYER 2/3/4 of PHASE 0 and mine more angles (extra boundary values, extra attack vectors, extra state transitions) for that category before finalizing.
    • If 'security' is selected: MUST include XSS, SQLi, auth bypass, IDOR, CSRF where applicable.
    • If 'performance' is selected: MUST include load time threshold, concurrent user, large payload.
    • If 'localization' is selected: MUST include unicode, RTL, date format, currency, diacritics.
@@ -210,7 +217,7 @@ After generating the JSON array, BEFORE outputting, perform this check:
 CHECKLIST:
 □ Every requirement sentence has ≥1 test case mapping to it.
 □ Every "if/else/when/unless/must/should" in requirement is tested.
-□ Every selected category [${categoryConstraint}] has ≥1 case.
+□ Every selected category [${categoryConstraint}] has ≥${perCategoryMin} distinct cases (not just 1-2).
 □ Every document atom_id from PHASE 0.5 (Figma/FS/ERD/diagram, if any were attached) appears in source_requirement_ids of ≥1 test case — 100% mapping, zero orphan atoms.
 □ No two cases test the exact same condition (deduplication).
 □ Every expected_result contains a measurable/observable criterion.
@@ -229,7 +236,7 @@ ${input.requirement_description}
 
 [MANDATORY CONFIGURATION]
 - Categories (MUST cover all): ${categoryConstraint}
-- Minimum cases: ${minCases}
+- Minimum cases: ${minCases} total, with AT LEAST ${perCategoryMin} cases per selected category (see PHASE 2.8)
 - Language: ${input.language}
 - Detail level: ${input.detail_level}
 
