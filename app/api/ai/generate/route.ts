@@ -1,25 +1,32 @@
 import { NextResponse } from 'next/server';
+import { ZodError } from 'zod';
 import { runAIAgent } from '@/lib/ai/provider';
 import { buildGenerationPrompt } from '@/lib/ai/prompts/generation-agent';
 import { buildGenerationResponseSchema } from '@/lib/ai/prompts/generation-response-schema';
-import { generateRequestSchema, generatedTestCasesSchema, generationAnalysisSchema } from '@/lib/validators/test-case';
+import {
+  generateRequestSchema,
+  generatedTestCasesSchema,
+  generationAnalysisSchema,
+} from '@/lib/validators/test-case';
 import { unwrapArrayResponse } from '@/lib/ai/parse';
 import { computeDocumentCoverage } from '@/lib/documents/coverage';
 
+// Cho phép Vercel Function chạy tối đa 5 phút (Vercel Pro)
 export const maxDuration = 300;
 export const runtime = 'nodejs';
 
 /**
- * Generation Agent - sinh bo test case tu requirement description (+ RAG context neu co).
- * BAT BUOC: validate ca input tu client lan output tu AI bang Zod (spec muc V.5 / XI) -
- * khong tin bat ky JSON nao chua qua validate.
+ * Generation Agent - Sinh bộ test case từ requirement description (+ RAG context / Document Atoms nếu có).
+ * BẮT BUỘC: Validate cả input từ client lẫn output từ AI bằng Zod.
  */
 export async function POST(req: Request) {
   try {
     const rawBody = await req.json();
-    // 1) Validate INPUT tu client truoc khi lam bat cu viec gi.
+
+    // 1) Validate INPUT từ client trước khi xử lý
     const input = generateRequestSchema.parse(rawBody);
 
+    // Build prompt chuẩn 10/10 (7 layers analysis + JSON contract)
     const promptString = buildGenerationPrompt({
       requirement_description: input.requirement_description,
       retrieved_old_test_cases: input.retrieved_old_test_cases,
@@ -29,69 +36,113 @@ export async function POST(req: Request) {
       document_context: input.document_context,
     });
 
-    // responseSchema: ep cau truc + thu tu key ("analysis" truoc "test_cases") o
-    // cap API (Gemini Structured Output), thay vi chi dua vao prompt text - xem
-    // lib/ai/prompts/generation-response-schema.ts. Neu model/API khong tuong
-    // thich schema nay, gemini.ts se tu dong thu lai khong kem schema (lui ve
-    // dung prompt text nhu truoc), nen khong co rui ro lam sap tinh nang generate.
-    const aiRawResult = await runAIAgent(promptString, 'generation', buildGenerationResponseSchema());
+    // Gọi AI Provider (Gemini / Groq Fallback) với Structured Output Schema
+    const aiRawResult = await runAIAgent(
+      promptString,
+      'generation',
+      buildGenerationResponseSchema()
+    );
 
-    // 2) Validate OUTPUT tu AI truoc khi tra ve client - KHONG bao gio tin JSON tho tu LLM,
-    // du da ep responseMimeType: application/json o phia provider.
-    // Luu y: khi fallback sang Groq, response_format "json_object" bat buoc AI phai
-    // tra ve 1 JSON OBJECT o top-level (khong the la bare array) -> AI se tu bọc mang
-    // test case vao 1 key nhu "test_cases"/"data"/... -> can go bo lop bọc nay truoc
-    // khi validate, neu khong se bi bao sai "khong dung dinh dang test case" oan.
-    const normalizedResult = unwrapArrayResponse(aiRawResult);
-    const parsedTestCases = generatedTestCasesSchema.safeParse(normalizedResult);
+    // 2) Bọc lớp phòng thủ bóc tách JSON Object / String từ AI Response
+    let rawJsonObject: Record<string, unknown> | null = null;
+
+    if (typeof aiRawResult === 'string') {
+      try {
+        // Làm sạch Markdown code blocks (```json ... ```) nếu AI fallback trả về dạng string
+        const cleaned = aiRawResult
+          .replace(/```json\n?/gi, '')
+          .replace(/```\n?/g, '')
+          .trim();
+        rawJsonObject = JSON.parse(cleaned);
+      } catch {
+        rawJsonObject = null;
+      }
+    } else if (aiRawResult && typeof aiRawResult === 'object') {
+      rawJsonObject = aiRawResult as Record<string, unknown>;
+    }
+
+    // 3) Extract & Validate mảng `test_cases`
+    // unwrapArrayResponse sẽ tự bóc mảng từ key "test_cases", "data", hoặc chính mảng đó
+    const candidateTestCases = unwrapArrayResponse(rawJsonObject ?? aiRawResult);
+    const parsedTestCases = generatedTestCasesSchema.safeParse(candidateTestCases);
+
     if (!parsedTestCases.success) {
-      const flattenedIssues = parsedTestCases.error.issues.map((issue: { path: (string | number)[]; message: string }) => ({
-        path: issue.path.join('.'),
-        message: issue.message,
-      }));
-      console.error('[ai/generate] AI tra ve JSON sai schema:', flattenedIssues);
-      console.error('[ai/generate] Raw AI result:', JSON.stringify(aiRawResult)?.slice(0, 3000));
+      const flattenedIssues = parsedTestCases.error.issues.map(
+        (issue: { path: (string | number)[]; message: string }) => ({
+          path: issue.path.join('.'),
+          message: issue.message,
+        })
+      );
+
+      console.error('[ai/generate] AI trả về JSON sai schema test case:', flattenedIssues);
+      console.error(
+        '[ai/generate] Raw AI result sample:',
+        JSON.stringify(aiRawResult)?.slice(0, 3000)
+      );
+
       return NextResponse.json(
         {
           success: false,
-          error: 'AI tra ve du lieu khong dung dinh dang test case. Vui long thu lai.',
-          // Chi tiet loi tung field de debug ngay tren client, khong can vao Vercel logs.
+          error: 'AI trả về dữ liệu không đúng định dạng test case. Vui lòng thử lại.',
           details: flattenedIssues,
         },
         { status: 502 }
       );
     }
 
-    // 3) Doi chieu atom trich xuat tu document_context (neu co) voi
-    // source_requirement_ids AI vua gan - day la buoc XAC MINH o muc code cho
-    // yeu cau "mapping 100%" trong prompt (PHASE 0.5), khong chi tin loi AI.
-    const documentCoverage = computeDocumentCoverage(input.document_context, parsedTestCases.data);
+    // 4) Đối chiếu atom từ document_context với source_requirement_ids vừa sinh
+    const documentCoverage = computeDocumentCoverage(
+      input.document_context,
+      parsedTestCases.data
+    );
 
-    // 4) "analysis" (PHASE 0 - 7 layer sau) truoc day bi vut bo hoan toan sau
-    // buoc nay. Gio parse LENIENT (safeParse, khong .parse) va tra ve client de
-    // luu lai / hien thi "AI Reasoning" - nhung KHONG bao gio de loi o day lam
-    // fail ca request, vi test_cases (da validate xong o buoc 2) moi la
-    // deliverable chinh. Neu AI (hoac fallback provider khac) khong tra
-    // "analysis" hop le, tra ve null - client/UI da xu ly truong hop null nay.
-    const rawAnalysis = aiRawResult && typeof aiRawResult === 'object' && !Array.isArray(aiRawResult)
-      ? (aiRawResult as Record<string, unknown>).analysis
-      : undefined;
+    // 5) Extract & Parse "analysis" (PHASE 0 - Deep Thinking)
+    // Parse theo kiểu Lenient (safeParse): Nếu không hợp lệ thì trả về null chứ KHÔNG làm fail cả request
+    const rawAnalysis = rawJsonObject?.analysis;
     const parsedAnalysis = generationAnalysisSchema.safeParse(rawAnalysis);
-    if (!parsedAnalysis.success) {
-      console.warn('[ai/generate] "analysis" khong hop le/thieu - bo qua, khong anh huong test_cases:', parsedAnalysis.error.flatten());
+
+    if (!parsedAnalysis.success && rawAnalysis) {
+      console.warn(
+        '[ai/generate] "analysis" không hợp lệ/thiếu - bỏ qua, giữ nguyên test_cases:',
+        parsedAnalysis.error.flatten()
+      );
     }
+
     const analysis = parsedAnalysis.success ? parsedAnalysis.data : null;
 
+    // 6) Trả về kết quả thành công cho Client
     return NextResponse.json({
       success: true,
-      data: { test_cases: parsedTestCases.data, document_coverage: documentCoverage, analysis },
+      data: {
+        test_cases: parsedTestCases.data,
+        document_coverage: documentCoverage,
+        analysis,
+      },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('❌ Lỗi API Generate Test Cases:', error);
-    const message =
-      error?.issues // loi tu Zod parse input
-        ? 'Dữ liệu đầu vào không hợp lệ: ' + error.issues.map((i: any) => i.message).join(', ')
-        : error?.message || 'Có lỗi xảy ra khi tạo test case';
-    return NextResponse.json({ success: false, error: message }, { status: 400 });
+
+    // Phân loại lỗi Zod Input Validation (400) vs Lỗi Hệ thống/AI Runtime (500)
+    if (error instanceof ZodError) {
+      const errorMessage =
+        'Dữ liệu đầu vào không hợp lệ: ' +
+        error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join(', ');
+
+      return NextResponse.json(
+        { success: false, error: errorMessage, details: error.issues },
+        { status: 400 }
+      );
+    }
+
+    const failureMessage =
+      error instanceof Error ? error.message : 'Có lỗi không xác định xảy ra khi tạo test case';
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: failureMessage,
+      },
+      { status: 500 }
+    );
   }
 }
