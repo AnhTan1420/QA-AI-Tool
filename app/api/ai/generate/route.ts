@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runAIAgent } from '@/lib/ai/provider';
 import { buildGenerationPrompt } from '@/lib/ai/prompts/generation-agent';
+import { buildGenerationResponseSchema } from '@/lib/ai/prompts/generation-response-schema';
 import { generateRequestSchema, generatedTestCasesSchema } from '@/lib/validators/test-case';
 import { unwrapArrayResponse } from '@/lib/ai/parse';
 import { computeDocumentCoverage } from '@/lib/documents/coverage';
@@ -28,7 +29,12 @@ export async function POST(req: Request) {
       document_context: input.document_context,
     });
 
-    const aiRawResult = await runAIAgent(promptString, 'generation');
+    // responseSchema: ep cau truc + thu tu key ("analysis" truoc "test_cases") o
+    // cap API (Gemini Structured Output), thay vi chi dua vao prompt text - xem
+    // lib/ai/prompts/generation-response-schema.ts. Neu model/API khong tuong
+    // thich schema nay, gemini.ts se tu dong thu lai khong kem schema (lui ve
+    // dung prompt text nhu truoc), nen khong co rui ro lam sap tinh nang generate.
+    const aiRawResult = await runAIAgent(promptString, 'generation', buildGenerationResponseSchema());
 
     // 2) Validate OUTPUT tu AI truoc khi tra ve client - KHONG bao gio tin JSON tho tu LLM,
     // du da ep responseMimeType: application/json o phia provider.

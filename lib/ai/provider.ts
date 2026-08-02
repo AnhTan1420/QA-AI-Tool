@@ -53,12 +53,22 @@ function getGroqModelsForTask(): string[] {
 
 /**
  * Gọi AI sinh JSON theo tác vụ (Gemini trước, fallback Groq khi Gemini lỗi hạ tầng/rate-limit).
+ *
+ * `responseSchema` (optional): Gemini Structured Output schema - chỉ có tác dụng
+ * ở nhánh Gemini (xem lib/ai/gemini.ts); Groq không nhận tham số này, vẫn dùng
+ * response_format: "json_object" như cũ. Hiện tại chỉ route generate truyền vào
+ * (xem lib/ai/prompts/generation-response-schema.ts) - các tác vụ khác gọi
+ * runAIAgent như cũ (undefined), hành vi không đổi.
  */
-export async function runAIAgent(fullPrompt: string, task: AITask = 'generation') {
+export async function runAIAgent(
+  fullPrompt: string,
+  task: AITask = 'generation',
+  responseSchema?: Record<string, unknown>
+) {
   const systemPrompt = "You are a professional QA Assistant. Return ONLY valid JSON format.";
 
   try {
-    return await generateWithGemini(systemPrompt, fullPrompt, getGeminiModelsForTask(task));
+    return await generateWithGemini(systemPrompt, fullPrompt, getGeminiModelsForTask(task), responseSchema);
   } catch (geminiError) {
     console.warn("⚠️ [Provider] Gemini thất bại. Đang chuyển qua Groq...", geminiError);
 

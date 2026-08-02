@@ -249,10 +249,26 @@ export function useGenerateWorkspace(projectId: string) {
         throw new Error(t.generateWorkspace.errors.demoSaveBlocked);
       }
 
+      // Khi generate chi dung AI Document Reader (Figma/tai lieu dinh kem, xem
+      // hasEnoughInputToGenerate o tren), `description` co the rong hoac qua
+      // ngan (< 10 ky tu). API luu requirement (POST /api/test-case-sets) lai
+      // doi hoi requirement_description toi thieu 10 ky tu va requirement_title
+      // toi thieu 1 ky tu -> phai fallback ve tieu de cac tai lieu da dung de
+      // generate, thay vi gui chuoi rong va bi Zod reject (400 too_small).
+      const trimmedDescription = description.trim();
+      const documentTitles = documents.map((doc) => doc.title).filter(Boolean);
+      const fallbackDescription = documentTitles.length > 0
+        ? `Generated from documents: ${documentTitles.join(', ')}`
+        : 'No description provided';
+      const effectiveDescription = trimmedDescription.length >= 10 ? description : fallbackDescription;
+      const effectiveTitle = trimmedDescription.length > 0
+        ? trimmedDescription.slice(0, 80)
+        : (documentTitles[0] ?? 'Requirement').slice(0, 80);
+
       const { set } = await postJson<{ set: { id: string } }>('/api/test-case-sets', {
         project_id: projectId,
-        requirement_title: description.slice(0, 80),
-        requirement_description: description,
+        requirement_title: effectiveTitle,
+        requirement_description: effectiveDescription,
       }, t.generateWorkspace.errors.requestFailed);
 
       await postJson('/api/test-cases/bulk', {
