@@ -324,7 +324,7 @@ const en: Dictionary = {
     preconditionsPrefix: 'Preconditions',
     expectedPrefix: 'Expected',
     finalPrefix: 'Final',
-    sampleDescription: `Email/password login feature for the QAJD web app.\nThe user enters an email and password, then clicks Sign in. If the information is valid, the system redirects to the dashboard. If the email/password is wrong, a clear error is shown. If the account's email is not yet verified, verification is required before signing in. The form must validate the email format, disallow submission when fields are empty, and support Vietnamese.`,
+    requirementPlaceholder: `Describe the feature to be tested, in as much detail as possible. Example:\n\n"Email/password login feature for a web app.\nThe user enters an email and password, then clicks Sign in. If the information is valid, the system redirects to the dashboard. If the email/password is wrong, a clear error is shown. If the account's email is not yet verified, verification is required before signing in. The form must validate the email format and disallow submission when fields are empty."\n\nTip: describe the main flows (happy path), error conditions, validation rules, and any business constraints so the AI can generate test cases that closely match your requirement.`,
     defaultLanguage: 'English',
     errors: {
       generateFailed: 'Generate failed',

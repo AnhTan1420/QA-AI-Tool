@@ -54,25 +54,25 @@ export function DocumentReaderPanel({ workspace }: { workspace: GenerateWorkspac
         <span className="text-xs text-slate-400">{dr.fileHint}</span>
       </label>
 
-      <div className="mt-3 flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50/30 p-3 sm:flex-row sm:items-center">
+      <div className="mt-3 flex flex-col gap-2 rounded-2xl border border-slate-200 bg-slate-50/30 p-3">
         <input
           value={workspace.figmaUrl}
           onChange={(event) => workspace.setFigmaUrl(event.target.value)}
           placeholder={dr.figmaUrlPlaceholder}
-          className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none transition-all focus:border-blue-300 focus:ring-4 focus:ring-blue-100"
+          className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none transition-all focus:border-blue-300 focus:ring-4 focus:ring-blue-100"
         />
         <input
           value={workspace.figmaToken}
           onChange={(event) => workspace.setFigmaToken(event.target.value)}
           type="password"
           placeholder={dr.figmaTokenPlaceholder}
-          className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none transition-all focus:border-blue-300 focus:ring-4 focus:ring-blue-100"
+          className="w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs outline-none transition-all focus:border-blue-300 focus:ring-4 focus:ring-blue-100"
         />
         <button
           type="button"
           disabled={workspace.isParsingDocument || !workspace.figmaUrl.trim()}
           onClick={workspace.handleFigmaImport}
-          className="shrink-0 rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full shrink-0 rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-white transition-all hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {dr.figmaImportButton}
         </button>

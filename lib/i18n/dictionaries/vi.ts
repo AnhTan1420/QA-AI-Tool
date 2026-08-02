@@ -322,7 +322,7 @@ const vi = {
     preconditionsPrefix: 'Preconditions',
     expectedPrefix: 'Expected',
     finalPrefix: 'Final',
-    sampleDescription: `Tính năng đăng nhập email/password cho web app QAJD.\nNgười dùng nhập email và mật khẩu, bấm Đăng nhập. Nếu thông tin hợp lệ, hệ thống chuyển tới dashboard. Nếu sai email/mật khẩu, hiển thị lỗi rõ ràng. Nếu tài khoản chưa xác thực email, yêu cầu xác thực trước khi đăng nhập. Form phải validate email hợp lệ, không cho submit khi bỏ trống, hỗ trợ tiếng Việt.`,
+    requirementPlaceholder: `Mô tả tính năng cần test, càng chi tiết càng tốt. Ví dụ:\n\n"Tính năng đăng nhập email/password cho web app.\nNgười dùng nhập email và mật khẩu, bấm Đăng nhập. Nếu thông tin hợp lệ, hệ thống chuyển tới dashboard. Nếu sai email/mật khẩu, hiển thị lỗi rõ ràng. Nếu tài khoản chưa xác thực email, yêu cầu xác thực trước khi đăng nhập. Form phải validate email hợp lệ, không cho submit khi bỏ trống."\n\nGợi ý: nêu rõ các luồng chính (happy path), điều kiện lỗi, validation, và giới hạn nghiệp vụ (nếu có) để AI sinh test case bám sát yêu cầu hơn.`,
     defaultLanguage: 'Tiếng Việt',
     errors: {
       generateFailed: 'Generate failed',

@@ -181,16 +181,36 @@ export const reviewResultSchema = z.object({
   ),
 });
 
-export const generateRequestSchema = z.object({
-  requirement_description: z.string().min(20),
-  selected_categories: z.array(testCaseCategorySchema).min(1),
-  language: z.string().min(2).default('Tiếng Việt'),
-  detail_level: z.enum(['concise', 'standard', 'detailed']).default('standard'),
-  retrieved_old_test_cases: z.array(retrievedTestCaseSchema).optional().default([]),
-  // AI Document Reader: Figma design / Markdown / logic document / FS / ERD / diagram
-  // da duoc atomize truoc qua /api/ai/documents/parse (xem lib/validators/document.ts).
-  document_context: z.array(parsedDocumentSchema).optional().default([]),
-});
+export const generateRequestSchema = z
+  .object({
+    // Khong con bat buoc min(20) o day nua: mot minh field nay co the rong neu
+    // document_context (Figma/tai lieu dinh kem) da co du lieu - xem superRefine ben duoi
+    // cho rule "it nhat muc 1 (requirement) hoac muc 2 (document reader) phai co data".
+    requirement_description: z.string().default(''),
+    selected_categories: z.array(testCaseCategorySchema).min(1),
+    language: z.string().min(2).default('Tiếng Việt'),
+    detail_level: z.enum(['concise', 'standard', 'detailed']).default('standard'),
+    retrieved_old_test_cases: z.array(retrievedTestCaseSchema).optional().default([]),
+    // AI Document Reader: Figma design / Markdown / logic document / FS / ERD / diagram
+    // da duoc atomize truoc qua /api/ai/documents/parse (xem lib/validators/document.ts).
+    document_context: z.array(parsedDocumentSchema).optional().default([]),
+  })
+  .superRefine((data, ctx) => {
+    const trimmedDescription = data.requirement_description.trim();
+    const hasRequirement = trimmedDescription.length >= 20;
+    const hasDocuments = (data.document_context ?? []).length > 0;
+
+    if (!hasRequirement && !hasDocuments) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['requirement_description'],
+        message:
+          trimmedDescription.length > 0
+            ? 'Requirement / description quá ngắn (tối thiểu 20 ký tự). Hãy bổ sung mô tả hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục AI Document Reader.'
+            : 'Cần nhập Requirement / description (tối thiểu 20 ký tự) hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục AI Document Reader.',
+      });
+    }
+  });
 
 export const reviewRequestSchema = z.object({
   requirement_description: z.string().min(20),

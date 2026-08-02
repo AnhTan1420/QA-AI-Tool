@@ -25,8 +25,14 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
         <textarea
           value={workspace.description}
           onChange={(event) => workspace.setDescription(event.target.value)}
-          className={`mt-2 min-h-64 w-full rounded-2xl border border-slate-200 bg-slate-50/40 p-4 text-sm leading-6 text-slate-800 outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100 ${SCROLLBAR}`}
+          placeholder={t.generateWorkspace.requirementPlaceholder}
+          className={`mt-2 min-h-64 w-full rounded-2xl border border-slate-200 bg-slate-50/40 p-4 text-sm leading-6 text-slate-800 outline-none transition-all placeholder:text-slate-400/80 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100 ${SCROLLBAR}`}
         />
+        <p className={`mt-1.5 text-xs font-semibold ${workspace.hasEnoughInputToGenerate ? 'text-emerald-600' : 'text-amber-600'}`}>
+          {workspace.hasEnoughInputToGenerate
+            ? (workspace.hasRequirementInput ? '✓ Đã đủ dữ liệu ở mục Requirement.' : '✓ Đã có tài liệu đính kèm ở mục AI Document Reader — không bắt buộc nhập mô tả.')
+            : '⚠ Cần nhập Requirement (tối thiểu 20 ký tự) hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục 2 bên dưới.'}
+        </p>
       </label>
 
       <DocumentReaderPanel workspace={workspace} />
@@ -135,7 +141,7 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
 
       <div className="flex flex-wrap gap-3 pt-1">
         <button
-          disabled={workspace.isPending || workspace.selectedCategories.length === 0}
+          disabled={!workspace.canGenerate}
           onClick={workspace.handleGenerateClick}
           className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:shadow-md hover:shadow-blue-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
         >

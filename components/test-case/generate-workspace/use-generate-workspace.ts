@@ -20,7 +20,7 @@ import { VALID_CATEGORY_VALUES } from './shared';
 export function useGenerateWorkspace(projectId: string) {
   const router = useRouter();
   const { t, locale } = useLanguage();
-  const [description, setDescription] = useState(t.generateWorkspace.sampleDescription);
+  const [description, setDescription] = useState('');
   const [language, setLanguage] = useState(t.generateWorkspace.defaultLanguage);
   const [detailLevel, setDetailLevel] = useState<'concise' | 'standard' | 'detailed'>('standard');
   const [selectedCategories, setSelectedCategories] = useState<TestCaseCategory[]>(['positive', 'negative', 'boundary', 'security', 'localization']);
@@ -108,6 +108,21 @@ export function useGenerateWorkspace(projectId: string) {
   const isDemoProject = projectId === 'demo';
   const safeTestCasesCount = (testCases ?? []).length;
 
+  // ── Validation: bat buoc it nhat muc 1 (Requirement/description, >=20 ky tu co nghia)
+  // HOAC muc 2 (AI Document Reader: Figma/tai lieu dinh kem) phai co data thi moi cho
+  // generate - khop voi rule ma server (generateRequestSchema) da enforce, nhung kiem tra
+  // truoc o client de UX ro rang hon (disable nut + hien thi ly do) thay vi phai bam roi
+  // moi nhan loi tu API. ──
+  const hasRequirementInput = description.trim().length >= 20;
+  const hasDocumentInput = documents.length > 0;
+  const hasEnoughInputToGenerate = hasRequirementInput || hasDocumentInput;
+  const generateValidationMessage = hasEnoughInputToGenerate
+    ? ''
+    : description.trim().length > 0
+      ? 'Requirement / description quá ngắn (tối thiểu 20 ký tự). Hãy bổ sung mô tả hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục AI Document Reader.'
+      : 'Cần nhập Requirement / description (tối thiểu 20 ký tự) hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục AI Document Reader.';
+  const canGenerate = hasEnoughInputToGenerate && selectedCategories.length > 0 && !isPending;
+
   function toggleCategory(category: TestCaseCategory) {
     setSelectedCategories((current) =>
       current.includes(category) ? current.filter((item) => item !== category) : [...current, category],
@@ -134,6 +149,13 @@ export function useGenerateWorkspace(projectId: string) {
   }
 
   function handleGenerateClick() {
+    if (!hasEnoughInputToGenerate) {
+      setError(generateValidationMessage);
+      setErrorDetails([]);
+      setSuccessMessage('');
+      setRightTab('results');
+      return;
+    }
     setRightTab('results');
     startTransition(() => {
       generate().catch((err) => {
@@ -410,6 +432,7 @@ export function useGenerateWorkspace(projectId: string) {
 
     // Generate action + status
     isPending, handleGenerateClick, generatingStep,
+    canGenerate, hasRequirementInput, hasDocumentInput, hasEnoughInputToGenerate, generateValidationMessage,
     error, errorDetails, successMessage,
 
     // Results
