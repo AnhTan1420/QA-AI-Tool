@@ -22,6 +22,26 @@ function repairTruncatedJson(text: string): string | null {
   let lastSafeIndex = -1;
   let lastSafeStack: string[] = [];
 
+  // Do sau (do dai openStack NGAY SAU KHI push) cua mang lap-lai o ngoai cung
+  // (VD: "test_cases" trong { analysis, test_cases: [...] }, hoac chinh no neu
+  // response la bare array [...]). Day la mang "['[' dau tien gap trong text"
+  // - vi voi ca 2 dang response ma he thong nay dung (bare array, hoac object
+  // bi bao 1 lop voi 1 field la array), mang chua cac phan tu lap lai LUON la
+  // mang '[' DAU TIEN xuat hien trong chuoi.
+  //
+  // SUA LOI QUAN TRONG: truoc day MOI dau dong ngoac (} hoac ]) deu duoc coi la
+  // "diem an toan", ke ca cac ngoac dong 1 FIELD LONG BEN TRONG 1 phan tu CHUA
+  // hoan chinh (VD: "preconditions": [...] dong xong nhung "steps" va
+  // "final_expected_result" phia sau van dang dang do bi cat cut). Dieu nay khien
+  // ham "vá" ghep them '}' '] ngay sau field do, tao ra 1 item "gia hoan chinh"
+  // nhung thieu cac field con lai (thay vi loai bo han item do nhu y dinh ban
+  // dau) -> gay loi "Required" cho tung field cu the (VD: '41.steps',
+  // '41.final_expected_result') dung nhu bao cao thuc te. Fix: CHI danh dau la
+  // "an toan" khi ngoac dong dua do sau openStack VE DUNG do sau cua mang lap-lai
+  // ngoai cung (tuc la vua dong xong TRON VEN 1 phan tu la con truc tiep cua
+  // mang do, khong phai 1 field long ben trong phan tu dang do dang).
+  let itemArrayDepth: number | null = null;
+
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
 
@@ -43,17 +63,24 @@ function repairTruncatedJson(text: string): string | null {
 
     if (ch === '{' || ch === '[') {
       openStack.push(ch);
+      if (ch === '[' && itemArrayDepth === null) {
+        itemArrayDepth = openStack.length;
+      }
     } else if (ch === '}' || ch === ']') {
       openStack.pop();
-      // Vua dong xong 1 phan tu hoan chinh (object/array) - danh dau la diem an toan.
-      lastSafeIndex = i;
-      lastSafeStack = [...openStack];
+      // Chi danh dau "an toan" khi vua dong xong 1 phan tu la CON TRUC TIEP cua
+      // mang lap-lai ngoai cung (do sau hien tai == do sau cua mang do) - KHONG
+      // phai bat ky ngoac dong nao (xem giai thich o tren).
+      if (itemArrayDepth !== null && openStack.length === itemArrayDepth) {
+        lastSafeIndex = i;
+        lastSafeStack = [...openStack];
+      }
     }
   }
 
-  // Khong tim thay diem an toan nao (JSON hong tu dau) hoac khong con ngoac nao
-  // dang mo (tuc la JSON da hop le, khong phai loi truncation) -> khong the/khong
-  // can vá.
+  // Khong tim thay diem an toan nao (JSON hong tu dau, hoac chua co phan tu nao
+  // trong mang lap-lai dong hoan chinh) hoac khong con ngoac nao dang mo (tuc la
+  // JSON da hop le, khong phai loi truncation) -> khong the/khong can vá.
   if (lastSafeIndex === -1 || lastSafeStack.length === 0) return null;
 
   let repaired = text.slice(0, lastSafeIndex + 1);
