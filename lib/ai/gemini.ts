@@ -31,7 +31,7 @@ export async function generateWithGemini(
         config: {
           systemInstruction: systemPrompt,
           temperature: 0.2,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 8192,
           responseMimeType: "application/json", // Ép AI trả về chuẩn JSON
         },
       });

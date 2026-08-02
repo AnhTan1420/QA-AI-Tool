@@ -18,8 +18,11 @@ export type AITask = 'generation' | 'review' | 'classification' | 'document_extr
  * Mỗi biến đều đọc từ .env - không hard-code model ID trong code.
  * 
  * Lưu ý: maxOutputTokens được cấu hình cố định ở từng provider:
- *   - Gemini: 4096 tokens (lib/ai/gemini.ts, lib/ai/vision.ts)
- *   - Groq: 3500 tokens   (lib/ai/groq.ts)
+ *   - Gemini: 8192 tokens (lib/ai/gemini.ts, lib/ai/vision.ts)
+ *   - Groq: 8000 tokens   (lib/ai/groq.ts)
+ * (Từng bị 4096/3500 - qua thấp, khien AI bi cat cut JSON giua chung khi document/
+ * set test case co nhieu atom/case, gay loi "Expected ',' or ']' after array
+ * element". Da tang len + them co che tu phuc hoi JSON bi cat trong lib/ai/parse.ts.)
  */
 function getGeminiModelsForTask(task: AITask): string[] {
   const primaryByTask: Record<AITask, string | undefined> = {

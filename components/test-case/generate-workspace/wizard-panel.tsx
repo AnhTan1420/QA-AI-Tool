@@ -143,15 +143,27 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
         <button
           disabled={!workspace.canGenerate}
           onClick={workspace.handleGenerateClick}
-          className="rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:shadow-md hover:shadow-blue-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:shadow-md hover:shadow-blue-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
         >
+          {workspace.isPending && (
+            <svg className="h-4 w-4 animate-spin text-white" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
           {workspace.isPending ? t.generateWorkspace.generating : t.generateWorkspace.generateButton}
         </button>
         <button
           disabled={workspace.isSaving || workspace.safeTestCasesCount === 0}
           onClick={workspace.saveToLibrary}
-          className="rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
         >
+          {workspace.isSaving && (
+            <svg className="h-4 w-4 animate-spin text-emerald-700" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
           {workspace.isSaving ? t.generateWorkspace.saving : t.generateWorkspace.saveButton}
         </button>
         <button

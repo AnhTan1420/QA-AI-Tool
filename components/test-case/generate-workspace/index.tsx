@@ -5,6 +5,7 @@ import { SCROLLBAR } from './shared';
 import { WizardPanel } from './wizard-panel';
 import { ResultsPanel } from './results-panel';
 import { ReviewPanel } from './review-panel';
+import { GeneratingModal } from './generating-modal';
 import { useGenerateWorkspace } from './use-generate-workspace';
 
 export function GenerateWorkspace({ projectId }: { projectId: string }) {
@@ -12,6 +13,8 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-5 rounded-[28px] bg-gradient-to-br from-slate-50 via-white to-blue-50/40 p-1">
+      <GeneratingModal workspace={workspace} />
+
       {/* Button quay lại - luôn về trang tổng quan project (cố định, không phụ thuộc history) */}
       <Link
         href={workspace.isDemoProject ? '/projects' : `/projects/${projectId}`}

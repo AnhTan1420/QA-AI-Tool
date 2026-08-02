@@ -4,6 +4,66 @@
 // ============================================================================
 
 /**
+ * Khi phản hồi AI bị cắt cụt giữa chừng (do vượt maxOutputTokens - hay gặp với tài
+ * liệu/set test case có nhiều atom/case), JSON sẽ dở dang ở giữa 1 phần tử mảng,
+ * ví dụ: `..."screen_or_section": "3.2"\n    }` rồi hết (thiếu `]` và `}` đóng ngoài).
+ * Hàm này duyệt qua chuỗi, theo dõi độ sâu ngoặc { [ (bỏ qua nội dung bên trong
+ * chuỗi "..." kể cả ký tự escape \" ), và ghi nhận điểm "an toàn" cuối cùng - tức
+ * vị trí ngay sau 1 dấu đóng ngoặc } hoặc ] hoàn chỉnh (nghĩa là phần tử đó đã
+ * đóng xong, không dở dang). Nếu JSON.parse thất bại, ta cắt chuỗi tại điểm an
+ * toàn cuối cùng đó (bỏ phần tử dở cuối), rồi tự đóng nốt các ngoặc còn mở theo
+ * đúng thứ tự ngược lại, và thử parse lại - thay vì mất trắng toàn bộ kết quả chỉ
+ * vì 1 phần tử cuối bị cắt cụt.
+ */
+function repairTruncatedJson(text: string): string | null {
+  const openStack: string[] = [];
+  let inString = false;
+  let escapeNext = false;
+  let lastSafeIndex = -1;
+  let lastSafeStack: string[] = [];
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (ch === '\\') {
+        escapeNext = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (ch === '{' || ch === '[') {
+      openStack.push(ch);
+    } else if (ch === '}' || ch === ']') {
+      openStack.pop();
+      // Vua dong xong 1 phan tu hoan chinh (object/array) - danh dau la diem an toan.
+      lastSafeIndex = i;
+      lastSafeStack = [...openStack];
+    }
+  }
+
+  // Khong tim thay diem an toan nao (JSON hong tu dau) hoac khong con ngoac nao
+  // dang mo (tuc la JSON da hop le, khong phai loi truncation) -> khong the/khong
+  // can vá.
+  if (lastSafeIndex === -1 || lastSafeStack.length === 0) return null;
+
+  let repaired = text.slice(0, lastSafeIndex + 1);
+  for (let i = lastSafeStack.length - 1; i >= 0; i--) {
+    repaired += lastSafeStack[i] === '{' ? '}' : ']';
+  }
+  return repaired;
+}
+
+/**
  * Trích xuất và phân tích cú pháp chuỗi JSON từ phản hồi của AI.
  * Xử lý được cả trường hợp AI trả về văn bản thừa hoặc bọc trong markdown (```json).
  */
@@ -39,6 +99,21 @@ export function extractJson(text: string): any {
   try {
     return JSON.parse(contentToParse);
   } catch (error) {
+    // 4b. Rất có thể phản hồi bị cắt cụt do vượt maxOutputTokens (hay gặp với tài
+    // liệu/set test case lớn) - thử tự vá lại trước khi báo lỗi hẳn.
+    const repaired = repairTruncatedJson(contentToParse);
+    if (repaired) {
+      try {
+        const result = JSON.parse(repaired);
+        console.warn(
+          "⚠️ [extractJson] Phản hồi AI bị cắt cụt giữa chừng (vượt giới hạn token) - đã tự động phục hồi phần JSON hợp lệ và bỏ phần tử cuối bị dở dang."
+        );
+        return result;
+      } catch {
+        // Vá không thành công -> rơi xuống báo lỗi gốc bên dưới.
+      }
+    }
+
     console.error("❌ Lỗi Parse JSON:", error);
     console.error("Chuỗi text lỗi:", contentToParse);
     throw new Error("Dữ liệu trả về từ AI không đúng định dạng JSON. Vui lòng thử lại.");

@@ -47,7 +47,7 @@ export async function generateWithGeminiVision(
         config: {
           systemInstruction: systemPrompt,
           temperature: 0.15,
-          maxOutputTokens: 4096,
+          maxOutputTokens: 8192,
           responseMimeType: "application/json",
         },
       });
