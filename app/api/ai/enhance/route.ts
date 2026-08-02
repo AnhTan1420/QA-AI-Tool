@@ -5,7 +5,7 @@ import { buildEnhancePrompt } from '@/lib/ai/prompts/enhance-agent';
 import { reviewResultSchema, generatedTestCasesSchema } from '@/lib/validators/test-case';
 import { z } from 'zod';
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 export const runtime = 'nodejs';
 
 const requestSchema = z.object({
