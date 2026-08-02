@@ -1,41 +1,11 @@
 'use client';
 
-import type { getDictionary } from '@/lib/i18n/dictionaries';
 import { useState } from 'react';
-
-type TestStep = {
-  step_number: number;
-  action: string;
-  expected_result: string;
-};
-
-type TestCaseFormData = {
-  code: string;
-  title: string;
-  category: string;
-  priority: string;
-  preconditions: string[];
-  test_data: Record<string, string>;
-  steps: TestStep[];
-  expected_result: string;
-  status: string;
-};
-
-const CATEGORIES = [
-  'positive', 'negative', 'boundary', 'ui_ux', 'compatibility',
-  'performance', 'security', 'integration', 'regression', 'accessibility', 'localization',
-];
-
-const PRIORITIES = ['Critical', 'Major', 'Normal'];
-
-const STATUSES = ['draft', 'in_review', 'approved'];
-
-interface TestCaseFormProps {
-  initialData?: Partial<TestCaseFormData>;
-  onSubmit: (data: TestCaseFormData) => void;
-  onCancel: () => void;
-  submitLabel: string;
-}
+import { CATEGORIES, PRIORITIES, STATUSES } from './constants';
+import { PreconditionsEditor } from './preconditions-editor';
+import { TestDataEditor } from './test-data-editor';
+import { StepsEditor } from './steps-editor';
+import type { TestCaseFormData, TestCaseFormProps, TestStep } from './types';
 
 export default function TestCaseForm({ initialData, onSubmit, onCancel, submitLabel }: TestCaseFormProps) {
   const [form, setForm] = useState<TestCaseFormData>({
@@ -192,113 +162,24 @@ export default function TestCaseForm({ initialData, onSubmit, onCancel, submitLa
         </div>
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Điều kiện tiên quyết</label>
-        <div className="space-y-2">
-          {form.preconditions.map((p, i) => (
-            <div key={i} className="flex gap-2">
-              <input
-                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={p}
-                onChange={(e) => updatePrecondition(i, e.target.value)}
-                placeholder={`Precondition ${i + 1}`}
-              />
-              <button
-                type="button"
-                onClick={() => removePrecondition(i)}
-                className="text-red-500 hover:text-red-700 text-sm px-2"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addPrecondition}
-            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-          >
-            + Thêm precondition
-          </button>
-        </div>
-      </div>
+      <PreconditionsEditor
+        preconditions={form.preconditions}
+        onUpdate={updatePrecondition}
+        onAdd={addPrecondition}
+        onRemove={removePrecondition}
+      />
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Dữ liệu test</label>
-        <div className="flex gap-2 mb-2">
-          <input
-            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder="Key (VD: email)"
-            value={testDataKey}
-            onChange={(e) => setTestDataKey(e.target.value)}
-          />
-          <input
-            className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-            placeholder="Value (VD: test@example.com)"
-            value={testDataValue}
-            onChange={(e) => setTestDataValue(e.target.value)}
-          />
-          <button
-            type="button"
-            onClick={addTestData}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium"
-          >
-            Thêm
-          </button>
-        </div>
-        {Object.entries(form.test_data).length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(form.test_data).map(([k, v]) => (
-              <span key={k} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 px-2 py-1 rounded text-xs">
-                {k}: {v}
-                <button type="button" onClick={() => removeTestData(k)} className="text-blue-400 hover:text-blue-600">✕</button>
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+      <TestDataEditor
+        testData={form.test_data}
+        keyValue={testDataKey}
+        valueValue={testDataValue}
+        onKeyChange={setTestDataKey}
+        onValueChange={setTestDataValue}
+        onAdd={addTestData}
+        onRemove={removeTestData}
+      />
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Các bước thực hiện</label>
-        <div className="space-y-3">
-          {form.steps.map((step, i) => (
-            <div key={i} className="border border-gray-200 rounded-lg p-3 space-y-2">
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-semibold text-gray-500">Bước {step.step_number}</span>
-                {form.steps.length > 1 && (
-                  <button
-                    type="button"
-                    onClick={() => removeStep(i)}
-                    className="text-red-500 hover:text-red-700 text-xs"
-                  >
-                    Xóa bước
-                  </button>
-                )}
-              </div>
-              <input
-                required
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                placeholder="Hành động"
-                value={step.action}
-                onChange={(e) => updateStep(i, 'action', e.target.value)}
-              />
-              <input
-                required
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                placeholder="Kết quả mong đợi của bước này"
-                value={step.expected_result}
-                onChange={(e) => updateStep(i, 'expected_result', e.target.value)}
-              />
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addStep}
-            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
-          >
-            + Thêm bước
-          </button>
-        </div>
-      </div>
+      <StepsEditor steps={form.steps} onUpdate={updateStep} onAdd={addStep} onRemove={removeStep} />
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">Kết quả mong đợi cuối cùng</label>
