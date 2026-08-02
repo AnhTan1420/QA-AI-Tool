@@ -71,6 +71,14 @@ create table if not exists test_case_sets (
   requirement_id uuid references requirements(id),
   status text not null default 'generating' check (status in ('generating','generated','reviewed','approved')),
   generated_by_model text,
+  -- PHASE 0 "analysis" cua Generation Agent (7-layer deep analysis: rules, EP/BVA,
+  -- state transitions, attack vectors, risk ranking, document atom mapping...) -
+  -- truoc day AI sinh ra ton token nhung bi vut bo hoan toan sau khi validate
+  -- test_cases; gio luu lai o day de audit/hien thi lai ("AI Reasoning" o UI)
+  -- ma khong can goi lai AI. Nullable vi khong phai lan generate nao AI cung
+  -- tra ve analysis hop le (xem generationAnalysisSchema.safeParse trong
+  -- app/api/ai/generate/route.ts - loi o day khong bao gio lam fail request).
+  analysis jsonb,
   created_by uuid references profiles(id),
   created_at timestamptz default now()
 );
@@ -460,3 +468,10 @@ begin
     alter publication supabase_realtime add table comments;
   end if;
 end $$;
+
+-- ----------------------------------------------------------------------------
+-- Migration: them cot test_case_sets.analysis (jsonb) cho DB da chay schema.sql
+-- tu truoc khi cot nay ton tai. An toan chay lai nhieu lan (idempotent).
+-- Xem comment day du o dinh nghia bang test_case_sets phia tren.
+-- ----------------------------------------------------------------------------
+alter table test_case_sets add column if not exists analysis jsonb;

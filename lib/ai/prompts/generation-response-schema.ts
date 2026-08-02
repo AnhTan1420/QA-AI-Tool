@@ -26,21 +26,10 @@
 // nhu truoc, khong lam sap tinh nang generate. File schema nay vi vay la 1 lop
 // tang cuong THEM, khong phai diem-that-bai-duy-nhat (single point of failure).
 //
-// VI SAO "test_cases[].items" CHI LA { type: OBJECT } - KHONG khai bao properties
-// chi tiet (code/title/category/priority/steps/test_data/...):
-// Truong "test_data" cua moi test case la 1 string map TU DO (VD:
-// { "email": "a@b.com", "so_luong": "5" }) - ten va so luong key thay doi tuy
-// test case, khong biet truoc duoc. Structured Output cua Gemini dua tren 1
-// subset cua OpenAPI Schema va KHONG ho tro tot object-voi-key-dong (kieu
-// additionalProperties/map tu do): neu khai bao san 1 danh sach "properties" cu
-// the cho item cua test_cases, constrained decoding se CHI cho phep sinh dung
-// nhung key da liet ke - "test_data" (va bat ky field nao khac khong duoc liet
-// ke) se BI CHAN, khong the xuat hien trong output. Vi vay item cua test_cases
-// duoc co tinh de MO (khong properties), dua vao JSON_SCHEMA_CONTRACT trong
-// prompt text (generation-agent.ts) + Zod (lib/validators/test-case.ts) de dam
-// bao dinh dang - dung nhu truoc day, khong regression. Phan duoc rang buoc chat
-// che nhat qua schema la "analysis" - noi ma cau truc + THU TU sinh ra la dieu
-// thuc su can dam bao.
+// VE "test_cases[].items": CO khai bao day du "properties" (xem
+// TEST_CASE_ITEM_SCHEMA ben duoi), TRU "test_data" (map key dong, xem comment
+// truoc TEST_CASE_ITEM_SCHEMA de biet ly do va bug da tung xay ra khi de item
+// nay hoan toan khong co "properties").
 //
 // LUU Y VE "Type" ENUM: co ham dung chuoi string literal ("OBJECT", "ARRAY",
 // "STRING", "INTEGER") thay vi import enum `Type` tu '@google/genai'. Day la
@@ -50,6 +39,8 @@
 // than no cung chi ánh xa toi dung cac chuoi nay. Dung thang string literal
 // giup file nay khong phu thuoc vao ten export chinh xac cua tung phien ban
 // @google/genai, giam rui ro loi bien dich/runtime khi nang cap package.
+
+import { CATEGORY_VALUES } from '@/lib/validators/test-case';
 
 type GeminiSchema = Record<string, unknown>;
 
@@ -149,6 +140,64 @@ const ANALYSIS_SCHEMA: GeminiSchema = {
   propertyOrdering: [...ANALYSIS_PROPERTY_ORDER],
 };
 
+// TEST_CASE_ITEM_SCHEMA — PHAI khop voi generatedTestCaseSchema (lib/validators/test-case.ts)
+// va TEST_CASE_SCHEMA_CONTRACT (generation-agent.ts).
+//
+// SUA LOI QUAN TRONG (2026-08): truoc day item nay duoc de "{ type: 'OBJECT' }"
+// KHONG khai bao "properties", voi y dinh la de model tu do sinh field (vi
+// "test_data" la 1 map key dong). Nhung voi Gemini Structured Output,
+// "type: OBJECT" KHONG khai bao "properties" KHONG dong nghia voi "object tu
+// do" - no bi hieu la "object khong co field nao duoc phep", nen constrained
+// decoding EP model sinh ra {} cho MOI phan tu trong test_cases, bat ke prompt
+// text yeu cau gi (day chinh la nguyen nhan loi "AI tra ve du lieu khong dung
+// dinh dang test case" voi TAT CA field cua item 0 deu bao "Required").
+//
+// Fix: khai bao day du "properties" cho cac field co cau truc co dinh. Rieng
+// "test_data" (map string tu do, ten key khong biet truoc) CO TINH duoc BO
+// KHOI danh sach properties (khong khai bao) thay vi ep type OBJECT rong -
+// vi no la optional o Zod (.optional().default({})), thieu field nay khong
+// lam fail validate; nguoc lai neu khai bao no nhu 1 OBJECT rong thi no se
+// LUON ra rong tu AI (cung 1 loi nhu tren, chi la o field con thay vi ca item).
+const TEST_CASE_STEP_ITEM: GeminiSchema = {
+  type: 'OBJECT',
+  properties: {
+    step_number: { type: 'INTEGER' },
+    action: { type: 'STRING' },
+    expected_result: { type: 'STRING' },
+  },
+  required: ['step_number', 'action', 'expected_result'],
+  propertyOrdering: ['step_number', 'action', 'expected_result'],
+};
+
+const TEST_CASE_ITEM_PROPERTY_ORDER = [
+  'code',
+  'title',
+  'category',
+  'priority',
+  'preconditions',
+  'steps',
+  'final_expected_result',
+  'source_requirement_ids',
+] as const;
+
+const TEST_CASE_ITEM_SCHEMA: GeminiSchema = {
+  type: 'OBJECT',
+  description:
+    'Phai khop TEST_CASE_SCHEMA_CONTRACT trong prompt text. "test_data" (map string tu do) CO TINH khong khai bao o day - xem comment phia tren file nay.',
+  properties: {
+    code: { type: 'STRING' },
+    title: { type: 'STRING' },
+    category: { type: 'STRING', enum: CATEGORY_VALUES as unknown as string[] },
+    priority: { type: 'STRING', enum: ['Critical', 'Major', 'Normal'] },
+    preconditions: STRING_ARRAY,
+    steps: { type: 'ARRAY', items: TEST_CASE_STEP_ITEM },
+    final_expected_result: { type: 'STRING' },
+    source_requirement_ids: STRING_ARRAY,
+  },
+  required: ['code', 'title', 'category', 'priority', 'steps', 'final_expected_result'],
+  propertyOrdering: [...TEST_CASE_ITEM_PROPERTY_ORDER],
+};
+
 export function buildGenerationResponseSchema(): GeminiSchema {
   return {
     type: 'OBJECT',
@@ -157,9 +206,8 @@ export function buildGenerationResponseSchema(): GeminiSchema {
       test_cases: {
         type: 'ARRAY',
         description:
-          'Bộ test case cuối cùng. Mỗi phần tử PHẢI khớp JSON_SCHEMA_CONTRACT trong prompt text (bao gồm "test_data" — 1 map string tự do, cố tình KHÔNG bị ràng buộc chi tiết ở schema này, xem comment đầu file).',
-        // Co tinh khong khai bao "properties" o day — xem comment dau file.
-        items: { type: 'OBJECT' },
+          'Bo test case cuoi cung. Moi phan tu PHAI khop JSON_SCHEMA_CONTRACT trong prompt text.',
+        items: TEST_CASE_ITEM_SCHEMA,
       },
     },
     required: ['analysis', 'test_cases'],

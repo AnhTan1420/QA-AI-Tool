@@ -7,6 +7,10 @@ const createSetSchema = z.object({
   requirement_title: z.string().min(1).default('Requirement'),
   requirement_description: z.string().min(10),
   generated_by_model: z.string().optional(),
+  // PHASE 0 "analysis" cua Generation Agent (xem generationAnalysisSchema trong
+  // lib/validators/test-case.ts) - optional/khong .strict() vi la du lieu audit-trail,
+  // khong phai dieu kien de tao set thanh cong.
+  analysis: z.record(z.any()).nullish(),
 });
 
 /**
@@ -62,6 +66,7 @@ export async function POST(req: NextRequest) {
         requirement_id: requirement.id,
         status: 'generated',
         generated_by_model: payload.generated_by_model ?? null,
+        analysis: payload.analysis ?? null,
         created_by: user.id,
       })
       .select()

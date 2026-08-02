@@ -12,7 +12,7 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
 
   const { data: set } = await supabase
     .from('test_case_sets')
-    .select('id, status, generated_by_model, created_at, requirements(title, description)')
+    .select('id, status, generated_by_model, created_at, analysis, requirements(title, description)')
     .eq('id', setId)
     .single();
 
@@ -24,7 +24,7 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
 
   const { data: review } = await supabase
     .from('ai_reviews')
-    .select('coverage_score, reviewed_at')
+    .select('coverage_score, review_payload, reviewed_at')
     .eq('set_id', setId)
     .order('reviewed_at', { ascending: false })
     .limit(1)
@@ -64,6 +64,41 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
           {set.generated_by_model && <span className="rounded-full bg-slate-100 px-3 py-1">{t.generateResult.modelPrefix}: {set.generated_by_model}</span>}
         </div>
       </div>
+
+      {review?.review_payload?.summary && (
+        <div className="rounded-3xl border border-purple-100 bg-purple-50/60 p-6 text-sm leading-6 text-purple-900 shadow-sm">
+          <p className="mb-1 text-xs font-black uppercase tracking-wide text-purple-600">Tóm tắt Review của AI</p>
+          {review.review_payload.summary}
+        </div>
+      )}
+
+      {set.analysis && (
+        <details className="rounded-3xl border border-indigo-100 bg-indigo-50/40 p-6 shadow-sm">
+          <summary className="cursor-pointer text-xs font-black uppercase tracking-wide text-indigo-700">
+            🧠 AI Reasoning lúc generate {set.analysis.input_source && <span className="ml-1 font-normal normal-case text-indigo-400">· nguồn: {set.analysis.input_source}</span>}
+          </summary>
+          <div className="mt-4 space-y-4 text-sm">
+            {Array.isArray(set.analysis.coverage_self_check) && set.analysis.coverage_self_check.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">AI tự kiểm tra độ phủ</p>
+                <ul className="space-y-1 text-xs text-slate-600">
+                  {set.analysis.coverage_self_check.map((item: string, i: number) => <li key={i}>✓ {item}</li>)}
+                </ul>
+              </div>
+            )}
+            {Array.isArray(set.analysis.risk_ranking) && set.analysis.risk_ranking.length > 0 && (
+              <div>
+                <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Xếp hạng rủi ro (FMEA)</p>
+                <ul className="space-y-1 text-xs text-slate-600">
+                  {set.analysis.risk_ranking.map((risk: Record<string, unknown>, i: number) => (
+                    <li key={i}>• {String(risk.scenario)} → <span className="font-bold">{String(risk.resulting_priority)}</span></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </details>
+      )}
 
       <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
         <div className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-black uppercase tracking-wide text-slate-500">

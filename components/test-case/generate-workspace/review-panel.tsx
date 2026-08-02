@@ -5,6 +5,67 @@ import { SCROLLBAR } from './shared';
 import { TestCaseCard } from './test-case-card';
 import type { GenerateWorkspaceState } from './use-generate-workspace';
 
+const DIMENSION_LABELS: Record<string, string> = {
+  functional_positive: 'Functional Positive',
+  functional_negative: 'Functional Negative',
+  boundary_edge: 'Boundary/Edge',
+  state_transition: 'State Transition',
+  security: 'Security',
+  performance: 'Performance',
+  compatibility: 'Compatibility',
+  integration: 'Integration',
+  regression: 'Regression',
+  accessibility: 'Accessibility',
+  localization: 'Localization',
+  audit_compliance: 'Audit/Compliance',
+};
+
+const SEVERITY_STYLE: Record<string, string> = {
+  Critical: 'bg-red-100 text-red-700 border-red-200',
+  Major: 'bg-amber-100 text-amber-700 border-amber-200',
+  Minor: 'bg-slate-100 text-slate-600 border-slate-200',
+};
+
+function SeverityBadge({ severity }: { severity?: string }) {
+  if (!severity) return null;
+  return (
+    <span className={`ml-2 inline-block rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide ${SEVERITY_STYLE[severity] ?? SEVERITY_STYLE.Minor}`}>
+      {severity}
+    </span>
+  );
+}
+
+function dimensionScoreTone(score: number) {
+  if (score >= 80) return 'bg-emerald-500';
+  if (score >= 60) return 'bg-amber-500';
+  return 'bg-red-500';
+}
+
+/** 12-dimension coverage radar as horizontal bars — the AI already computes these scores
+ * on every review, they were just being discarded by the schema before; no charting lib
+ * needed for 12 rows, plain bars read faster here anyway. */
+function DimensionScoresPanel({ scores }: { scores: Record<string, number> }) {
+  const entries = Object.entries(scores).filter(([, value]) => typeof value === 'number');
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-4">
+      <p className="mb-3 text-xs font-black uppercase tracking-wide text-slate-500">Coverage theo 12 chiều chất lượng</p>
+      <div className="space-y-2">
+        {entries.map(([key, score]) => (
+          <div key={key} className="flex items-center gap-3">
+            <span className="w-32 shrink-0 text-[11px] font-semibold text-slate-600">{DIMENSION_LABELS[key] ?? key}</span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+              <div className={`h-full rounded-full ${dimensionScoreTone(score)}`} style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
+            </div>
+            <span className="w-9 shrink-0 text-right text-[11px] font-bold text-slate-700">{score}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Right column, "review" tab: choose a source, run the coverage review, and enhance with AI. */
 export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }) {
   const activeReview = workspace.reviewMode === 'generated' ? workspace.review : workspace.importedReview;
@@ -116,6 +177,13 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
       {/* Review result */}
       {activeReview && (
         <div className="animate-[fadeIn_0.25s_ease] space-y-4 mb-4">
+          {activeReview.summary && (
+            <div className="rounded-2xl border border-purple-100 bg-purple-50/60 p-4 text-sm leading-6 text-purple-900">
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-purple-600">Tóm tắt của AI</p>
+              {activeReview.summary}
+            </div>
+          )}
+
           <div className="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
             <span className="text-sm font-bold text-slate-700">Coverage Score</span>
             <span className={`text-2xl font-black ${activeReview.coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600'}`}>
@@ -123,13 +191,19 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
             </span>
           </div>
 
+          {activeReview.dimension_scores && <DimensionScoresPanel scores={activeReview.dimension_scores as Record<string, number>} />}
+
           {activeReview.requirement_gaps?.length > 0 && (
             <div>
               <p className="text-xs font-black uppercase tracking-wide text-amber-600 mb-2">Requirement Gaps</p>
               <div className="space-y-2">
                 {activeReview.requirement_gaps.map((gap, i) => (
                   <div key={i} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm transition-shadow hover:shadow-sm">
-                    <p className="font-bold text-amber-900">{gap.requirement_text}</p>
+                    <p className="font-bold text-amber-900">
+                      {gap.requirement_text}
+                      <SeverityBadge severity={gap.severity} />
+                      {gap.dimension && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-amber-500">{gap.dimension}</span>}
+                    </p>
                     {gap.suggested_test_case && (
                       <button
                         onClick={() =>
@@ -152,7 +226,10 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
               <div className="space-y-2">
                 {activeReview.test_case_comments.map((comment, i) => (
                   <div key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm transition-shadow hover:shadow-sm">
-                    <p className="font-bold text-slate-900">{comment.test_case_code} – <span className="text-purple-600">{comment.issue_type}</span></p>
+                    <p className="font-bold text-slate-900">
+                      {comment.test_case_code} – <span className="text-purple-600">{comment.issue_type}</span>
+                      <SeverityBadge severity={comment.severity} />
+                    </p>
                     <p className="mt-1 text-slate-600">{comment.comment}</p>
                   </div>
                 ))}

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { runAIAgent } from '@/lib/ai/provider';
 import { buildGenerationPrompt } from '@/lib/ai/prompts/generation-agent';
 import { buildGenerationResponseSchema } from '@/lib/ai/prompts/generation-response-schema';
-import { generateRequestSchema, generatedTestCasesSchema } from '@/lib/validators/test-case';
+import { generateRequestSchema, generatedTestCasesSchema, generationAnalysisSchema } from '@/lib/validators/test-case';
 import { unwrapArrayResponse } from '@/lib/ai/parse';
 import { computeDocumentCoverage } from '@/lib/documents/coverage';
 
@@ -67,9 +67,24 @@ export async function POST(req: Request) {
     // yeu cau "mapping 100%" trong prompt (PHASE 0.5), khong chi tin loi AI.
     const documentCoverage = computeDocumentCoverage(input.document_context, parsedTestCases.data);
 
+    // 4) "analysis" (PHASE 0 - 7 layer sau) truoc day bi vut bo hoan toan sau
+    // buoc nay. Gio parse LENIENT (safeParse, khong .parse) va tra ve client de
+    // luu lai / hien thi "AI Reasoning" - nhung KHONG bao gio de loi o day lam
+    // fail ca request, vi test_cases (da validate xong o buoc 2) moi la
+    // deliverable chinh. Neu AI (hoac fallback provider khac) khong tra
+    // "analysis" hop le, tra ve null - client/UI da xu ly truong hop null nay.
+    const rawAnalysis = aiRawResult && typeof aiRawResult === 'object' && !Array.isArray(aiRawResult)
+      ? (aiRawResult as Record<string, unknown>).analysis
+      : undefined;
+    const parsedAnalysis = generationAnalysisSchema.safeParse(rawAnalysis);
+    if (!parsedAnalysis.success) {
+      console.warn('[ai/generate] "analysis" khong hop le/thieu - bo qua, khong anh huong test_cases:', parsedAnalysis.error.flatten());
+    }
+    const analysis = parsedAnalysis.success ? parsedAnalysis.data : null;
+
     return NextResponse.json({
       success: true,
-      data: { test_cases: parsedTestCases.data, document_coverage: documentCoverage },
+      data: { test_cases: parsedTestCases.data, document_coverage: documentCoverage, analysis },
     });
   } catch (error: any) {
     console.error('❌ Lỗi API Generate Test Cases:', error);

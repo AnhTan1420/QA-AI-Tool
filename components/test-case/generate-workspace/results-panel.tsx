@@ -1,8 +1,97 @@
 'use client';
 
+import { useState } from 'react';
 import type { TestCaseCategory } from '@/lib/validators/test-case';
 import { TestCaseCard } from './test-case-card';
 import type { GenerateWorkspaceState } from './use-generate-workspace';
+
+const PRIORITY_DOT: Record<string, string> = {
+  Critical: 'bg-red-500',
+  Major: 'bg-amber-500',
+  Normal: 'bg-slate-400',
+};
+
+/** Collapsible "AI Reasoning" card — surfaces the PHASE 0 analysis the Generation Agent
+ * already produces on every call (7-layer deep analysis) but the app used to throw away
+ * right after validating test_cases. Collapsed by default since it's supplementary to
+ * the test cases themselves, not the primary deliverable. */
+function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspaceState['analysis']> }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasContent =
+    (analysis.ambiguous_terms?.length ?? 0) > 0 ||
+    (analysis.risk_ranking?.length ?? 0) > 0 ||
+    (analysis.document_atom_plan?.length ?? 0) > 0 ||
+    (analysis.coverage_self_check?.length ?? 0) > 0;
+
+  if (!hasContent) return null;
+
+  return (
+    <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50/40">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <span className="text-xs font-black uppercase tracking-wide text-indigo-700">
+          🧠 AI Reasoning {analysis.input_source && <span className="ml-1 font-normal normal-case text-indigo-400">· nguồn: {analysis.input_source}</span>}
+        </span>
+        <span className="text-xs font-bold text-indigo-500">{expanded ? 'Thu gọn ▲' : 'Xem chi tiết ▼'}</span>
+      </button>
+
+      {expanded && (
+        <div className="space-y-4 px-4 pb-4 text-sm">
+          {(analysis.ambiguous_terms?.length ?? 0) > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Điểm mơ hồ AI phát hiện trong requirement</p>
+              <ul className="space-y-1 text-slate-600">
+                {analysis.ambiguous_terms!.map((item, i) => <li key={i}>• {item}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {(analysis.risk_ranking?.length ?? 0) > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Xếp hạng rủi ro (FMEA)</p>
+              <div className="space-y-1.5">
+                {analysis.risk_ranking!.map((risk, i) => (
+                  <div key={i} className="flex items-start gap-2 rounded-lg bg-white px-3 py-2 text-xs">
+                    <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${PRIORITY_DOT[risk.resulting_priority ?? ''] ?? 'bg-slate-300'}`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-800">{risk.scenario}</p>
+                      <p className="mt-0.5 text-slate-400">
+                        Severity {risk.severity_1_10 ?? '?'} · Probability {risk.probability_1_10 ?? '?'} · Detectability {risk.detectability_1_10 ?? '?'} → <span className="font-bold text-slate-600">{risk.resulting_priority}</span>
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {(analysis.document_atom_plan?.length ?? 0) > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Mapping tài liệu → test case</p>
+              <ul className="space-y-1 text-xs text-slate-600">
+                {analysis.document_atom_plan!.map((atom, i) => (
+                  <li key={i}>• <span className="font-mono text-indigo-600">{atom.atom_id}</span> → <span className="font-mono">{atom.planned_test_case_code}</span></li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {(analysis.coverage_self_check?.length ?? 0) > 0 && (
+            <div>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">AI tự kiểm tra độ phủ</p>
+              <ul className="space-y-1 text-xs text-slate-600">
+                {analysis.coverage_self_check!.map((item, i) => <li key={i}>✓ {item}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /** Right column, "results" tab: the generated test cases, grouped by category. */
 export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState }) {
@@ -38,6 +127,8 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
           )}
         </div>
       )}
+
+      {workspace.analysis && <AiReasoningPanel analysis={workspace.analysis} />}
 
       <div className="mt-6 space-y-5">
         {Object.entries(workspace.groupedCases).map(([category, items]) => (

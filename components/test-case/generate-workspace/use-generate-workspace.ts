@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { TEST_CASE_CATEGORIES } from '@/lib/test-case-taxonomy';
-import type { GeneratedTestCase, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
+import type { GeneratedTestCase, GenerationAnalysis, ReviewResult, TestCaseCategory } from '@/lib/validators/test-case';
 import type { ParsedDocument } from '@/lib/validators/document';
 import type { DocumentCoverageResult } from '@/lib/documents/coverage';
 import { useLanguage } from '@/lib/i18n/language-context';
@@ -38,6 +38,7 @@ export function useGenerateWorkspace(projectId: string) {
   const [documentCoverage, setDocumentCoverage] = useState<DocumentCoverageResult | null>(null);
 
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
+  const [analysis, setAnalysis] = useState<GenerationAnalysis | null>(null);
   const [review, setReview] = useState<ReviewResult | null>(null);
   const [error, setError] = useState('');
   const [errorDetails, setErrorDetails] = useState<{ path: string; message: string }[]>([]);
@@ -134,8 +135,9 @@ export function useGenerateWorkspace(projectId: string) {
     setErrorDetails([]);
     setSuccessMessage('');
     setReview(null);
+    setAnalysis(null);
 
-    const result = await postJson<{ test_cases: GeneratedTestCase[]; document_coverage: DocumentCoverageResult | null }>('/api/ai/generate', {
+    const result = await postJson<{ test_cases: GeneratedTestCase[]; document_coverage: DocumentCoverageResult | null; analysis: GenerationAnalysis | null }>('/api/ai/generate', {
       requirement_description: description,
       selected_categories: selectedCategories,
       language,
@@ -146,6 +148,7 @@ export function useGenerateWorkspace(projectId: string) {
 
     setTestCases(result.test_cases);
     setDocumentCoverage(result.document_coverage);
+    setAnalysis(result.analysis ?? null);
   }
 
   function handleGenerateClick() {
@@ -269,6 +272,7 @@ export function useGenerateWorkspace(projectId: string) {
         project_id: projectId,
         requirement_title: effectiveTitle,
         requirement_description: effectiveDescription,
+        analysis,
       }, t.generateWorkspace.errors.requestFailed);
 
       await postJson('/api/test-cases/bulk', {
@@ -462,6 +466,7 @@ export function useGenerateWorkspace(projectId: string) {
 
     // Results
     testCases, groupedCases, safeTestCasesCount,
+    analysis,
     review, coverageTone,
     exportExcel,
     isSaving, saveToLibrary,

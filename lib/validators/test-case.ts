@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { parsedDocumentSchema } from './document';
 
-const CATEGORY_VALUES = [
+export const CATEGORY_VALUES = [
   'positive',
   'negative',
   'boundary',
@@ -164,11 +164,44 @@ export const retrievedTestCaseSchema = z.object({
   source_requirement_ids: z.array(z.string()).optional(),
 });
 
+// Cac field o duoi day (dimension_scores, severity, dimension, summary) DA duoc
+// review-agent.ts yeu cau AI sinh ra tu truoc, nhung schema cu KHONG khai bao nen
+// Zod (che do "strip" mac dinh) am tham vut bo ngay khi parse - AI van tra tien
+// token de tinh 12 diem theo dimension + severity tung gap/comment + tom tat, ma
+// khong noi nao trong app doc lai duoc. Fix: khai bao de giu lai + hien thi o UI
+// (xem review-panel.tsx) va luu vao ai_reviews.review_payload.
+// Tat ca deu .optional() (khong .min(1)/khong bat buoc) vi runAIAgent('review')
+// KHONG dung Gemini responseSchema (chi tac vu 'generation' co) - review hoan
+// toan dua vao prompt text, nen neu model bo sot 1 field o day thi request van
+// khong nen fail (giu nguyen hanh vi cu, chi "nang cap" chu khong "sua nghiem").
+const severitySchema = z.enum(['Critical', 'Major', 'Minor']);
+
+const dimensionScoresSchema = z
+  .object({
+    functional_positive: z.number().min(0).max(100),
+    functional_negative: z.number().min(0).max(100),
+    boundary_edge: z.number().min(0).max(100),
+    state_transition: z.number().min(0).max(100),
+    security: z.number().min(0).max(100),
+    performance: z.number().min(0).max(100),
+    compatibility: z.number().min(0).max(100),
+    integration: z.number().min(0).max(100),
+    regression: z.number().min(0).max(100),
+    accessibility: z.number().min(0).max(100),
+    localization: z.number().min(0).max(100),
+    audit_compliance: z.number().min(0).max(100),
+  })
+  .partial();
+
 export const reviewResultSchema = z.object({
   coverage_score: z.number().min(0).max(100),
+  summary: z.string().optional(),
+  dimension_scores: dimensionScoresSchema.optional(),
   requirement_gaps: z.array(
     z.object({
       requirement_text: z.string().min(1),
+      severity: severitySchema.optional(),
+      dimension: z.string().optional(),
       suggested_test_case: generatedTestCaseSchema.optional(),
     }),
   ),
@@ -176,10 +209,62 @@ export const reviewResultSchema = z.object({
     z.object({
       test_case_code: z.string().min(1),
       issue_type: z.enum(['missing_step', 'ambiguous_expected', 'duplicate', 'priority_mismatch']),
+      severity: severitySchema.optional(),
       comment: z.string().min(1),
     }),
   ),
 });
+
+export type ReviewSeverity = z.infer<typeof severitySchema>;
+export type DimensionScores = z.infer<typeof dimensionScoresSchema>;
+
+// generationAnalysisSchema — validate PHASE 0 "analysis" tu Generation Agent (xem
+// lib/ai/prompts/generation-agent.ts + generation-response-schema.ts). Truoc day
+// object nay duoc AI sinh ra (ton token that su - day la phan CHI TIET NHAT trong
+// ca response) roi bi vut bo hoan toan sau khi validate test_cases (khong tra ve
+// client, khong luu DB, khong hien thi o dau). Gio duoc giu lai de:
+//   1) Luu vao test_case_sets.analysis (audit lai sau, xem vi sao AI ra quyet dinh do)
+//   2) Hien thi 1 phan "AI Reasoning" cho QA xem truc tiep (results-panel.tsx)
+// TAT CA field o day deu .optional() va toan bo schema chi dung qua .safeParse() -
+// day la du lieu THAM KHAO/audit-trail, KHONG PHAI dieu kien thanh cong cua request:
+// neu AI tra "analysis" thieu/sai 1 vai field, request generate VAN PHAI thanh cong
+// mien la "test_cases" hop le (day la deliverable chinh) - xem app/api/ai/generate/route.ts.
+const analysisFieldEpBvaItemSchema = z.object({
+  field: z.string().optional(),
+  valid_equivalence_classes: z.array(z.string()).optional(),
+  invalid_equivalence_classes: z.array(z.string()).optional(),
+  boundary_values: z.array(z.string()).optional(),
+});
+
+const analysisRiskRankingItemSchema = z.object({
+  scenario: z.string().optional(),
+  severity_1_10: z.number().optional(),
+  probability_1_10: z.number().optional(),
+  detectability_1_10: z.number().optional(),
+  resulting_priority: z.string().optional(),
+});
+
+const analysisDocumentAtomPlanItemSchema = z.object({
+  atom_id: z.string().optional(),
+  planned_test_case_code: z.string().optional(),
+});
+
+export const generationAnalysisSchema = z.object({
+  input_source: z.string().optional(),
+  explicit_rules: z.array(z.string()).optional(),
+  implicit_rules: z.array(z.string()).optional(),
+  ambiguous_terms: z.array(z.string()).optional(),
+  actors_and_preconditions: z.array(z.string()).optional(),
+  fields_ep_bva: z.array(analysisFieldEpBvaItemSchema).optional(),
+  state_transitions: z.array(z.string()).optional(),
+  attack_and_chaos_vectors: z.array(z.string()).optional(),
+  cross_cutting_checks: z.array(z.string()).optional(),
+  risk_ranking: z.array(analysisRiskRankingItemSchema).optional(),
+  document_atom_plan: z.array(analysisDocumentAtomPlanItemSchema).optional(),
+  coverage_self_check: z.array(z.string()).optional(),
+});
+
+export type GenerationAnalysis = z.infer<typeof generationAnalysisSchema>;
 
 export const generateRequestSchema = z
   .object({
