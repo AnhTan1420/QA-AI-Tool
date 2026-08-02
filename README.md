@@ -37,10 +37,10 @@
 **QAJD** is a comprehensive QA toolkit designed to accelerate test case creation using AI while maintaining quality through an independent review mechanism. The platform supports:
 
 - **AI-Powered Test Case Generation**: Input a requirement description and let the Generation Agent (Gemini/Groq) produce structured test cases.
-- **Independent QA Review**: A separate Senior QA Review Agent evaluates coverage without shared context, ensuring objective quality assessment.
+- **Independent QA Review**: A separate Senior QA Review Agent evaluates coverage without shared context, then can enhance the set based on its own findings.
 - **Test Case Library**: Organize test cases by project with version history, comments, and traceability.
-- **QA Utility Toolkit**: Client-side tools for JSON formatting, Base64 encoding/decoding, UUID generation, Regex testing, Hashing, and Timestamp conversion.
-- **Team Collaboration**: Invite team members with role-based access (QA, Senior QA, Admin).
+- **QA Utility Toolkit**: Client-side tools — JSON formatting, Base64, UUID generation, Regex testing, Hashing, Timestamp conversion, Fake File generation, SG NRIC/FIN generation & validation, and Lorem Ipsum generation.
+- **Team Collaboration**: Invite team members with role-based access (`qa`, `admin`).
 
 ---
 
@@ -49,13 +49,15 @@
 | Feature | Description |
 |---------|-------------|
 | AI Test Case Generation | Generate test cases from natural language requirements using Gemini or Groq |
-| Coverage Review | Independent AI agent scores test coverage objectively |
-| Test Case Library | Browse, search, and manage test cases organized by project and set |
-| Version History | Track changes to test cases over time (DB ready, UI in progress) |
-| RAG Support | Vector embeddings for semantic search and retrieval (DB ready, UI in progress) |
-| Code Generation | Auto-generate Playwright automation code from test cases |
-| QA Utilities | JSON, Base64, UUID, Regex, Hash, Timestamp tools |
-| Team Management | Role-based project access with invitation system |
+| Senior QA Review & Enhance | An independent AI agent scores coverage, flags gaps/comments, and can auto-enhance the set based on its own review |
+| Test Case Library | Browse, search, paginate, bulk-delete, and manage test cases per project |
+| Version History | Every edit to a test case is tracked and viewable from the case detail page |
+| Comments | Threaded comments on individual test cases |
+| Old-Cases Import (Excel) | Upload an existing `.xlsx` test suite to review it, or feed it to the Generation Agent as reference |
+| RAG Support | Vector embeddings for semantic search and retrieval (DB + `/api/ai/embed` ready, not yet wired into the UI) |
+| QA Utilities | JSON formatter, Base64, UUID, Regex tester, Hash generator (SHA-1/256), Timestamp converter, Fake File generator, SG NRIC/FIN generator & validator, Lorem Ipsum generator |
+| Team Management | Role-based project access (`qa` / `admin`) with email invitation |
+| Bilingual UI | Full Vietnamese/English UI toggle (`components/layout/language-toggle.tsx`) |
 | OAuth & Email Auth | Supabase Auth with Google OAuth and email/password |
 
 ---
@@ -80,57 +82,111 @@ Deployment:   Vercel / Self-hosted
 QA-AI-Tool/
 ├── app/
 │   ├── (auth)/
-│   │   ├── login/              # Login page (Supabase Auth)
-│   │   └── register/           # Registration page
+│   │   ├── login/                          # Login page (Supabase Auth)
+│   │   └── register/                       # Registration page
 │   ├── (dashboard)/
-│   │   ├── dashboard/          # Overview: project & test case stats
+│   │   ├── dashboard/                      # Overview: project & test case stats
 │   │   ├── projects/
-│   │   │   ├── page.tsx        # Project list + create
+│   │   │   ├── page.tsx                    # Project list + create
 │   │   │   └── [projectId]/
-│   │   │       ├── generate/   # AI generation wizard
-│   │   │       ├── test-cases/ # Test case library
-│   │   │       └── team/       # Member management
-│   │   ├── tools/              # QA Utility Toolkit
-│   │   └── settings/           # Model routing config viewer
+│   │   │       ├── page.tsx                # Project detail/overview
+│   │   │       ├── generate/               # AI generation wizard
+│   │   │       │   ├── page.tsx
+│   │   │       │   └── [setId]/            # View a previously generated set
+│   │   │       ├── test-cases/             # Test case library (list + detail)
+│   │   │       │   ├── page.tsx
+│   │   │       │   └── [caseId]/           # Detail: steps, version history, comments
+│   │   │       └── team/                   # Member management
+│   │   └── tools/                          # QA Utility Toolkit (grid + per-tool page)
 │   ├── api/
 │   │   ├── ai/
-│   │   │   ├── generate/       # Generation Agent endpoint
-│   │   │   ├── review/         # Review Agent endpoint
-│   │   │   ├── embed/          # Embedding creation for RAG
-│   │   │   └── generate-code/  # Playwright code generation
+│   │   │   ├── generate/                   # Generation Agent endpoint
+│   │   │   ├── enhance/                    # Review Agent (mode: review | enhance)
+│   │   │   └── embed/                      # Embedding creation for RAG (not yet used by UI)
+│   │   ├── ai-reviews/                     # Persist a review result against a test case set
 │   │   ├── projects/
-│   │   │   └── [id]/
-│   │   │       └── members/    # Project member CRUD
-│   │   ├── test-case-sets/     # Requirement + set creation
-│   │   ├── test-cases/         # Test case CRUD + bulk ops
-│   │   └── test-cases/[id]/    # Single test case operations
+│   │   │   ├── route.ts                    # List / create projects
+│   │   │   └── [projectId]/
+│   │   │       ├── route.ts                # Delete project
+│   │   │       └── members/                # Project member CRUD
+│   │   ├── test-case-sets/                 # Requirement + set creation
+│   │   └── test-cases/
+│   │       ├── route.ts                    # List / create / update / bulk-delete
+│   │       ├── bulk/                       # Bulk create/update test cases
+│   │       ├── export/                     # Export a project's test cases
+│   │       └── [id]/
+│   │           ├── route.ts                # Get / update / delete a single test case
+│   │           ├── comments/                # Comments CRUD
+│   │           └── versions/                # Version history (read-only)
 │   ├── layout.tsx
 │   └── page.tsx
 ├── components/
-│   └── ui/                     # Reusable UI components
+│   ├── auth/                               # sign-out-button.tsx
+│   ├── layout/                             # nav-link.tsx, language-toggle.tsx
+│   ├── team/                               # Team page: hook + presentational pieces
+│   │   ├── use-team-members.ts             # State + API calls (invite/role/remove)
+│   │   ├── types.ts, team-stats.tsx, invite-form.tsx, member-row.tsx, member-list.tsx
+│   ├── test-case/
+│   │   ├── generate-workspace/             # AI generation wizard, split by concern
+│   │   │   ├── index.tsx                   # Thin orchestrator
+│   │   │   ├── use-generate-workspace.ts   # All state + business logic
+│   │   │   ├── wizard-panel.tsx            # Left column: requirement, taxonomy, actions
+│   │   │   ├── results-panel.tsx           # Right column: generated test cases
+│   │   │   ├── review-panel.tsx            # Right column: review & enhance
+│   │   │   ├── test-case-card.tsx, shared.ts
+│   │   ├── version-history.tsx
+│   │   └── comments-panel.tsx
+│   ├── test-case-form/                     # Create/edit test case form, split by section
+│   │   ├── index.tsx                       # Orchestrator
+│   │   ├── steps-editor.tsx, preconditions-editor.tsx, test-data-editor.tsx
+│   │   └── types.ts, constants.ts
+│   ├── test-case-list/                     # Test case library page pieces
+│   │   ├── use-test-case-list.ts           # Fetch, paginate, bulk-delete, status change
+│   │   ├── types.ts, create-modal.tsx, bulk-delete-bar.tsx, test-case-table.tsx, pagination-bar.tsx
+│   └── tools/
+│       └── tool-runner/                    # One component per QA utility, plus the grid/runner shell
+│           ├── index.tsx                   # Exports ToolsGrid + ToolRunner
+│           ├── tools-grid.tsx, tool-runner.tsx, shared.ts, tool-text-area.tsx
+│           └── json-formatter-tool.tsx, base64-tool.tsx, uuid-tool.tsx, regex-tester-tool.tsx,
+│               hash-generator-tool.tsx, timestamp-tool.tsx, fake-file-generator-tool.tsx,
+│               nric-tool.tsx, lorem-ipsum-tool.tsx
 ├── lib/
 │   ├── ai/
-│   │   ├── provider.ts         # Model routing & fallback logic
-│   │   ├── gemini.ts           # Gemini provider wrapper
-│   │   ├── groq.ts             # Groq provider wrapper
-│   │   ├── parse.ts            # Robust JSON parsing from markdown
+│   │   ├── provider.ts                     # Model routing (Gemini → Groq fallback)
+│   │   ├── gemini.ts                       # Gemini provider wrapper
+│   │   ├── groq.ts                         # Groq provider wrapper
+│   │   ├── parse.ts                        # Robust JSON parsing from markdown
 │   │   └── prompts/
-│   │       ├── generation.ts   # Generation Agent system prompt
-│   │       └── review.ts       # Review Agent system prompt
+│   │       ├── generation-agent.ts         # Generation Agent system prompt
+│   │       ├── review-agent.ts             # Review Agent system prompt
+│   │       └── enhance-agent.ts            # Enhance Agent system prompt
+│   ├── api/
+│   │   └── client.ts                       # Shared `postJson` fetch helper for client components
+│   ├── i18n/
+│   │   ├── config.ts, get-locale.ts
+│   │   ├── language-context.tsx            # React context for the current locale
+│   │   └── dictionaries/                   # vi.ts, en.ts, index.ts
+│   ├── utils/
+│   │   ├── test-case-excel.ts              # Excel export/import for test cases
+│   │   ├── smart-xlsx-parser.ts            # Best-effort column mapping for imported .xlsx
+│   │   ├── fake-file-payloads.ts, nric.ts, lorem-ipsum.ts, file-download.ts   # Toolkit logic
 │   ├── supabase/
-│   │   ├── client.ts           # Browser client (anon key + RLS)
-│   │   ├── server.ts           # Server client (cookie session)
-│   │   └── admin.ts            # Service role (system ops only)
+│   │   ├── client.ts                       # Browser client (anon key + RLS)
+│   │   ├── server.ts                       # Server client (cookie session)
+│   │   └── admin.ts                        # Service role (system ops only)
+│   ├── test-case-taxonomy.ts               # Category/priority labels + styling helpers
 │   └── validators/
-│       └── test-case.ts        # Zod schemas for all AI I/O
+│       └── test-case.ts                    # Zod schemas for all AI I/O
 ├── public/
-├── schema.sql                  # Complete DB schema + RLS + triggers
-├── proxy.ts                    # Session refresh + auth redirect
-├── next.config.js
+├── schema.sql                              # Complete DB schema + RLS + triggers
+├── proxy.ts                                # Session refresh + auth redirect
+├── next.config.ts
 ├── tailwind.config.ts
 ├── tsconfig.json
 └── package.json
 ```
+
+> **Structure convention**: any screen with non-trivial state lives as `components/<feature>/` with a `use-<feature>.ts` hook holding state + API calls, and small presentational `*.tsx` files that take the hook's return value as a single `prop`. The route's `page.tsx` stays a thin orchestrator. See `generate-workspace/`, `team/`, and `test-case-list/` for the pattern.
 
 ---
 
@@ -144,7 +200,7 @@ QA-AI-Tool/
 |-------|-----------|----------------|
 | **Client** | Browser, React Components | UI rendering, form input, client-side tools |
 | **App Router** | `(auth)`, `(dashboard)`, `api/*` | Routing, SSR, API handlers |
-| **AI Services** | Generation, Review, Embed, CodeGen | LLM orchestration with fallback |
+| **AI Services** | Generation, Review, Enhance, Embed | LLM orchestration with fallback |
 | **Data Layer** | Supabase PostgreSQL, Auth, Vector Store | Persistence, RLS, embeddings |
 | **External** | Google OAuth, Gemini API, Groq API | Third-party integrations |
 
@@ -184,13 +240,12 @@ auth.users (1:1) ──► profiles (1:N) ──► projects (1:N) ──► tes
 
 ### Flow Description
 
-1. **User Input** — Enter requirement description in the generation wizard
-2. **Create Test Case Set** — System saves the requirement as a `test_case_set`
-3. **Generation Agent** — AI (Gemini/Groq) receives the requirement + system prompt and generates test cases
-4. **Zod Validation** — All AI output is parsed and validated against `lib/validators/test-case.ts`
-5. **Review Agent** — An independent AI agent evaluates coverage without seeing the generation prompt or history
-6. **Coverage Check** — If coverage score ≥ threshold, save to library; otherwise, regenerate with feedback
-7. **Save to Library** — Validated test cases are stored in `test_cases` linked to the set
+1. **User Input** — Enter a requirement description in the generation wizard (optionally attach an old `.xlsx` test suite as reference)
+2. **Generation Agent** — `/api/ai/generate` calls AI (Gemini, falling back to Groq) with the requirement and returns structured test cases
+3. **Zod Validation** — All AI output is parsed and validated against `lib/validators/test-case.ts` before it reaches the client
+4. **Review (on demand)** — From the "Review & Enhance" tab, the user runs the independent Review Agent (`/api/ai/enhance`, `mode: "review"`) against the generated set (or an imported `.xlsx` set); it receives only the requirement + test cases, never the generation prompt or conversation history, and returns a coverage score, requirement gaps, and per-case comments
+5. **Enhance (on demand)** — The user can then run `mode: "enhance"` to have the AI rewrite the set based on its own review
+6. **Save to Library** — Validated test cases (and the review, if one was run) are stored via `/api/test-case-sets` + `/api/test-cases/bulk`, linked to a `test_case_set`
 
 ---
 
@@ -255,18 +310,20 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
 # AI Providers
-GEMINI_API_KEY=your-gemini-api-key
+GOOGLE_GEMINI_API_KEY=your-gemini-api-key
 GROQ_API_KEY=your-groq-api-key
 
-# Model Configuration (read from env, never hardcode)
+# Model Configuration — read from env per task, never hardcoded (lib/ai/provider.ts)
 AI_MODEL_GENERATION=gemini-3.6-flash
 AI_MODEL_REVIEW=gemini-3.5-flash-lite
-AI_MODEL_EMBED=gemini-3.5-flash-lite
-GROQ_MODEL_FALLBACK=llama-3.1-70b-versatile
-
-# App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+AI_MODEL_CLASSIFICATION=gemini-3.5-flash-lite
+AI_MODEL_FALLBACK=gemini-3.5-flash-lite    # used if a task-specific model isn't set
+AI_MODEL_EMBEDDING=gemini-embedding-001     # used by /api/ai/embed (RAG, not yet wired into UI)
+GROQ_MODEL_PRIMARY=llama-3.1-70b-versatile
+GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
 ```
+
+> Every task (`generation` / `review` / `classification`) tries its own Gemini model first, then `AI_MODEL_FALLBACK`, then Groq's `GROQ_MODEL_PRIMARY` → `GROQ_MODEL_FALLBACK` — see `lib/ai/provider.ts`.
 
 > **Security Note**: `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS. Only use it in server-side system operations (e.g., looking up users by email for invitations). Never expose it to the client.
 
@@ -289,35 +346,28 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 ### 3. Invite Team Members
 
-1. Open a project → **Team** tab
+1. Open a project → **Team** tab (admins only)
 2. Enter member email and select role:
    - `qa` — Can generate and view test cases
-   - `senior_qa` — Can review and approve test cases
-   - `admin` — Full project management
+   - `admin` — Full project management (invite/remove members, change roles)
 3. Click **Invite**
 
 ### 4. Generate Test Cases with AI
 
 1. Inside a project, go to **Generate**
-2. Enter requirement description (e.g., *"User should be able to reset password via email link"*)
-3. Click **Generate**
-4. The system will:
-   - Create a `test_case_set` with your requirement
-   - Call the Generation Agent
-   - Validate output with Zod
-   - Call the independent Review Agent for coverage scoring
-   - Display results with coverage score
-5. If coverage is sufficient, click **Save to Library**
+2. Enter requirement description (e.g., *"User should be able to reset password via email link"*), pick categories, and optionally upload an old `.xlsx` test suite as reference
+3. Click **Generate** — the Generation Agent returns a validated set of test cases, shown in the **Test Cases Generated** tab
+4. Switch to the **Review & Enhance** tab to run the independent Review Agent (coverage score, requirement gaps, per-case comments), then optionally **Enhance with AI** to have it rewrite the set based on its own review
+5. Click **Save to Library** to persist the set (and review, if run)
 
 ### 5. Browse Test Case Library
 
 1. Go to **Test Cases** inside a project
-2. View all test cases organized by set
+2. Search, paginate, bulk-select and bulk-delete, or change a case's status inline
 3. Click any test case to see:
-   - Title, steps, expected result
-   - Priority and status
-   - Version history
-   - Comments (UI in progress)
+   - Title, steps, expected result, priority and status
+   - **Version History** — every past edit
+   - **Comments** — threaded discussion on that case
 
 
 ### 6. Use QA Utility Toolkit
@@ -328,7 +378,7 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
    - **Base64** — Encode/decode strings
    - **UUID Generator** — Generate v4 UUIDs in bulk
    - **Regex Tester** — Test patterns with live matching
-   - **Hash Generator** — MD5, SHA-1, SHA-256
+   - **Hash Generator** — SHA-1, SHA-256
    - **Timestamp Converter** — Unix ↔ ISO 8601
    - **Fake File Generator** — Generate dummy files (TXT, CSV, JSON, PNG, PDF) at chosen size for upload testing
    - **Singapore NRIC/FIN Generator & Validator** — Generate and checksum-validate Singapore NRIC/FIN numbers for test data
@@ -340,16 +390,20 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/ai/generate` | `POST` | Generate test cases from requirement |
-| `/api/ai/review` | `POST` | Independent coverage review |
-| `/api/ai/embed` | `POST` | Create vector embedding for RAG |
-| `/api/ai/generate-code` | `POST` | Generate Playwright code from test case |
-| `/api/projects` | `GET/POST` | List / create projects |
-| `/api/projects/[id]/members` | `GET/POST/DELETE` | Manage project members |
-| `/api/test-case-sets` | `GET/POST` | Manage test case sets |
-| `/api/test-cases` | `GET/POST` | List / create test cases |
-| `/api/test-cases/[id]` | `GET/PATCH/DELETE` | Single test case operations |
+| `/api/ai/generate` | `POST` | Generate test cases from a requirement description |
+| `/api/ai/enhance` | `POST` | Review (`mode: "review"`) or rewrite (`mode: "enhance"`) a set of test cases |
+| `/api/ai/embed` | `POST` | Create a vector embedding for RAG (backend ready, not yet called by the UI) |
+| `/api/ai-reviews` | `POST` | Persist a review result against a test case set |
+| `/api/projects` | `GET`/`POST` | List / create projects |
+| `/api/projects/[projectId]` | `DELETE` | Delete a project |
+| `/api/projects/[projectId]/members` | `GET`/`POST`/`PATCH`/`DELETE` | List, invite, change role, or remove a project member |
+| `/api/test-case-sets` | `POST` | Create a test case set (requirement) |
+| `/api/test-cases` | `GET`/`POST`/`PATCH`/`DELETE` | List, create, update (status), or bulk-delete test cases |
 | `/api/test-cases/bulk` | `POST` | Bulk create/update test cases |
+| `/api/test-cases/export` | `GET` | Export a project's test cases |
+| `/api/test-cases/[id]` | `GET`/`PUT`/`DELETE` | Get, update, or delete a single test case |
+| `/api/test-cases/[id]/comments` | `GET`/`POST` | List / add comments on a test case |
+| `/api/test-cases/[id]/versions` | `GET` | Version history for a test case |
 
 ### Example: Generate Test Cases
 
@@ -357,22 +411,24 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 curl -X POST http://localhost:3000/api/ai/generate \
   -H "Content-Type: application/json" \
   -d '{
-    "projectId": "uuid",
-    "requirement": "User can add items to cart and checkout",
-    "setName": "Cart & Checkout Flow"
+    "requirement_description": "User can add items to cart and checkout",
+    "selected_categories": ["positive", "negative", "boundary"],
+    "language": "English",
+    "detail_level": "standard",
+    "retrieved_old_test_cases": []
   }'
 ```
 
 ### Example: Review Coverage
 
 ```bash
-curl -X POST http://localhost:3000/api/ai/review \
+curl -X POST http://localhost:3000/api/ai/enhance \
   -H "Content-Type: application/json" \
   -d '{
-    "requirement": "User can add items to cart and checkout",
-    "testCases": [
-      {"title": "Add single item to cart", ...},
-      {"title": "Checkout with valid payment", ...}
+    "mode": "review",
+    "requirement_description": "User can add items to cart and checkout",
+    "test_cases": [
+      {"code": "TC_CART_001", "title": "Add single item to cart", "...": "..."}
     ]
   }'
 ```
@@ -406,6 +462,8 @@ Always read model identifiers from environment variables:
 const model = process.env.AI_MODEL_GENERATION; // ✅
 // const model = "gemini-1.5-pro"; // ❌ Never do this
 ```
+
+Model routing tries the Gemini model for the task, then `AI_MODEL_FALLBACK`, then falls back to Groq entirely (see `lib/ai/provider.ts`).
 
 ### 4. Test Cases Join Through Sets
 
