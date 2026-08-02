@@ -24,10 +24,7 @@ function repairTruncatedJson(text: string): string | null {
 
   // Do sau (do dai openStack NGAY SAU KHI push) cua mang lap-lai o ngoai cung
   // (VD: "test_cases" trong { analysis, test_cases: [...] }, hoac chinh no neu
-  // response la bare array [...]). Day la mang "['[' dau tien gap trong text"
-  // - vi voi ca 2 dang response ma he thong nay dung (bare array, hoac object
-  // bi bao 1 lop voi 1 field la array), mang chua cac phan tu lap lai LUON la
-  // mang '[' DAU TIEN xuat hien trong chuoi.
+  // response la bare array [...]).
   //
   // SUA LOI QUAN TRONG: truoc day MOI dau dong ngoac (} hoac ]) deu duoc coi la
   // "diem an toan", ke ca cac ngoac dong 1 FIELD LONG BEN TRONG 1 phan tu CHUA
@@ -40,6 +37,24 @@ function repairTruncatedJson(text: string): string | null {
   // "an toan" khi ngoac dong dua do sau openStack VE DUNG do sau cua mang lap-lai
   // ngoai cung (tuc la vua dong xong TRON VEN 1 phan tu la con truc tiep cua
   // mang do, khong phai 1 field long ben trong phan tu dang do dang).
+  //
+  // SUA LOI QUAN TRONG #2 (2026-08): itemArrayDepth KHONG duoc phep la "mang
+  // '[' DAU TIEN gap trong chuoi" nhu truoc day. Voi response dang
+  // { analysis: { ..., explicit_rules: [...], implicit_rules: [...], ... },
+  //   test_cases: [...] }, mang '[' dau tien gap la "explicit_rules" (nam LONG
+  // BEN TRONG "analysis", do sau 3) - KHONG PHAI "test_cases" (do sau 2, la con
+  // TRUC TIEP cua object goc). Khoa nham itemArrayDepth=3 khien dieu kien
+  // "an toan" o duoi khop nham voi diem dong cua field "preconditions" (1 mang
+  // con o do sau 3 BEN TRONG 1 test case dang do dang) - gay dung bug thuc te
+  // da gap (item bi cat cut van "lot" qua nhu the hoan chinh, chi thieu rieng
+  // "steps"/"final_expected_result").
+  //
+  // Fix: mang lap-lai can vá LUON la mang nong nhat (do sau nho nhat) trong
+  // cac property truc tiep cua object goc - moi mang metadata khac (nam trong
+  // 1 object con nhu "analysis") chac chan nam SAU hon (do sau lon hon). Vi
+  // vay: moi khi gap 1 '[' co do sau NHO HON do sau dang luu, cap nhat lai
+  // itemArrayDepth theo do sau moi (nong hon) NAY, va XOA moi diem "an toan" da
+  // ghi nhan truoc do (vi chung duoc tinh theo do sau SAI, khong con gia tri).
   let itemArrayDepth: number | null = null;
 
   for (let i = 0; i < text.length; i++) {
@@ -63,8 +78,20 @@ function repairTruncatedJson(text: string): string | null {
 
     if (ch === '{' || ch === '[') {
       openStack.push(ch);
-      if (ch === '[' && itemArrayDepth === null) {
-        itemArrayDepth = openStack.length;
+      if (ch === '[') {
+        const depth = openStack.length;
+        // Chi cap nhat khi day la mang NONG HON (do sau nho hon) mang dang
+        // luu - dam bao itemArrayDepth luon tro ve mang la property TRUC TIEP
+        // cua object goc (VD "test_cases"), khong bi "chiem cho" boi 1 mang
+        // metadata nam sau hon nhung LAI xuat hien TRUOC trong text (VD
+        // "explicit_rules" long trong "analysis"). Khi phat hien mang nong
+        // hon, moi diem "an toan" da ghi truoc do deu tinh sai theo do sau cu
+        // -> phai xoa (reset) de khong vá nham theo diem sai.
+        if (itemArrayDepth === null || depth < itemArrayDepth) {
+          itemArrayDepth = depth;
+          lastSafeIndex = -1;
+          lastSafeStack = [];
+        }
       }
     } else if (ch === '}' || ch === ']') {
       openStack.pop();
