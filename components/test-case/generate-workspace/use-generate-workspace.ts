@@ -177,6 +177,26 @@ export function useGenerateWorkspace(projectId: string) {
     });
   }
 
+  // Khi generate chi dung AI Document Reader (Figma/tai lieu dinh kem, xem
+  // hasEnoughInputToGenerate o duoi), `description` co the rong hoac qua ngan.
+  // Cac API phia sau (luu requirement, review, enhance) deu doi hoi
+  // requirement_description toi thieu 1 so ky tu nhat dinh (POST
+  // /api/test-case-sets: 10 ky tu; POST /api/ai/enhance mode review/enhance:
+  // 20 ky tu - xem requestSchema trong app/api/ai/enhance/route.ts) -> phai
+  // fallback ve tieu de cac tai lieu da dung de generate, thay vi gui chuoi
+  // rong/qua ngan va bi Zod reject (400 too_small). Dung CHUNG 1 ham cho ca 3
+  // noi goi (save, review, enhance) de tranh lap lai logic va sot truong hop
+  // nhu da tung xay ra (runReview/runEnhance truoc day gui thang `description`
+  // goc, khong qua fallback nay).
+  function getEffectiveRequirementDescription(): string {
+    const trimmedDescription = description.trim();
+    if (trimmedDescription.length >= 20) return description;
+    const documentTitles = documents.map((doc) => doc.title).filter(Boolean);
+    return documentTitles.length > 0
+      ? `Generated from documents: ${documentTitles.join(', ')}`
+      : 'No description provided for this requirement.';
+  }
+
   async function runReview() {
     setError('');
     setSuccessMessage('');
@@ -195,7 +215,7 @@ export function useGenerateWorkspace(projectId: string) {
     try {
       const data = await postJson<ReviewResult>('/api/ai/enhance', {
         mode: 'review',
-        requirement_description: description,
+        requirement_description: getEffectiveRequirementDescription(),
         test_cases: casesToReview,
       }, t.generateWorkspace.errors.requestFailed);
 
@@ -222,7 +242,7 @@ export function useGenerateWorkspace(projectId: string) {
     try {
       const enhanced = await postJson<GeneratedTestCase[]>('/api/ai/enhance', {
         mode: 'enhance',
-        requirement_description: description,
+        requirement_description: getEffectiveRequirementDescription(),
         test_cases: casesToEnhance,
         review_result: reviewToUse,
       }, t.generateWorkspace.errors.requestFailed);
@@ -252,18 +272,9 @@ export function useGenerateWorkspace(projectId: string) {
         throw new Error(t.generateWorkspace.errors.demoSaveBlocked);
       }
 
-      // Khi generate chi dung AI Document Reader (Figma/tai lieu dinh kem, xem
-      // hasEnoughInputToGenerate o tren), `description` co the rong hoac qua
-      // ngan (< 10 ky tu). API luu requirement (POST /api/test-case-sets) lai
-      // doi hoi requirement_description toi thieu 10 ky tu va requirement_title
-      // toi thieu 1 ky tu -> phai fallback ve tieu de cac tai lieu da dung de
-      // generate, thay vi gui chuoi rong va bi Zod reject (400 too_small).
       const trimmedDescription = description.trim();
       const documentTitles = documents.map((doc) => doc.title).filter(Boolean);
-      const fallbackDescription = documentTitles.length > 0
-        ? `Generated from documents: ${documentTitles.join(', ')}`
-        : 'No description provided';
-      const effectiveDescription = trimmedDescription.length >= 10 ? description : fallbackDescription;
+      const effectiveDescription = getEffectiveRequirementDescription();
       const effectiveTitle = trimmedDescription.length > 0
         ? trimmedDescription.slice(0, 80)
         : (documentTitles[0] ?? 'Requirement').slice(0, 80);
