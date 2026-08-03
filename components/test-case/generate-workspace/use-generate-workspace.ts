@@ -10,6 +10,8 @@ import { useLanguage } from '@/lib/i18n/language-context';
 import { postJson } from '@/lib/api/client';
 import { exportCasesToExcel, downloadOldCasesTemplate as downloadTemplate, parseXlsxFile } from '@/lib/utils/test-case-excel';
 import { fileToBase64 } from '@/lib/utils/file-to-base64';
+import { findPotentialDuplicates } from '@/lib/test-case-similarity';
+import { diffTestCaseSets, type TestCaseDiffEntry } from '@/lib/test-case-diff';
 import { VALID_CATEGORY_VALUES } from './shared';
 
 /**
@@ -55,6 +57,19 @@ export function useGenerateWorkspace(projectId: string) {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [reviewError, setReviewError] = useState('');
   const [showImportedCases, setShowImportedCases] = useState(false);
+
+  // ── Enhance Diff Preview: truoc day runEnhance ghi de thang testCases/
+  // importedReviewCases ngay khi AI tra ve, khong co cach nao xem lai "AI vua
+  // sua nhung gi" hay quay lai neu khong ung y. Gio ket qua enhance duoc giu
+  // O DAY nhu 1 "pending preview" (chua commit vao testCases that) kem theo
+  // ban goc de tinh diff - UI (review-panel.tsx) hien danh sach thay doi
+  // tung case, nguoi dung bam "Áp dụng" (applyEnhancement) moi thuc su ghi de,
+  // hoac "Hủy" (discardEnhancement) de giu nguyen ban truoc enhance. ──
+  const [pendingEnhance, setPendingEnhance] = useState<{
+    scope: 'generated' | 'imported';
+    before: GeneratedTestCase[];
+    after: GeneratedTestCase[];
+  } | null>(null);
 
   // ── Right column: tab "Kết quả" vs "Review & Enhance" ──
   const [rightTab, setRightTab] = useState<'results' | 'review'>('results');
@@ -102,6 +117,17 @@ export function useGenerateWorkspace(projectId: string) {
   const coverageTone = review && review.coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600';
   const isDemoProject = projectId === 'demo';
   const safeTestCasesCount = (testCases ?? []).length;
+
+  // Canh bao case CO THE trung/gan trung (token-overlap heuristic, khong ton
+  // AI call - xem lib/test-case-similarity.ts). Chay lai moi khi testCases doi.
+  const duplicateWarnings = useMemo(() => findPotentialDuplicates(testCases ?? []), [testCases]);
+
+  // Diff giua ban truoc/sau Enhance (xem pendingEnhance o tren) - null khi
+  // chua chay Enhance lan nao hoac da Áp dụng/Hủy xong.
+  const enhanceDiff: TestCaseDiffEntry[] | null = useMemo(
+    () => (pendingEnhance ? diffTestCaseSets(pendingEnhance.before, pendingEnhance.after) : null),
+    [pendingEnhance],
+  );
   const hasRequirementInput = description.trim().length >= 20;
   const hasDocumentInput = documents.length > 0;
   const hasEnoughInputToGenerate = hasRequirementInput || hasDocumentInput;
@@ -124,6 +150,7 @@ export function useGenerateWorkspace(projectId: string) {
     setSuccessMessage('');
     setReview(null);
     setAnalysis(null);
+    setPendingEnhance(null);
 
     const result = await postJson<{ test_cases: GeneratedTestCase[]; document_coverage: DocumentCoverageResult | null; analysis: GenerationAnalysis | null }>('/api/ai/generate', {
       requirement_description: description,
@@ -217,20 +244,37 @@ export function useGenerateWorkspace(projectId: string) {
         review_result: reviewToUse,
       }, t.generateWorkspace.errors.requestFailed);
 
-      if (reviewMode === 'generated') {
-        setTestCases(enhanced);
-        setReview(null); // Clear review sau khi enhance
-      } else {
-        setImportedReviewCases(enhanced);
-        setImportedReview(null);
-        setShowImportedCases(true);
-      }
-      setSuccessMessage(`✅ Đã enhance ${enhanced.length} test case!`);
+      // KHONG ghi de testCases/importedReviewCases ngay - giu lai o pendingEnhance
+      // de nguoi dung xem diff truoc/sau va tu quyet dinh Áp dụng hay Hủy (xem
+      // applyEnhancement/discardEnhancement o duoi).
+      setPendingEnhance({ scope: reviewMode, before: casesToEnhance, after: enhanced });
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : 'Enhance thất bại');
     } finally {
       setIsEnhancing(false);
     }
+  }
+
+  /** Nguoi dung xem xong diff va dong y - luc nay MOI thuc su ghi de testCases
+   * (hoac importedReviewCases) bang ket qua enhance. */
+  function applyEnhancement() {
+    if (!pendingEnhance) return;
+    if (pendingEnhance.scope === 'generated') {
+      setTestCases(pendingEnhance.after);
+      setReview(null); // Clear review sau khi enhance - can chay lai review de co diem moi
+    } else {
+      setImportedReviewCases(pendingEnhance.after);
+      setImportedReview(null);
+      setShowImportedCases(true);
+    }
+    setSuccessMessage(`✅ Đã áp dụng enhance cho ${pendingEnhance.after.length} test case!`);
+    setPendingEnhance(null);
+  }
+
+  /** Nguoi dung xem diff nhung khong ung y - giu nguyen ban truoc enhance, chi
+   * dep bo preview. Review giu nguyen (chua bi clear) vi testCases khong doi. */
+  function discardEnhancement() {
+    setPendingEnhance(null);
   }
 
   async function saveToLibrary() {
@@ -419,6 +463,7 @@ export function useGenerateWorkspace(projectId: string) {
 
   async function handleReviewImportFile(file: File) {
     setReviewError('');
+    setPendingEnhance(null);
     try {
       const parsed = await parseXlsxFile(file);
       setImportedReviewCases(parsed);
@@ -429,6 +474,15 @@ export function useGenerateWorkspace(projectId: string) {
       setImportedReviewFileName('');
       setReviewError(err instanceof Error ? err.message : 'Import file thất bại');
     }
+  }
+
+  /** Wrap setReviewMode thay vi export truc tiep useState setter: doi giua
+   * 'generated' <-> 'imported' phai dep bo 1 preview Enhance dang cho (neu co)
+   * cua NGU CANH KIA - khong thi enhanceDiff se hien nham thay doi cua bo case
+   * khac voi bo dang xem. */
+  function changeReviewMode(mode: 'generated' | 'imported') {
+    setPendingEnhance(null);
+    setReviewMode(mode);
   }
 
   function clearOldCasesFile() {
@@ -475,6 +529,7 @@ export function useGenerateWorkspace(projectId: string) {
 
     // Results
     testCases, groupedCases, safeTestCasesCount,
+    duplicateWarnings,
     analysis,
     review, coverageTone,
     exportExcel,
@@ -485,13 +540,14 @@ export function useGenerateWorkspace(projectId: string) {
     rightTab, setRightTab,
 
     // Review & Enhance
-    reviewMode, setReviewMode,
+    reviewMode, setReviewMode: changeReviewMode,
     importedReviewCases, groupedImportedCases,
     importedReviewFileName, importedReview,
     isReviewing, isEnhancing, reviewError,
     showImportedCases, setShowImportedCases,
     handleReviewImportFile, clearImportedReviewFile, exportImportedExcel,
     runReview, runEnhance,
+    pendingEnhance, enhanceDiff, applyEnhancement, discardEnhancement,
     acceptSuggestedImportedCase,
   };
 }

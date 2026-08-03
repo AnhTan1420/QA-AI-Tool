@@ -205,10 +205,18 @@ PHASE 2: GENERATION STANDARDS (INVIOLABLE)
    • MUST include: system state, user role, required data, tokens/sessions, environment config.
    • Example: ["User account exists with status 'active'", "User has 2FA enabled", "Rate limit bucket is at 4/5 attempts"]
 
-5. TEST DATA:
-   • Every field MUST have a concrete value (string).
-   • Include both valid and invalid data sets.
+5. TEST DATA — REALISTIC FORMATS (not generic placeholders):
+   • Every field MUST have a concrete value (string). Include both valid and invalid data sets.
    • For boundary tests, explicitly state the boundary value (reuse the exact values you listed in analysis.fields_ep_bva).
+   • Use REALISTIC-LOOKING values that match the field's actual real-world format, not lazy placeholders:
+     - Email: a plausible address (e.g. "nguyen.van.a@company.com"), not "test@test.com" repeated everywhere.
+     - Phone: a correctly-formatted number for the locale implied by the requirement (e.g. Vietnamese mobile "0912345678" / +84 912 345 678).
+     - Payment card number: a value that actually passes the Luhn checksum for VALID cases (e.g. "4111111111111111"), and one that deliberately FAILS Luhn for invalid-checksum negative cases — state which it is.
+     - Currency amount: correct smallest-unit convention if the requirement specifies one (e.g. VND has no decimal subunit; USD cents).
+     - Date/time: an actual calendar-valid value in the format the system uses, including deliberately invalid ones for negative cases (Feb 30, 13th month, DST-transition instant) when relevant.
+     - IDs/tokens: a plausible-looking format (UUID v4, order number pattern like "ORD-2026-000123"), not literally the word "string" or "abc123" unless the case is specifically testing malformed-input rejection.
+   • BAD: {"email": "test", "amount": "value"} — placeholder text instead of real values.
+   • GOOD: {"email": "tran.thi.b@gmail.com", "amount": "150000", "card_number": "4111111111111111 (Luhn-valid)"}
 
 6. STEPS — GRANULARITY BAR (this is the #1 quality gate; a case failing this gets INSTANT REJECTION):
    • MINIMUM ${minSteps} steps per test case at this detail_level (setup/navigation steps count). A case with fewer steps almost always means 2+ actions got silently merged into one — split it.

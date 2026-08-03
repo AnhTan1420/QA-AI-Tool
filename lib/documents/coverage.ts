@@ -1,11 +1,27 @@
 import type { ParsedDocument } from '@/lib/validators/document';
 import type { GeneratedTestCase } from '@/lib/validators/test-case';
 
+export type TraceabilityMatrixRow = {
+  atom_id: string;
+  atom_type: string;
+  label: string;
+  screen_or_section?: string;
+  source_document: string;
+  /** Cac test case (code + title) co source_requirement_ids chua atom_id nay.
+   * Mang rong nghia la atom CHUA duoc case nao cover (giong "uncovered" cu). */
+  covered_by: { code: string; title: string }[];
+};
+
 export type DocumentCoverageResult = {
   total_atoms: number;
   covered_atoms: number;
   coverage_percent: number;
   uncovered: { atom_id: string; label: string; source_document: string }[];
+  /** Bang chi tiet atom ↔ test case, dung cho UI "Traceability Matrix" (xem
+   * traceability-matrix.tsx) - truoc day chi tra ve SO LUONG covered/uncovered,
+   * khong cho biet atom da-cover thi cu the DUOC COVER BOI CASE NAO, nen khong
+   * the audit "case nay co dang lam dung 1 rule khong lien quan khong". */
+  matrix: TraceabilityMatrixRow[];
 };
 
 /**
@@ -25,16 +41,33 @@ export function computeDocumentCoverage(
   if (!documents || documents.length === 0) return null;
 
   const allAtoms = documents.flatMap((doc) =>
-    doc.atoms.map((atom) => ({ atom_id: atom.atom_id, label: atom.label, source_document: doc.title })),
+    doc.atoms.map((atom) => ({
+      atom_id: atom.atom_id,
+      atom_type: atom.atom_type,
+      label: atom.label,
+      screen_or_section: atom.screen_or_section,
+      source_document: doc.title,
+    })),
   );
   if (allAtoms.length === 0) return null;
 
-  const referencedIds = new Set<string>();
+  const casesByAtomId = new Map<string, { code: string; title: string }[]>();
   for (const testCase of testCases ?? []) {
-    for (const id of testCase.source_requirement_ids ?? []) referencedIds.add(id);
+    for (const id of testCase.source_requirement_ids ?? []) {
+      const list = casesByAtomId.get(id) ?? [];
+      list.push({ code: testCase.code, title: testCase.title });
+      casesByAtomId.set(id, list);
+    }
   }
 
-  const uncovered = allAtoms.filter((atom) => !referencedIds.has(atom.atom_id));
+  const matrix: TraceabilityMatrixRow[] = allAtoms.map((atom) => ({
+    ...atom,
+    covered_by: casesByAtomId.get(atom.atom_id) ?? [],
+  }));
+
+  const uncovered = matrix
+    .filter((row) => row.covered_by.length === 0)
+    .map(({ atom_id, label, source_document }) => ({ atom_id, label, source_document }));
   const coveredCount = allAtoms.length - uncovered.length;
 
   return {
@@ -42,5 +75,6 @@ export function computeDocumentCoverage(
     covered_atoms: coveredCount,
     coverage_percent: Math.round((coveredCount / allAtoms.length) * 1000) / 10,
     uncovered,
+    matrix,
   };
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import type { TestCaseCategory } from '@/lib/validators/test-case';
+import type { TestCaseDiffEntry } from '@/lib/test-case-diff';
 import { SCROLLBAR } from './shared';
 import { TestCaseCard } from './test-case-card';
 import type { GenerateWorkspaceState } from './use-generate-workspace';
@@ -39,6 +40,75 @@ function dimensionScoreTone(score: number) {
   if (score >= 80) return 'bg-emerald-500';
   if (score >= 60) return 'bg-amber-500';
   return 'bg-red-500';
+}
+
+/** Preview "trước/sau" khi bấm Enhance — trước đây Enhance ghi đè testCases
+ * ngay lập tức, không có cách nào xem lại AI vừa sửa gì hay quay lại nếu
+ * không ưng ý. Giờ kết quả được giữ ở "pending" (xem use-generate-workspace.ts
+ * pendingEnhance/enhanceDiff) cho tới khi người dùng bấm Áp dụng/Hủy. */
+function EnhanceDiffPreview({ workspace }: { workspace: GenerateWorkspaceState }) {
+  const diff = workspace.enhanceDiff;
+  if (!diff) return null;
+
+  const changed = diff.filter((entry) => entry.status !== 'unchanged');
+  const unchangedCount = diff.length - changed.length;
+
+  return (
+    <div className="mb-4 animate-[fadeIn_0.2s_ease] rounded-2xl border-2 border-purple-200 bg-purple-50/40 p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-black uppercase tracking-wide text-purple-700">✨ Xem trước kết quả Enhance</p>
+          <p className="mt-0.5 text-xs text-purple-500">
+            {changed.length} case có thay đổi
+            {unchangedCount > 0 && ` · ${unchangedCount} case giữ nguyên`} — chưa được lưu, bạn xem và quyết định bên dưới.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={workspace.discardEnhancement}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition-all hover:bg-slate-50"
+          >
+            Hủy, giữ bản cũ
+          </button>
+          <button
+            type="button"
+            onClick={workspace.applyEnhancement}
+            className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white transition-all hover:bg-purple-700 active:scale-[0.98]"
+          >
+            ✓ Áp dụng thay đổi
+          </button>
+        </div>
+      </div>
+
+      {changed.length === 0 ? (
+        <p className="rounded-xl bg-white p-3 text-xs italic text-slate-400">AI không đề xuất thay đổi nào khác so với bản hiện tại.</p>
+      ) : (
+        <div className={`max-h-96 space-y-2 overflow-y-auto ${SCROLLBAR}`}>
+          {changed.map((entry: TestCaseDiffEntry) => (
+            <div key={entry.code} className="rounded-xl border border-purple-100 bg-white p-3 text-xs">
+              <p className="font-bold text-slate-800">
+                <span className="font-mono text-purple-600">{entry.code}</span> — {entry.title}
+                {entry.status === 'added' && <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 font-bold text-emerald-700">Case mới</span>}
+              </p>
+              {entry.status === 'changed' && (
+                <ul className="mt-2 space-y-1">
+                  {entry.changes.map((c, i) => (
+                    <li key={i}>
+                      <span className="font-semibold text-slate-600">{c.label}:</span>{' '}
+                      <span className="text-red-500 line-through">{c.from || '(trống)'}</span>{' '}
+                      <span className="text-slate-400">→</span>{' '}
+                      <span className="text-emerald-700">{c.to || '(trống)'}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** 12-dimension coverage radar as horizontal bars — the AI already computes these scores
@@ -174,6 +244,8 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
       <p className="mb-2 text-xs font-black uppercase tracking-widest text-purple-600">Bước 2 · Chạy review & xem kết quả</p>
       {workspace.reviewError && <div className="animate-[fadeIn_0.2s_ease] rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700 mb-3">{workspace.reviewError}</div>}
 
+      <EnhanceDiffPreview workspace={workspace} />
+
       {/* Review result */}
       {activeReview && (
         <div className="animate-[fadeIn_0.25s_ease] space-y-4 mb-4">
@@ -242,7 +314,7 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
       {/* Action buttons */}
       <div className="flex flex-wrap gap-2">
         <button
-          disabled={workspace.isReviewing || (workspace.reviewMode === 'generated' && workspace.safeTestCasesCount === 0) || (workspace.reviewMode === 'imported' && workspace.importedReviewCases.length === 0)}
+          disabled={workspace.isReviewing || !!workspace.pendingEnhance || (workspace.reviewMode === 'generated' && workspace.safeTestCasesCount === 0) || (workspace.reviewMode === 'imported' && workspace.importedReviewCases.length === 0)}
           onClick={workspace.runReview}
           className="rounded-xl bg-gradient-to-r from-purple-600 to-fuchsia-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-purple-200 transition-all hover:shadow-md hover:shadow-purple-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
         >
@@ -251,7 +323,7 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
 
         {activeReview && (
           <button
-            disabled={workspace.isEnhancing}
+            disabled={workspace.isEnhancing || !!workspace.pendingEnhance}
             onClick={workspace.runEnhance}
             className="rounded-xl border border-purple-200 bg-purple-50 px-4 py-2.5 text-sm font-bold text-purple-700 transition-all hover:bg-purple-100 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
           >

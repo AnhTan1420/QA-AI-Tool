@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { TestCaseCategory } from '@/lib/validators/test-case';
 import { TestCaseCard } from './test-case-card';
+import { TraceabilityMatrix } from './traceability-matrix';
 import type { GenerateWorkspaceState } from './use-generate-workspace';
 
 const PRIORITY_DOT: Record<string, string> = {
@@ -96,6 +97,7 @@ function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspac
 /** Right column, "results" tab: the generated test cases, grouped by category. */
 export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState }) {
   const { t } = workspace;
+  const [showMatrix, setShowMatrix] = useState(false);
 
   return (
     <div className="rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-[0_2px_20px_-4px_rgba(15,23,42,0.06)] backdrop-blur-sm">
@@ -114,10 +116,21 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
 
       {workspace.documentCoverage && (
         <div className={`mt-4 rounded-2xl border p-4 text-sm ${workspace.documentCoverage.coverage_percent >= 100 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
-          <p className={`font-black ${workspace.documentCoverage.coverage_percent >= 100 ? 'text-emerald-700' : 'text-amber-700'}`}>
-            {t.generateWorkspace.documentReader.coverageLabel}: {workspace.documentCoverage.coverage_percent}% ({workspace.documentCoverage.covered_atoms}/{workspace.documentCoverage.total_atoms})
-          </p>
-          {workspace.documentCoverage.uncovered.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className={`font-black ${workspace.documentCoverage.coverage_percent >= 100 ? 'text-emerald-700' : 'text-amber-700'}`}>
+              {t.generateWorkspace.documentReader.coverageLabel}: {workspace.documentCoverage.coverage_percent}% ({workspace.documentCoverage.covered_atoms}/{workspace.documentCoverage.total_atoms})
+            </p>
+            {(workspace.documentCoverage.matrix?.length ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowMatrix((v) => !v)}
+                className="rounded-lg border border-current/20 bg-white/60 px-2.5 py-1 text-xs font-bold text-inherit transition-colors hover:bg-white"
+              >
+                {showMatrix ? 'Ẩn Traceability Matrix ▲' : 'Xem Traceability Matrix ▼'}
+              </button>
+            )}
+          </div>
+          {!showMatrix && workspace.documentCoverage.uncovered.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-xs text-amber-700">
               {workspace.documentCoverage.uncovered.slice(0, 10).map((item) => (
                 <li key={item.atom_id}>• [{item.atom_id}] {item.label} ({item.source_document})</li>
@@ -125,17 +138,31 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
               {workspace.documentCoverage.uncovered.length > 10 && <li>… +{workspace.documentCoverage.uncovered.length - 10} {t.generateWorkspace.documentReader.moreSuffix}</li>}
             </ul>
           )}
+          {showMatrix && <TraceabilityMatrix matrix={workspace.documentCoverage.matrix ?? []} />}
         </div>
       )}
 
       {workspace.analysis && <AiReasoningPanel analysis={workspace.analysis} />}
+
+      {workspace.duplicateWarnings.size > 0 && (
+        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <p className="font-black">⚠ Phát hiện {workspace.duplicateWarnings.size} case có thể trùng/gần trùng nội dung</p>
+          <p className="mt-1 text-xs text-amber-700">Đây chỉ là cảnh báo dựa trên độ tương đồng câu chữ (title + kết quả mong đợi) — không tự động xóa case nào, bạn tự xem lại và quyết định. Xem badge "⚠" trên từng case bên dưới.</p>
+        </div>
+      )}
 
       <div className="mt-6 space-y-5">
         {Object.entries(workspace.groupedCases).map(([category, items]) => (
           <div key={category}>
             <h3 className="mb-3 text-sm font-black uppercase tracking-wide text-slate-500">{workspace.getCategoryLabel(category as TestCaseCategory)}</h3>
             <div className="space-y-3">
-              {(items ?? []).map((testCase) => <TestCaseCard key={`${testCase?.code}-${testCase?.title}`} testCase={testCase} />)}
+              {(items ?? []).map((testCase) => (
+                <TestCaseCard
+                  key={`${testCase?.code}-${testCase?.title}`}
+                  testCase={testCase}
+                  duplicateWarning={testCase?.code ? workspace.duplicateWarnings.get(testCase.code) : undefined}
+                />
+              ))}
             </div>
           </div>
         ))}
