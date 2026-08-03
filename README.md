@@ -1,25 +1,24 @@
 # QAJD — AI Test Case Generator & QA Toolkit
 
-> An internal QA tool that leverages AI to generate test cases with an independent Senior QA Review Agent for coverage scoring, a project-based test case library, and a client-side QA Utility Toolkit.
+> An internal QA platform that leverages AI to generate test cases with an independent Senior QA Review Agent for coverage scoring, a project-based test case library, and a client-side QA Utility Toolkit.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Next.js-16-black?style=flat-square&logo=next.js" />
-  <img src="https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript" />
-  <img src="https://img.shields.io/badge/Supabase-PostgreSQL-green?style=flat-square&logo=supabase" />
-  <img src="https://img.shields.io/badge/AI-Gemini%20%7C%20Groq-purple?style=flat-square&logo=google" />
-  <img src="https://img.shields.io/badge/Tailwind-CSS-38B2AC?style=flat-square&logo=tailwind-css" />
-</p>
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4)](https://tailwindcss.com/)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E)](https://supabase.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
 
 ## Table of Contents
 
-- [Overview](#overview)
+- [System Overview](#system-overview)
+- [Quick Start](#quick-start)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
 - [System Architecture](#system-architecture)
-- [Database Schema (ERD)](#database-schema-erd)
+- [Database Schema](#database-schema)
 - [AI Generation Flow](#ai-generation-flow)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
@@ -32,7 +31,59 @@
 
 ---
 
-## Overview
+## System Overview
+
+```mermaid
+flowchart TD
+    subgraph Setup["1. Setup & Auth"]
+        A1[Sign up / Login] --> A2[Create Project]
+        A2 --> A3[Invite Team Members]
+    end
+
+    subgraph Input["2. Input"]
+        B1[Requirement Description] --> C1
+        B2[AI Document Reader<br/>Figma / MD / PDF / Image] --> C1
+        B3[Old Test Cases .xlsx] --> C1
+    end
+
+    subgraph Generate["3. AI Generation"]
+        C1[Generation Agent<br/>Gemini / Groq] --> C2[Zod Validation]
+        C2 --> C3[Document Coverage Check]
+    end
+
+    subgraph Review["4. Review & Enhance (Optional)"]
+        C3 --> D1{Review?}
+        D1 -->|Yes| D2[Review Agent<br/>Independent scoring]
+        D2 --> D3[Enhance Agent<br/>Rewrite based on review]
+        D3 --> E1
+        D1 -->|No| E1
+    end
+
+    subgraph Save["5. Persist"]
+        E1[Save to Library] --> E2[Test Case Library]
+    end
+
+    subgraph Manage["6. Manage & Export"]
+        E2 --> F1[Browse / Search / Paginate]
+        E2 --> F2[Version History]
+        E2 --> F3[Comments]
+        E2 --> F4[Export .xlsx]
+    end
+
+    subgraph Toolkit["7. QA Utility Toolkit"]
+        G1[JSON Formatter]
+        G2[Base64 / UUID / Regex]
+        G3[Hash / Timestamp]
+        G4[Fake File / NRIC / Lorem]
+    end
+
+    Setup --> Input
+    Input --> Generate
+    Generate --> Review
+    Review --> Save
+    Save --> Manage
+    Manage -.-> Toolkit
+```
 
 **QAJD** is a comprehensive QA toolkit designed to accelerate test case creation using AI while maintaining quality through an independent review mechanism. The platform supports:
 
@@ -41,6 +92,28 @@
 - **Test Case Library**: Organize test cases by project with version history, comments, and traceability.
 - **QA Utility Toolkit**: Client-side tools — JSON formatting, Base64, UUID generation, Regex testing, Hashing, Timestamp conversion, Fake File generation, SG NRIC/FIN generation & validation, and Lorem Ipsum generation.
 - **Team Collaboration**: Invite team members with role-based access (`qa`, `admin`).
+
+---
+
+## Quick Start
+
+```bash
+# 1. Clone & install
+git clone https://github.com/AnhTan1420/QA-AI-Tool.git
+cd QA-AI-Tool
+npm install
+
+# 2. Configure environment
+cp .env.example .env.local
+# Edit .env.local with your Supabase & AI provider keys
+
+# 3. Initialize database
+# Open Supabase SQL Editor → run schema.sql
+
+# 4. Run dev server
+npm run dev
+# Open http://localhost:3000 → Register → Create Project → Generate
+```
 
 ---
 
@@ -202,12 +275,10 @@ QA-AI-Tool/
 
 ## System Architecture
 
-![System Architecture](docs/diagrams/system_architecture.png)
-
 ### Architecture Layers
 
 | Layer | Components | Responsibility |
-|-------|-----------|----------------|
+|-------|-----------|--------------|
 | **Client** | Browser, React Components | UI rendering, form input, client-side tools |
 | **App Router** | `(auth)`, `(dashboard)`, `api/*` | Routing, SSR, API handlers |
 | **AI Services** | Generation, Review, Enhance, Embed | LLM orchestration with fallback |
@@ -216,9 +287,7 @@ QA-AI-Tool/
 
 ---
 
-## Database Schema (ERD)
-
-![ERD](docs/diagrams/erd_diagram.png)
+## Database Schema
 
 ### Entity Relationships
 
@@ -245,8 +314,6 @@ auth.users (1:1) ──► profiles (1:N) ──► projects (1:N) ──► tes
 ---
 
 ## AI Generation Flow
-
-![AI Generation Flow](docs/diagrams/ai_generation_flow.png)
 
 ### Flow Description
 
@@ -288,7 +355,7 @@ npm install
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your actual values (see [Environment Variables](#environment-variables)).
+Edit `.env.local` with your actual values (see Environment Variables).
 
 ### 3. Database Initialization
 
@@ -306,15 +373,17 @@ Edit `.env.local` with your actual values (see [Environment Variables](#environm
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and click **Register** to create your first account.
+Open http://localhost:3000 and click **Register** to create your first account.
 
 ---
+
 ## AI Model
+
 https://ai.google.dev/gemini-api/docs/models
 
 ## Environment Variables
 
-```env
+```bash
 # Supabase
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
@@ -371,8 +440,8 @@ FIGMA_ACCESS_TOKEN=your-figma-personal-access-token
 ### 4. Generate Test Cases with AI
 
 1. Inside a project, go to **Generate**
-2. Enter requirement description (e.g., *"User should be able to reset password via email link"*), pick categories, and optionally upload an old `.xlsx` test suite as reference
-3. (Optional) In the **AI Document Reader** step, attach a Figma design (paste the file link + a [Figma Personal Access Token](https://www.figma.com/developers/api#access-tokens)), or upload a Markdown/logic-document/Functional Spec (`.md`/`.txt`/`.pdf`/`.docx`) or an ERD/diagram image (`.png`/`.jpg`) — each is atomized into testable elements the Generation Agent must map into the resulting test cases
+2. Enter requirement description (e.g. *"User should be able to reset password via email link"*), pick categories, and optionally upload an old `.xlsx` test suite as reference
+3. (Optional) In the **AI Document Reader** step, attach a Figma design (paste the file link + a Figma Personal Access Token), or upload a Markdown/logic-document/Functional Spec (`.md`/`.txt`/`.pdf`/`.docx`) or an ERD/diagram image (`.png`/`.jpg`) — each is atomized into testable elements the Generation Agent must map into the resulting test cases
 4. Click **Generate** — the Generation Agent returns a validated set of test cases, shown in the **Test Cases Generated** tab; if any documents were attached, a **document mapping coverage** banner shows the resulting % and lists any unmapped elements
 5. Switch to the **Review & Enhance** tab to run the independent Review Agent (coverage score, requirement gaps, per-case comments), then optionally **Enhance with AI** to have it rewrite the set based on its own review
 6. Click **Save to Library** to persist the set (and review, if run)
@@ -385,7 +454,6 @@ FIGMA_ACCESS_TOKEN=your-figma-personal-access-token
    - Title, steps, expected result, priority and status
    - **Version History** — every past edit
    - **Comments** — threaded discussion on that case
-
 
 ### 6. Use QA Utility Toolkit
 
@@ -488,7 +556,7 @@ Model routing tries the Gemini model for the task, then `AI_MODEL_FALLBACK`, the
 `test_cases` has no `project_id` column. Always join:
 
 ```sql
-SELECT tc.* 
+SELECT tc.*
 FROM test_cases tc
 JOIN test_case_sets tcs ON tc.test_case_set_id = tcs.id
 WHERE tcs.project_id = 'uuid';
@@ -506,19 +574,18 @@ WHERE tcs.project_id = 'uuid';
 
 ### Phase 2 — In Progress
 
-- [ ] **RAG Pipeline** — Complete flow: upload old test cases → auto-embed → retrieve during generation
-- [ ] **Requirement Traceability Matrix** — `requirement_traceability` table exists, needs UI
-- [x] **AI Document Reader** — Reads and parses Figma designs (live via the Figma REST API), Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams (PDF/DOCX/image) for smarter test case generation. Each source is "atomized" into `DocumentAtom`s (`lib/validators/document.ts`); the Generation Agent is required to map every atom into a test case's `source_requirement_ids` (PHASE 0.5 of `lib/ai/prompts/generation-agent.ts`), and `/api/ai/generate` cross-checks that mapping server-side (`lib/documents/coverage.ts`) and returns a `document_coverage` score instead of just trusting the model's word. See `components/test-case/generate-workspace/document-reader-panel.tsx` and `app/api/ai/documents/parse/route.ts`.
-- [ ] **Can access project environemt** - read the UI, auto create test data
+- **RAG Pipeline** — Complete flow: upload old test cases → auto-embed → retrieve during generation
+- **Requirement Traceability Matrix** — `requirement_traceability` table exists, needs UI
+- **AI Document Reader** — Reads and parses Figma designs (live via the Figma REST API), Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams (PDF/DOCX/image) for smarter test case generation. Each source is "atomized" into `DocumentAtom`s (`lib/validators/document.ts`); the Generation Agent is required to map every atom into a test case's `source_requirement_ids` (PHASE 0.5 of `lib/ai/prompts/generation-agent.ts`), and `/api/ai/generate` cross-checks that mapping server-side (`lib/documents/coverage.ts`) and returns a `document_coverage` score instead of just trusting the model's word. See `components/test-case/generate-workspace/document-reader-panel.tsx` and `app/api/ai/documents/parse/route.ts`.
+- **Can access project environment** — read the UI, auto create test data
 
 ### Phase 3 — Planned
 
-- [ ] Automation test with AI
-1. Open a test case detail
-2. Click **Generate Playwright Code**
-3. The AI will produce executable Playwright TypeScript code
-4. Copy and use in test suite
-
+- **Automation test with AI**
+  1. Open a test case detail
+  2. Click **Generate Playwright Code**
+  3. The AI will produce executable Playwright TypeScript code
+  4. Copy and use in test suite
 
 ---
 
@@ -528,6 +595,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-<p align="center">
-  Built by Jordan Le (Le Van Anh Tan)
-</p>
+Built by **Jordan Le** (Le Van Anh Tan)
