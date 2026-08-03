@@ -151,125 +151,59 @@ Deployment:   Vercel / Self-hosted
 
 ## Project Structure
 
+> For the complete file-by-file breakdown, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
+
 ```
 QA-AI-Tool/
 ├── app/
-│   ├── (auth)/
-│   │   ├── login/                          # Login page (Supabase Auth)
-│   │   └── register/                       # Registration page
+│   ├── (auth)/                    # Login & Register pages
 │   ├── (dashboard)/
-│   │   ├── dashboard/                      # Overview: project & test case stats
-│   │   ├── projects/
-│   │   │   ├── page.tsx                    # Project list + create
+│   │   ├── dashboard/             # Project & test case stats overview
+│   │   ├── projects/              # Project list + create
 │   │   │   └── [projectId]/
-│   │   │       ├── page.tsx                # Project detail/overview
-│   │   │       ├── generate/               # AI generation wizard
-│   │   │       │   ├── page.tsx
-│   │   │       │   └── [setId]/            # View a previously generated set
-│   │   │       ├── test-cases/             # Test case library (list + detail)
-│   │   │       │   ├── page.tsx
-│   │   │       │   └── [caseId]/           # Detail: steps, version history, comments
-│   │   │       └── team/                   # Member management
-│   │   └── tools/                          # QA Utility Toolkit (grid + per-tool page)
+│   │   │       ├── generate/      # AI generation wizard
+│   │   │       ├── test-cases/    # Test case library (list + detail)
+│   │   │       └── team/          # Member management
+│   │   └── tools/                 # QA Utility Toolkit
 │   ├── api/
 │   │   ├── ai/
-│   │   │   ├── generate/                   # Generation Agent endpoint
-│   │   │   ├── enhance/                    # Review Agent (mode: review | enhance)
-│   │   │   ├── documents/parse/            # AI Document Reader: Figma/Markdown/FS/logic-doc/ERD/diagram → DocumentAtoms
-│   │   │   └── embed/                      # Embedding creation for RAG (not yet used by UI)
-│   │   ├── ai-reviews/                     # Persist a review result against a test case set
-│   │   ├── projects/
-│   │   │   ├── route.ts                    # List / create projects
-│   │   │   └── [projectId]/
-│   │   │       ├── route.ts                # Delete project
-│   │   │       └── members/                # Project member CRUD
-│   │   ├── test-case-sets/                 # Requirement + set creation
-│   │   └── test-cases/
-│   │       ├── route.ts                    # List / create / update / bulk-delete
-│   │       ├── bulk/                       # Bulk create/update test cases
-│   │       ├── export/                     # Export a project's test cases
-│   │       └── [id]/
-│   │           ├── route.ts                # Get / update / delete a single test case
-│   │           ├── comments/                # Comments CRUD
-│   │           └── versions/                # Version history (read-only)
+│   │   │   ├── generate/          # Generation Agent
+│   │   │   ├── enhance/           # Review / Enhance Agent
+│   │   │   ├── documents/parse/   # AI Document Reader
+│   │   │   └── embed/             # RAG embeddings
+│   │   ├── ai-reviews/            # Persist review results
+│   │   ├── projects/              # Project CRUD + members
+│   │   ├── test-case-sets/        # Requirement + set creation
+│   │   └── test-cases/            # Test case CRUD + comments + versions
 │   ├── layout.tsx
 │   └── page.tsx
 ├── components/
-│   ├── auth/                               # sign-out-button.tsx
-│   ├── layout/                             # nav-link.tsx, language-toggle.tsx
-│   ├── team/                               # Team page: hook + presentational pieces
-│   │   ├── use-team-members.ts             # State + API calls (invite/role/remove)
-│   │   ├── types.ts, team-stats.tsx, invite-form.tsx, member-row.tsx, member-list.tsx
-│   ├── test-case/
-│   │   ├── generate-workspace/             # AI generation wizard, split by concern
-│   │   │   ├── index.tsx                   # Thin orchestrator
-│   │   │   ├── use-generate-workspace.ts   # All state + business logic
-│   │   │   ├── wizard-panel.tsx            # Left column: requirement, taxonomy, actions
-│   │   │   ├── document-reader-panel.tsx   # Left column: AI Document Reader (Figma/MD/FS/ERD/diagram)
-│   │   │   ├── results-panel.tsx           # Right column: generated test cases + document coverage
-│   │   │   ├── review-panel.tsx            # Right column: review & enhance
-│   │   │   ├── test-case-card.tsx, shared.ts
-│   │   ├── version-history.tsx
-│   │   └── comments-panel.tsx
-│   ├── test-case-form/                     # Create/edit test case form, split by section
-│   │   ├── index.tsx                       # Orchestrator
-│   │   ├── steps-editor.tsx, preconditions-editor.tsx, test-data-editor.tsx
-│   │   └── types.ts, constants.ts
-│   ├── test-case-list/                     # Test case library page pieces
-│   │   ├── use-test-case-list.ts           # Fetch, paginate, bulk-delete, status change
-│   │   ├── types.ts, create-modal.tsx, bulk-delete-bar.tsx, test-case-table.tsx, pagination-bar.tsx
-│   └── tools/
-│       └── tool-runner/                    # One component per QA utility, plus the grid/runner shell
-│           ├── index.tsx                   # Exports ToolsGrid + ToolRunner
-│           ├── tools-grid.tsx, tool-runner.tsx, shared.ts, tool-text-area.tsx
-│           └── json-formatter-tool.tsx, base64-tool.tsx, uuid-tool.tsx, regex-tester-tool.tsx,
-│               hash-generator-tool.tsx, timestamp-tool.tsx, fake-file-generator-tool.tsx,
-│               nric-tool.tsx, lorem-ipsum-tool.tsx
+│   ├── auth/                      # Sign-out button
+│   ├── layout/                    # Nav links, language toggle
+│   ├── team/                      # Team management (hook + UI)
+│   ├── test-case/                 # Generation wizard, version history, comments
+│   ├── test-case-form/            # Create/edit test case form
+│   ├── test-case-list/            # Library list view (hook + table + pagination)
+│   └── tools/                     # QA Utility Toolkit (9 tools)
 ├── lib/
-│   ├── ai/
-│   │   ├── provider.ts                     # Model routing (Gemini → Groq fallback) + vision routing
-│   │   ├── gemini.ts                       # Gemini provider wrapper
-│   │   ├── vision.ts                       # Gemini multimodal (vision) wrapper for diagram/ERD/mockup images
-│   │   ├── groq.ts                         # Groq provider wrapper
-│   │   ├── parse.ts                        # Robust JSON parsing from markdown
-│   │   └── prompts/
-│   │       ├── generation-agent.ts         # Generation Agent system prompt (incl. document-atom mapping)
-│   │       ├── review-agent.ts             # Review Agent system prompt
-│   │       ├── enhance-agent.ts            # Enhance Agent system prompt
-│   │       └── document-extraction-agent.ts # AI Document Reader: atomizes text docs + diagram/ERD images
-│   ├── documents/                          # AI Document Reader helpers
-│   │   ├── text-extractors.ts              # PDF/DOCX → plain text (mammoth, pdf-parse)
-│   │   ├── figma-client.ts                 # Figma REST API client + deterministic node → atom flattening
-│   │   └── coverage.ts                     # Cross-checks document atoms vs. generated test cases
-│   ├── api/
-│   │   └── client.ts                       # Shared `postJson` fetch helper for client components
-│   ├── i18n/
-│   │   ├── config.ts, get-locale.ts
-│   │   ├── language-context.tsx            # React context for the current locale
-│   │   └── dictionaries/                   # vi.ts, en.ts, index.ts
-│   ├── validators/
-│   │   ├── test-case.ts                    # Zod schemas for all AI I/O
-│   │   └── document.ts                     # Zod schemas for AI Document Reader (DocumentAtom, ParsedDocument)
-│   ├── utils/
-│   │   ├── test-case-excel.ts              # Excel export/import for test cases
-│   │   ├── smart-xlsx-parser.ts            # Best-effort column mapping for imported .xlsx
-│   │   ├── file-to-base64.ts               # Reads a File as base64 (used by the doc-reader uploads)
-│   │   ├── fake-file-payloads.ts, nric.ts, lorem-ipsum.ts, file-download.ts   # Toolkit logic
-│   ├── supabase/
-│   │   ├── client.ts                       # Browser client (anon key + RLS)
-│   │   ├── server.ts                       # Server client (cookie session)
-│   │   └── admin.ts                        # Service role (system ops only)
-│   └── test-case-taxonomy.ts               # Category/priority labels + styling helpers
+│   ├── ai/                        # LLM providers, prompts, parsing
+│   ├── documents/                 # AI Document Reader helpers
+│   ├── api/                       # Shared fetch helper
+│   ├── i18n/                      # Vietnamese / English dictionaries
+│   ├── validators/                # Zod schemas (test-case, document)
+│   ├── utils/                     # Excel, fake files, NRIC, lorem ipsum
+│   ├── supabase/                  # Browser / Server / Admin clients
+│   └── test-case-taxonomy.ts      # Category/priority labels
 ├── public/
-├── schema.sql                              # Complete DB schema + RLS + triggers
-├── proxy.ts                                # Session refresh + auth redirect
+├── schema.sql                     # Full DB schema + RLS + triggers
+├── proxy.ts                       # Session refresh + auth redirect
 ├── next.config.ts
 ├── tailwind.config.ts
 ├── tsconfig.json
 └── package.json
 ```
 
-> **Structure convention**: any screen with non-trivial state lives as `components/<feature>/` with a `use-<feature>.ts` hook holding state + API calls, and small presentational `*.tsx` files that take the hook's return value as a single `prop`. The route's `page.tsx` stays a thin orchestrator. See `generate-workspace/`, `team/`, and `test-case-list/` for the pattern.
+> **Convention**: Any screen with non-trivial state lives as `components/<feature>/` with a `use-<feature>.ts` hook holding state + API calls, and small presentational `*.tsx` files. The route's `page.tsx` stays a thin orchestrator.
 
 ---
 
