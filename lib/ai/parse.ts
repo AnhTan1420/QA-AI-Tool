@@ -3,18 +3,6 @@
 // Chức năng: Tiện ích xử lý dữ liệu trả về từ LLM và phân loại lỗi
 // ============================================================================
 
-/**
- * Khi phản hồi AI bị cắt cụt giữa chừng (do vượt maxOutputTokens - hay gặp với tài
- * liệu/set test case có nhiều atom/case), JSON sẽ dở dang ở giữa 1 phần tử mảng,
- * ví dụ: `..."screen_or_section": "3.2"\n    }` rồi hết (thiếu `]` và `}` đóng ngoài).
- * Hàm này duyệt qua chuỗi, theo dõi độ sâu ngoặc { [ (bỏ qua nội dung bên trong
- * chuỗi "..." kể cả ký tự escape \" ), và ghi nhận điểm "an toàn" cuối cùng - tức
- * vị trí ngay sau 1 dấu đóng ngoặc } hoặc ] hoàn chỉnh (nghĩa là phần tử đó đã
- * đóng xong, không dở dang). Nếu JSON.parse thất bại, ta cắt chuỗi tại điểm an
- * toàn cuối cùng đó (bỏ phần tử dở cuối), rồi tự đóng nốt các ngoặc còn mở theo
- * đúng thứ tự ngược lại, và thử parse lại - thay vì mất trắng toàn bộ kết quả chỉ
- * vì 1 phần tử cuối bị cắt cụt.
- */
 function repairTruncatedJson(text: string): string | null {
   const openStack: string[] = [];
   let inString = false;
@@ -54,9 +42,6 @@ function repairTruncatedJson(text: string): string | null {
       }
     } else if (ch === '}' || ch === ']') {
       openStack.pop();
-      // Chi danh dau "an toan" khi vua dong xong 1 phan tu la CON TRUC TIEP cua
-      // mang lap-lai ngoai cung (do sau hien tai == do sau cua mang do) - KHONG
-      // phai bat ky ngoac dong nao (xem giai thich o tren).
       if (itemArrayDepth !== null && openStack.length === itemArrayDepth) {
         lastSafeIndex = i;
         lastSafeStack = [...openStack];
@@ -64,9 +49,7 @@ function repairTruncatedJson(text: string): string | null {
     }
   }
 
-  // Khong tim thay diem an toan nao (JSON hong tu dau, hoac chua co phan tu nao
-  // trong mang lap-lai dong hoan chinh) hoac khong con ngoac nao dang mo (tuc la
-  // JSON da hop le, khong phai loi truncation) -> khong the/khong can vá.
+ 
   if (lastSafeIndex === -1 || lastSafeStack.length === 0) return null;
 
   let repaired = text.slice(0, lastSafeIndex + 1);
@@ -76,10 +59,7 @@ function repairTruncatedJson(text: string): string | null {
   return repaired;
 }
 
-/**
- * Trích xuất và phân tích cú pháp chuỗi JSON từ phản hồi của AI.
- * Xử lý được cả trường hợp AI trả về văn bản thừa hoặc bọc trong markdown (```json).
- */
+
 export function extractJson(text: string): any {
   if (!text || typeof text !== 'string') {
     throw new Error("Phản hồi từ AI trống hoặc không hợp lệ.");
@@ -134,13 +114,7 @@ export function extractJson(text: string): any {
 }
 
 /**
- * Groq (OpenAI-compatible) bắt buộc response_format: json_object phải là một
- * JSON OBJECT ở top-level — model không thể trả về bare array trong chế độ này.
- * Vì vậy khi fallback sang Groq, AI sẽ tự bọc mảng test case vào 1 object,
- * VD: {"test_cases": [...]}, {"data": [...]}, {"result": [...]}...
- * Hàm này "gỡ lớp bọc" đó ra để lấy đúng mảng cần validate, tránh việc
- * generatedTestCasesSchema (z.array(...)) fail chỉ vì bị bọc thêm 1 lớp object
- * không do lỗi nội dung AI sinh ra.
+ * Groq (OpenAI-compatible)
  */
 export function unwrapArrayResponse(data: any): any {
   if (Array.isArray(data)) return data;
