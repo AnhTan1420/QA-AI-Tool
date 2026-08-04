@@ -36,8 +36,8 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
         />
         <p className={`mt-1.5 text-xs font-semibold ${workspace.hasEnoughInputToGenerate ? 'text-emerald-600' : 'text-amber-600'}`}>
           {workspace.hasEnoughInputToGenerate
-            ? (workspace.hasRequirementInput ? '✓ Đã đủ dữ liệu ở mục Requirement.' : '✓ Đã có tài liệu đính kèm ở mục AI Document Reader — không bắt buộc nhập mô tả.')
-            : '⚠ Cần nhập Requirement (tối thiểu 20 ký tự) hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục 2 bên dưới.'}
+            ? (workspace.hasRequirementInput ? t.generateWorkspace.inputStatus.requirementReady : t.generateWorkspace.inputStatus.documentReady)
+            : t.generateWorkspace.inputStatus.needMore}
         </p>
       </label>
 
@@ -82,7 +82,7 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
       <div>
         <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[11px] font-black text-white">4</span>
-          Ngôn ngữ & độ chi tiết
+          {t.generateWorkspace.languageDetailHeading}
         </span>
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <label className="block">
@@ -122,8 +122,8 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
             <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">{workspace.selectedCategories.length}/{TEST_CASE_CATEGORIES.length}</span>
           </span>
           <div className="flex gap-3 text-xs font-bold">
-            <button type="button" onClick={() => workspace.setSelectedCategories(workspace.validCategoryValues)} className="text-blue-600 transition-colors hover:text-blue-700 hover:underline">Chọn tất cả</button>
-            <button type="button" onClick={() => workspace.setSelectedCategories([])} className="text-slate-400 transition-colors hover:text-slate-600 hover:underline">Bỏ chọn</button>
+            <button type="button" onClick={() => workspace.setSelectedCategories(workspace.validCategoryValues)} className="text-blue-600 transition-colors hover:text-blue-700 hover:underline">{t.generateWorkspace.selectAll}</button>
+            <button type="button" onClick={() => workspace.setSelectedCategories([])} className="text-slate-400 transition-colors hover:text-slate-600 hover:underline">{t.generateWorkspace.deselectAll}</button>
           </div>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">

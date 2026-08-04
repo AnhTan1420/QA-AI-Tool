@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { TestCaseCategory } from '@/lib/validators/test-case';
+import type { Dictionary } from '@/lib/i18n/dictionaries/vi';
 import { TestCaseCard } from './test-case-card';
 import { TraceabilityMatrix } from './traceability-matrix';
 import type { GenerateWorkspaceState } from './use-generate-workspace';
@@ -16,8 +17,9 @@ const PRIORITY_DOT: Record<string, string> = {
  * already produces on every call (7-layer deep analysis) but the app used to throw away
  * right after validating test_cases. Collapsed by default since it's supplementary to
  * the test cases themselves, not the primary deliverable. */
-function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspaceState['analysis']> }) {
+function AiReasoningPanel({ analysis, t }: { analysis: NonNullable<GenerateWorkspaceState['analysis']>; t: Dictionary }) {
   const [expanded, setExpanded] = useState(false);
+  const ar = t.generateWorkspace.aiReasoning;
   const hasContent =
     (analysis.ambiguous_terms?.length ?? 0) > 0 ||
     (analysis.risk_ranking?.length ?? 0) > 0 ||
@@ -34,16 +36,16 @@ function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspac
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
         <span className="text-xs font-black uppercase tracking-wide text-indigo-700">
-          🧠 AI Reasoning {analysis.input_source && <span className="ml-1 font-normal normal-case text-indigo-400">· nguồn: {analysis.input_source}</span>}
+          🧠 {ar.title} {analysis.input_source && <span className="ml-1 font-normal normal-case text-indigo-400">· {ar.sourceLabel(analysis.input_source)}</span>}
         </span>
-        <span className="text-xs font-bold text-indigo-500">{expanded ? 'Thu gọn ▲' : 'Xem chi tiết ▼'}</span>
+        <span className="text-xs font-bold text-indigo-500">{expanded ? ar.collapse : ar.expand}</span>
       </button>
 
       {expanded && (
         <div className="space-y-4 px-4 pb-4 text-sm">
           {(analysis.ambiguous_terms?.length ?? 0) > 0 && (
             <div>
-              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Điểm mơ hồ AI phát hiện trong requirement</p>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">{ar.ambiguousTermsTitle}</p>
               <ul className="space-y-1 text-slate-600">
                 {analysis.ambiguous_terms!.map((item, i) => <li key={i}>• {item}</li>)}
               </ul>
@@ -52,7 +54,7 @@ function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspac
 
           {(analysis.risk_ranking?.length ?? 0) > 0 && (
             <div>
-              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Xếp hạng rủi ro (FMEA)</p>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">{ar.riskRankingTitle}</p>
               <div className="space-y-1.5">
                 {analysis.risk_ranking!.map((risk, i) => (
                   <div key={i} className="flex items-start gap-2 rounded-lg bg-white px-3 py-2 text-xs">
@@ -60,7 +62,7 @@ function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspac
                     <div className="min-w-0 flex-1">
                       <p className="font-semibold text-slate-800">{risk.scenario}</p>
                       <p className="mt-0.5 text-slate-400">
-                        Severity {risk.severity_1_10 ?? '?'} · Probability {risk.probability_1_10 ?? '?'} · Detectability {risk.detectability_1_10 ?? '?'} → <span className="font-bold text-slate-600">{risk.resulting_priority}</span>
+                        {ar.severityLabel} {risk.severity_1_10 ?? '?'} · {ar.probabilityLabel} {risk.probability_1_10 ?? '?'} · {ar.detectabilityLabel} {risk.detectability_1_10 ?? '?'} → <span className="font-bold text-slate-600">{risk.resulting_priority}</span>
                       </p>
                     </div>
                   </div>
@@ -71,7 +73,7 @@ function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspac
 
           {(analysis.document_atom_plan?.length ?? 0) > 0 && (
             <div>
-              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Mapping tài liệu → test case</p>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">{ar.atomMappingTitle}</p>
               <ul className="space-y-1 text-xs text-slate-600">
                 {analysis.document_atom_plan!.map((atom, i) => (
                   <li key={i}>• <span className="font-mono text-indigo-600">{atom.atom_id}</span> → <span className="font-mono">{atom.planned_test_case_code}</span></li>
@@ -82,7 +84,7 @@ function AiReasoningPanel({ analysis }: { analysis: NonNullable<GenerateWorkspac
 
           {(analysis.coverage_self_check?.length ?? 0) > 0 && (
             <div>
-              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">AI tự kiểm tra độ phủ</p>
+              <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">{ar.coverageSelfCheckTitle}</p>
               <ul className="space-y-1 text-xs text-slate-600">
                 {analysis.coverage_self_check!.map((item, i) => <li key={i}>✓ {item}</li>)}
               </ul>
@@ -126,7 +128,7 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
                 onClick={() => setShowMatrix((v) => !v)}
                 className="rounded-lg border border-current/20 bg-white/60 px-2.5 py-1 text-xs font-bold text-inherit transition-colors hover:bg-white"
               >
-                {showMatrix ? 'Ẩn Traceability Matrix ▲' : 'Xem Traceability Matrix ▼'}
+                {showMatrix ? t.generateWorkspace.traceabilityMatrix.toggleHide : t.generateWorkspace.traceabilityMatrix.toggleShow}
               </button>
             )}
           </div>
@@ -138,16 +140,16 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
               {workspace.documentCoverage.uncovered.length > 10 && <li>… +{workspace.documentCoverage.uncovered.length - 10} {t.generateWorkspace.documentReader.moreSuffix}</li>}
             </ul>
           )}
-          {showMatrix && <TraceabilityMatrix matrix={workspace.documentCoverage.matrix ?? []} />}
+          {showMatrix && <TraceabilityMatrix matrix={workspace.documentCoverage.matrix ?? []} t={t} />}
         </div>
       )}
 
-      {workspace.analysis && <AiReasoningPanel analysis={workspace.analysis} />}
+      {workspace.analysis && <AiReasoningPanel analysis={workspace.analysis} t={t} />}
 
       {workspace.duplicateWarnings.size > 0 && (
         <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <p className="font-black">⚠ Phát hiện {workspace.duplicateWarnings.size} case có thể trùng/gần trùng nội dung</p>
-          <p className="mt-1 text-xs text-amber-700">Đây chỉ là cảnh báo dựa trên độ tương đồng câu chữ (title + kết quả mong đợi) — không tự động xóa case nào, bạn tự xem lại và quyết định. Xem badge "⚠" trên từng case bên dưới.</p>
+          <p className="font-black">{t.generateWorkspace.duplicateWarning.bannerTitle(workspace.duplicateWarnings.size)}</p>
+          <p className="mt-1 text-xs text-amber-700">{t.generateWorkspace.duplicateWarning.bannerDescription}</p>
         </div>
       )}
 
@@ -180,7 +182,7 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
             onClick={() => workspace.setRightTab('review')}
             className="w-full rounded-2xl border border-dashed border-purple-200 bg-purple-50/50 py-3 text-sm font-bold text-purple-700 transition-all hover:border-purple-300 hover:bg-purple-50 hover:shadow-sm"
           >
-            Bộ test case đã sẵn sàng → Chuyển sang Review & Enhance
+            {t.generateWorkspace.goToReviewButton}
           </button>
         )}
       </div>

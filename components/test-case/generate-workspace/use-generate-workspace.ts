@@ -125,8 +125,8 @@ export function useGenerateWorkspace(projectId: string) {
   // Diff giua ban truoc/sau Enhance (xem pendingEnhance o tren) - null khi
   // chua chay Enhance lan nao hoac da Áp dụng/Hủy xong.
   const enhanceDiff: TestCaseDiffEntry[] | null = useMemo(
-    () => (pendingEnhance ? diffTestCaseSets(pendingEnhance.before, pendingEnhance.after) : null),
-    [pendingEnhance],
+    () => (pendingEnhance ? diffTestCaseSets(pendingEnhance.before, pendingEnhance.after, t.generateWorkspace.enhanceDiff.fields) : null),
+    [pendingEnhance, t],
   );
   const hasRequirementInput = description.trim().length >= 20;
   const hasDocumentInput = documents.length > 0;
@@ -134,8 +134,8 @@ export function useGenerateWorkspace(projectId: string) {
   const generateValidationMessage = hasEnoughInputToGenerate
     ? ''
     : description.trim().length > 0
-      ? 'Requirement / description quá ngắn (tối thiểu 20 ký tự). Hãy bổ sung mô tả hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục AI Document Reader.'
-      : 'Cần nhập Requirement / description (tối thiểu 20 ký tự) hoặc đính kèm ít nhất 1 tài liệu/Figma ở mục AI Document Reader.';
+      ? t.generateWorkspace.errors.requirementTooShort
+      : t.generateWorkspace.errors.requirementNeeded;
   const canGenerate = hasEnoughInputToGenerate && selectedCategories.length > 0 && !isPending;
 
   function toggleCategory(category: TestCaseCategory) {
@@ -202,8 +202,8 @@ export function useGenerateWorkspace(projectId: string) {
     const casesToReview = reviewMode === 'generated' ? testCases : importedReviewCases;
     if (casesToReview.length === 0) {
       setReviewError(reviewMode === 'generated'
-        ? 'Chưa có test case nào để review. Hãy generate trước.'
-        : 'Chưa import file test case nào.'
+        ? t.generateWorkspace.errors.reviewNoGeneratedCases
+        : t.generateWorkspace.errors.reviewNoImportedCases
       );
       return;
     }
@@ -219,7 +219,7 @@ export function useGenerateWorkspace(projectId: string) {
       if (reviewMode === 'generated') setReview(data);
       else setImportedReview(data);
     } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Review thất bại');
+      setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.reviewFailed);
     } finally {
       setIsReviewing(false);
     }
@@ -230,7 +230,7 @@ export function useGenerateWorkspace(projectId: string) {
     const reviewToUse = reviewMode === 'generated' ? review : importedReview;
 
     if (!reviewToUse || casesToEnhance.length === 0) {
-      setReviewError('Cần chạy Review trước khi Enhance');
+      setReviewError(t.generateWorkspace.errors.needReviewBeforeEnhance);
       return;
     }
 
@@ -249,7 +249,7 @@ export function useGenerateWorkspace(projectId: string) {
       // applyEnhancement/discardEnhancement o duoi).
       setPendingEnhance({ scope: reviewMode, before: casesToEnhance, after: enhanced });
     } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Enhance thất bại');
+      setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.enhanceFailedGeneric);
     } finally {
       setIsEnhancing(false);
     }
@@ -267,7 +267,7 @@ export function useGenerateWorkspace(projectId: string) {
       setImportedReview(null);
       setShowImportedCases(true);
     }
-    setSuccessMessage(`✅ Đã áp dụng enhance cho ${pendingEnhance.after.length} test case!`);
+    setSuccessMessage(t.generateWorkspace.errors.enhanceAppliedSuccess(pendingEnhance.after.length));
     setPendingEnhance(null);
   }
 
@@ -349,7 +349,7 @@ export function useGenerateWorkspace(projectId: string) {
     } catch (err) {
       setOldCases([]);
       setOldCasesFileName('');
-      setError(err instanceof Error ? err.message : 'Đọc file thất bại');
+      setError(err instanceof Error ? err.message : t.generateWorkspace.errors.readOldCasesFailed);
     } finally {
       setIsParsingOldCases(false);
     }
@@ -400,7 +400,7 @@ export function useGenerateWorkspace(projectId: string) {
       const parsed = await postJson<ParsedDocument>('/api/ai/documents/parse', payload, t.generateWorkspace.errors.requestFailed);
       setDocuments((current) => [...current, parsed]);
     } catch (err) {
-      setDocumentError(err instanceof Error ? err.message : 'Phân tích tài liệu thất bại');
+      setDocumentError(err instanceof Error ? err.message : t.generateWorkspace.errors.documentParseFailed);
     } finally {
       setIsParsingDocument(false);
     }
@@ -422,7 +422,7 @@ export function useGenerateWorkspace(projectId: string) {
       setDocuments((current) => [...current, parsed]);
       setFigmaUrl('');
     } catch (err) {
-      setDocumentError(err instanceof Error ? err.message : 'Import Figma thất bại');
+      setDocumentError(err instanceof Error ? err.message : t.generateWorkspace.errors.figmaImportFailed);
     } finally {
       setIsParsingDocument(false);
     }
@@ -450,7 +450,7 @@ export function useGenerateWorkspace(projectId: string) {
       }, t.generateWorkspace.errors.requestFailed);
       setDocuments((current) => [...current, parsed]);
     } catch (err) {
-      setDocumentError(err instanceof Error ? err.message : 'Đọc file Figma export thất bại');
+      setDocumentError(err instanceof Error ? err.message : t.generateWorkspace.errors.figmaFileImportFailed);
     } finally {
       setIsParsingDocument(false);
     }
@@ -472,7 +472,7 @@ export function useGenerateWorkspace(projectId: string) {
     } catch (err) {
       setImportedReviewCases([]);
       setImportedReviewFileName('');
-      setReviewError(err instanceof Error ? err.message : 'Import file thất bại');
+      setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.importReviewFileFailed);
     }
   }
 

@@ -24,6 +24,21 @@ export type TestCaseDiffEntry = {
   changes: FieldChange[];
 };
 
+/** Nhan field dung de hien thi trong diff - truyen tu i18n dictionary
+ * (t.generateWorkspace.enhanceDiff.fields) thay vi hard-code 1 ngon ngu, vi
+ * file nay KHONG phai React component nen khong tu goi useLanguage() duoc. */
+export type DiffFieldLabels = {
+  title: string;
+  category: string;
+  priority: string;
+  finalExpectedResult: string;
+  preconditions: string;
+  testData: string;
+  steps: string;
+  stepsCountSuffix: (count: number) => string;
+  stepsChangedSuffix: (count: number) => string;
+};
+
 function stepsToText(steps: GeneratedTestCase['steps']): string {
   return (steps ?? [])
     .map((s) => `${s?.step_number}. ${s?.action} → ${s?.expected_result}`)
@@ -36,14 +51,14 @@ function testDataToText(data: GeneratedTestCase['test_data']): string {
 
 /** So sanh 2 phien ban cua CUNG 1 test case (theo code), tra ve danh sach field
  * da doi. Rong nghia la khong doi gi (status se la 'unchanged'). */
-function diffOneCase(before: GeneratedTestCase, after: GeneratedTestCase): FieldChange[] {
+function diffOneCase(before: GeneratedTestCase, after: GeneratedTestCase, labels: DiffFieldLabels): FieldChange[] {
   const changes: FieldChange[] = [];
 
   const simpleFields: { key: keyof GeneratedTestCase; label: string }[] = [
-    { key: 'title', label: 'Tiêu đề' },
-    { key: 'category', label: 'Danh mục' },
-    { key: 'priority', label: 'Priority' },
-    { key: 'final_expected_result', label: 'Kết quả mong đợi cuối' },
+    { key: 'title', label: labels.title },
+    { key: 'category', label: labels.category },
+    { key: 'priority', label: labels.priority },
+    { key: 'final_expected_result', label: labels.finalExpectedResult },
   ];
   for (const { key, label } of simpleFields) {
     const from = String(before[key] ?? '');
@@ -53,19 +68,19 @@ function diffOneCase(before: GeneratedTestCase, after: GeneratedTestCase): Field
 
   const preFrom = (before.preconditions ?? []).join('; ');
   const preTo = (after.preconditions ?? []).join('; ');
-  if (preFrom !== preTo) changes.push({ label: 'Preconditions', from: preFrom || '(trống)', to: preTo || '(trống)' });
+  if (preFrom !== preTo) changes.push({ label: labels.preconditions, from: preFrom, to: preTo });
 
   const dataFrom = testDataToText(before.test_data);
   const dataTo = testDataToText(after.test_data);
-  if (dataFrom !== dataTo) changes.push({ label: 'Test data', from: dataFrom, to: dataTo });
+  if (dataFrom !== dataTo) changes.push({ label: labels.testData, from: dataFrom, to: dataTo });
 
   const stepsFrom = stepsToText(before.steps);
   const stepsTo = stepsToText(after.steps);
   if (stepsFrom !== stepsTo) {
     changes.push({
-      label: 'Các bước thực hiện',
-      from: `${(before.steps ?? []).length} bước`,
-      to: `${(after.steps ?? []).length} bước (nội dung đã đổi — xem chi tiết bên dưới)`,
+      label: labels.steps,
+      from: labels.stepsCountSuffix((before.steps ?? []).length),
+      to: labels.stepsChangedSuffix((after.steps ?? []).length),
     });
   }
 
@@ -75,7 +90,7 @@ function diffOneCase(before: GeneratedTestCase, after: GeneratedTestCase): Field
 /** So sanh toan bo 2 bo test case (truoc/sau enhance). Case duoc doi chieu theo
  * "code" - neu AI doi luon code (hiem gap), case do se hien nhu 1 case "added"
  * (khong co gi sai, chi la khong the noi voi ban cu no "la" case nao). */
-export function diffTestCaseSets(before: GeneratedTestCase[], after: GeneratedTestCase[]): TestCaseDiffEntry[] {
+export function diffTestCaseSets(before: GeneratedTestCase[], after: GeneratedTestCase[], labels: DiffFieldLabels): TestCaseDiffEntry[] {
   const beforeByCode = new Map(before.filter((tc) => tc?.code).map((tc) => [tc.code, tc]));
   const entries: TestCaseDiffEntry[] = [];
 
@@ -86,7 +101,7 @@ export function diffTestCaseSets(before: GeneratedTestCase[], after: GeneratedTe
       entries.push({ code: afterCase.code, title: afterCase.title, status: 'added', changes: [] });
       continue;
     }
-    const changes = diffOneCase(beforeCase, afterCase);
+    const changes = diffOneCase(beforeCase, afterCase, labels);
     entries.push({
       code: afterCase.code,
       title: afterCase.title,

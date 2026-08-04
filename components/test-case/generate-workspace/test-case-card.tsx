@@ -18,7 +18,7 @@ export function TestCaseCard({ testCase, duplicateWarning }: { testCase: Generat
             className="rounded-lg bg-amber-50 px-2 py-1 text-xs font-bold text-amber-700"
             title={duplicateWarning.similarTo.map((s) => `${s.code} (${s.score}%): ${s.title}`).join('\n')}
           >
-            ⚠ Có thể trùng {duplicateWarning.similarTo.map((s) => `${s.code} (${s.score}%)`).join(', ')}
+            {t.generateWorkspace.duplicateWarning.badge(duplicateWarning.similarTo.map((s) => `${s.code} (${s.score}%)`).join(', '))}
           </span>
         )}
       </div>

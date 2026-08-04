@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import type { TraceabilityMatrixRow } from '@/lib/documents/coverage';
+import type { Dictionary } from '@/lib/i18n/dictionaries/vi';
 import { SCROLLBAR } from './shared';
 
 const ATOM_TYPE_LABELS: Record<string, string> = {
@@ -23,9 +24,10 @@ const ATOM_TYPE_LABELS: Record<string, string> = {
  * dam nhiem, phuc vu audit ("case nay co dang cover dung yeu cau khong?", "rule
  * nay co dang bi 2-3 case lam trung lap khong?").
  */
-export function TraceabilityMatrix({ matrix }: { matrix: TraceabilityMatrixRow[] }) {
+export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRow[]; t: Dictionary }) {
   const [query, setQuery] = useState('');
   const [onlyUncovered, setOnlyUncovered] = useState(false);
+  const tm = t.generateWorkspace.traceabilityMatrix;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -46,24 +48,24 @@ export function TraceabilityMatrix({ matrix }: { matrix: TraceabilityMatrixRow[]
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Tìm theo atom_id, label, hoặc mã test case..."
+          placeholder={tm.searchPlaceholder}
           className="min-w-[220px] flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-blue-300"
         />
         <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
           <input type="checkbox" checked={onlyUncovered} onChange={(e) => setOnlyUncovered(e.target.checked)} />
-          Chỉ hiện atom chưa được cover
+          {tm.onlyUncovered}
         </label>
-        <span className="text-xs text-slate-400">{filtered.length}/{matrix.length} atom</span>
+        <span className="text-xs text-slate-400">{filtered.length}/{matrix.length} {tm.atomsSuffix}</span>
       </div>
 
       <div className={`max-h-80 overflow-y-auto ${SCROLLBAR}`}>
         <table className="w-full text-left text-xs">
           <thead className="sticky top-0 bg-slate-50 text-[10px] font-black uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-3 py-2">Atom</th>
-              <th className="px-3 py-2">Loại</th>
-              <th className="px-3 py-2">Nội dung</th>
-              <th className="px-3 py-2">Được cover bởi</th>
+              <th className="px-3 py-2">{tm.colAtom}</th>
+              <th className="px-3 py-2">{tm.colType}</th>
+              <th className="px-3 py-2">{tm.colContent}</th>
+              <th className="px-3 py-2">{tm.colCoveredBy}</th>
             </tr>
           </thead>
           <tbody>
@@ -77,7 +79,7 @@ export function TraceabilityMatrix({ matrix }: { matrix: TraceabilityMatrixRow[]
                 </td>
                 <td className="px-3 py-2">
                   {row.covered_by.length === 0 ? (
-                    <span className="rounded bg-amber-50 px-1.5 py-0.5 font-bold text-amber-600">Chưa cover</span>
+                    <span className="rounded bg-amber-50 px-1.5 py-0.5 font-bold text-amber-600">{tm.notCovered}</span>
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {row.covered_by.map((c, i) => (
@@ -91,7 +93,7 @@ export function TraceabilityMatrix({ matrix }: { matrix: TraceabilityMatrixRow[]
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-400">Không có atom nào khớp bộ lọc.</td></tr>
+              <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-400">{tm.noMatch}</td></tr>
             )}
           </tbody>
         </table>
