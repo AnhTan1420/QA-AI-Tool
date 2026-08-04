@@ -1,3 +1,4 @@
+Built by **Jordan Le** (Le Van Anh Tan)
 # QAJD — AI Test Case Generator & QA Toolkit
 
 > An internal QA platform that leverages AI to generate test cases with an independent Senior QA Review Agent for coverage scoring, a project-based test case library, and a client-side QA Utility Toolkit.
