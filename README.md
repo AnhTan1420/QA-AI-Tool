@@ -518,7 +518,7 @@ WHERE tcs.project_id = 'uuid';
 
 - **Automation test with AI**
   1. Open a test case detail
-  2. Click **Generate Cypress Code**
+  2. Click **Generate Playwright Code**
   3. The AI will produce executable TypeScript code
   4. Copy and use in test suite
 
