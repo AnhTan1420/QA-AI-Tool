@@ -475,3 +475,184 @@ end $$;
 -- Xem comment day du o dinh nghia bang test_case_sets phia tren.
 -- ----------------------------------------------------------------------------
 alter table test_case_sets add column if not exists analysis jsonb;
+
+-- =========================================================================
+-- Automation Agent: browser profiles, scripts, runs, healing logs
+-- =========================================================================
+
+create table if not exists browser_profiles (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references projects(id) on delete cascade,
+  name text not null,
+  storage_state text,
+  description text,
+  created_by uuid not null references profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists automation_scripts (
+  id uuid primary key default gen_random_uuid(),
+  test_case_id uuid not null references test_cases(id) on delete cascade,
+  test_case_set_id uuid not null references test_case_sets(id) on delete cascade,
+  browser_profile_id uuid references browser_profiles(id) on delete set null,
+  environment varchar(20) not null check (environment in ('chromium', 'firefox', 'webkit')),
+  target_url text not null,
+  cookie_token text,
+  credentials jsonb,
+  generated_code text not null,
+  status varchar(20) not null default 'draft'
+    check (status in ('draft', 'generated', 'verified', 'deprecated')),
+  baseline_screenshot_path text,
+  created_by uuid not null references profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists automation_runs (
+  id uuid primary key default gen_random_uuid(),
+  script_id uuid not null references automation_scripts(id) on delete cascade,
+  status varchar(20) not null
+    check (status in ('running', 'passed', 'failed', 'error', 'timeout')),
+  execution_log text,
+  screenshot_path text,
+  annotated_screenshot_path text,
+  bug_analysis jsonb,
+  visual_regression_score numeric(5,2),
+  duration_ms integer,
+  healing_log jsonb,
+  browser_results jsonb,
+  created_by uuid not null references profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists automation_script_versions (
+  id uuid primary key default gen_random_uuid(),
+  script_id uuid not null references automation_scripts(id) on delete cascade,
+  code text not null,
+  change_summary text,
+  changed_by uuid not null references profiles(id),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists automation_healing_logs (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references automation_runs(id) on delete cascade,
+  script_id uuid not null references automation_scripts(id) on delete cascade,
+  failed_selector text not null,
+  healed_selector text,
+  healing_confidence numeric(3,2),
+  screenshot_path text,
+  applied boolean default false,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_automation_scripts_test_case_id on automation_scripts(test_case_id);
+create index if not exists idx_automation_scripts_test_case_set_id on automation_scripts(test_case_set_id);
+create index if not exists idx_automation_runs_script_id on automation_runs(script_id);
+create index if not exists idx_automation_runs_created_at on automation_runs(created_at desc);
+create index if not exists idx_browser_profiles_project_id on browser_profiles(project_id);
+create index if not exists idx_automation_healing_logs_run_id on automation_healing_logs(run_id);
+
+alter table browser_profiles enable row level security;
+alter table automation_scripts enable row level security;
+alter table automation_runs enable row level security;
+alter table automation_script_versions enable row level security;
+alter table automation_healing_logs enable row level security;
+
+drop policy if exists browser_profiles_member_access on browser_profiles;
+create policy browser_profiles_member_access on browser_profiles for all using (
+  is_project_member(browser_profiles.project_id)
+) with check (
+  is_project_member(browser_profiles.project_id)
+);
+
+drop policy if exists automation_scripts_member_access on automation_scripts;
+create policy automation_scripts_member_access on automation_scripts for all using (
+  exists (
+    select 1 from test_case_sets s
+    join project_members pm on pm.project_id = s.project_id
+    where s.id = automation_scripts.test_case_set_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from test_case_sets s
+    join project_members pm on pm.project_id = s.project_id
+    where s.id = automation_scripts.test_case_set_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_runs_member_access on automation_runs;
+create policy automation_runs_member_access on automation_runs for all using (
+  exists (
+    select 1 from automation_scripts scr
+    join test_case_sets s on s.id = scr.test_case_set_id
+    join project_members pm on pm.project_id = s.project_id
+    where scr.id = automation_runs.script_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from automation_scripts scr
+    join test_case_sets s on s.id = scr.test_case_set_id
+    join project_members pm on pm.project_id = s.project_id
+    where scr.id = automation_runs.script_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_script_versions_member_access on automation_script_versions;
+create policy automation_script_versions_member_access on automation_script_versions for all using (
+  exists (
+    select 1 from automation_scripts scr
+    join test_case_sets s on s.id = scr.test_case_set_id
+    join project_members pm on pm.project_id = s.project_id
+    where scr.id = automation_script_versions.script_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from automation_scripts scr
+    join test_case_sets s on s.id = scr.test_case_set_id
+    join project_members pm on pm.project_id = s.project_id
+    where scr.id = automation_script_versions.script_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_healing_logs_member_access on automation_healing_logs;
+create policy automation_healing_logs_member_access on automation_healing_logs for all using (
+  exists (
+    select 1 from automation_runs r
+    join automation_scripts scr on scr.id = r.script_id
+    join test_case_sets s on s.id = scr.test_case_set_id
+    join project_members pm on pm.project_id = s.project_id
+    where r.id = automation_healing_logs.run_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from automation_runs r
+    join automation_scripts scr on scr.id = r.script_id
+    join test_case_sets s on s.id = scr.test_case_set_id
+    join project_members pm on pm.project_id = s.project_id
+    where r.id = automation_healing_logs.run_id and pm.user_id = auth.uid()
+  )
+);
+
+-- Supabase Storage: automation-screenshots bucket (private, project-scoped paths)
+insert into storage.buckets (id, name, public)
+values ('automation-screenshots', 'automation-screenshots', false)
+on conflict (id) do nothing;
+
+drop policy if exists automation_screenshots_select on storage.objects;
+create policy automation_screenshots_select on storage.objects for select using (
+  bucket_id = 'automation-screenshots'
+  and is_project_member((storage.foldername(name))[1]::uuid)
+);
+
+drop policy if exists automation_screenshots_insert on storage.objects;
+create policy automation_screenshots_insert on storage.objects for insert with check (
+  bucket_id = 'automation-screenshots'
+  and is_project_member((storage.foldername(name))[1]::uuid)
+);
+
+drop policy if exists automation_screenshots_delete on storage.objects;
+create policy automation_screenshots_delete on storage.objects for delete using (
+  bucket_id = 'automation-screenshots'
+  and is_project_member((storage.foldername(name))[1]::uuid)
+);

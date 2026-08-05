@@ -4,7 +4,7 @@ import { generateWithGroq } from "./groq";
 import { generateWithGeminiVision, type VisionImageInput } from "./vision";
 
 export type { VisionImageInput };
-export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction';
+export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction' | 'vision';
 
 /**
  * Model routing theo tác vụ (mục II của spec):
@@ -30,6 +30,7 @@ function getGeminiModelsForTask(task: AITask): string[] {
     review: process.env.AI_MODEL_REVIEW,
     classification: process.env.AI_MODEL_CLASSIFICATION,
     document_extraction: process.env.AI_MODEL_DOCUMENT_EXTRACTION,
+    vision: process.env.AI_MODEL_VISION ?? process.env.AI_MODEL_DOCUMENT_EXTRACTION,
   };
   const primary = primaryByTask[task];
   const fallback = process.env.AI_MODEL_FALLBACK;

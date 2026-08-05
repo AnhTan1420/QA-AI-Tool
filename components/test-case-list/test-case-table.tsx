@@ -48,8 +48,11 @@ export function TestCaseTable({ list }: { list: TestCaseListState }) {
                 />
               </td>
               <td className="px-6 py-4">
-                <Link href={`/projects/${projectId}/test-cases/${tc.id}`} className="text-blue-600 font-medium hover:underline">
+                <Link href={`/projects/${projectId}/test-cases/${tc.id}`} className="text-blue-600 font-medium hover:underline inline-flex items-center gap-1">
                   {tc.code}
+                  {tc.automation_scripts && tc.automation_scripts.length > 0 && (
+                    <span title={t.testCasesList.hasAutomation} aria-label={t.testCasesList.hasAutomation}>🤖</span>
+                  )}
                 </Link>
               </td>
               <td className="px-6 py-4 text-gray-900">{tc.title}</td>

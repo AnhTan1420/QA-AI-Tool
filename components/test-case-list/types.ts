@@ -5,4 +5,5 @@ export type TestCase = {
   category: string;
   priority: string;
   status: string;
+  automation_scripts?: { id: string }[];
 };
