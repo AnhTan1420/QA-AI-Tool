@@ -7,7 +7,7 @@ export class ApiError extends Error {
 export async function postJson<T>(
   url: string,
   body: unknown,
-  fallbackErrorMessage?: string
+  fallbackErrorMessage?: string | ((url: string) => string)
 ): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
@@ -25,7 +25,12 @@ export async function postJson<T>(
       error: payload.error,
       details: payload.details,
     });
-    const err = new ApiError(payload.error ?? fallbackErrorMessage ?? 'Request failed');
+    
+    const fallback = typeof fallbackErrorMessage === 'function'
+      ? fallbackErrorMessage(url)
+      : fallbackErrorMessage;
+    
+    const err = new ApiError(payload.error ?? fallback ?? 'Request failed');
     if (Array.isArray(payload.details)) err.details = payload.details;
     throw err;
   }
