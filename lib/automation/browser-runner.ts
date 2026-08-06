@@ -63,12 +63,31 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
     // (libnss3.so and friends) even with outputFileTracingIncludes in place.
     const { chromium } = await import('playwright-core');
     const sparticuzChromium = (await import('@sparticuz/chromium-min')).default;
+    // Build the pack URL from the version of @sparticuz/chromium-min that is
+    // ACTUALLY installed, instead of a hard-coded version string. Those two
+    // must always match exactly - if package.json's semver range ever
+    // resolves to a newer patch than the hard-coded URL (or vice versa),
+    // executablePath() will "succeed" (no thrown error) but hand back a
+    // Chromium tree that doesn't match this JS version's expectations,
+    // manifesting as "libnss3.so: cannot open shared object file" at launch
+    // time rather than as a clear version-mismatch error. package.json pins
+    // an exact version (no `^`) for the same reason - see that file.
+    const { version: sparticuzVersion } = (await import('@sparticuz/chromium-min/package.json')) as {
+      version: string;
+    };
     const remotePackUrl =
       process.env.CHROMIUM_REMOTE_EXEC_PATH ??
-      'https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar';
+      `https://github.com/Sparticuz/chromium/releases/download/v${sparticuzVersion}/chromium-v${sparticuzVersion}-pack.tar`;
     let browser;
     try {
       const executablePath = await sparticuzChromium.executablePath(remotePackUrl);
+      // Belt-and-suspenders: even when the pack extracted correctly into
+      // /tmp, Chromium's dynamic linker has been reported to sometimes fail
+      // to locate libnss3.so/libnspr4.so and friends unless LD_LIBRARY_PATH
+      // explicitly points at the directory the executable lives in. Cheap to
+      // set, and directly addresses this exact error on Vercel.
+      const { dirname } = await import('node:path');
+      process.env.LD_LIBRARY_PATH = dirname(executablePath);
       browser = await chromium.launch({ args: sparticuzChromium.args, executablePath, headless: true });
     } catch (err: any) {
       const message = String(err?.message ?? err);
