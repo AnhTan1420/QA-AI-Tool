@@ -5,30 +5,10 @@ import type {
   FailureDetails,
   InspectedElement,
 } from '@/lib/validators/playwright';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 
 const IS_SERVERLESS = Boolean(process.env.VERCEL) || process.env.AUTOMATION_RUNTIME === 'serverless';
-
-// ============================================================================
-// ARCHITECTURE DECISION (Requirement 2 of the Playwright Automation Agent spec)
-// ----------------------------------------------------------------------------
-// Launching real browsers - especially Firefox/Edge - is NOT compatible with
-// standard Vercel serverless functions (no full browser binaries on the
-// filesystem, function size limits, no apt-installed system deps).
-//
-// DECISION: option (a) from the spec - a lightweight, Chromium-only path for
-// Vercel using `playwright-core` (no bundled browsers) + `@sparticuz/chromium-min`
-// (remote pack fetched at cold start, cached in /tmp). Firefox and "edge"
-// are ONLY available when AUTOMATION_RUNTIME is not 'serverless'.
-//
-// CRITICAL: @sparticuz/chromium-min (NOT the full @sparticuz/chromium) is
-// required because the full package only ships the Chromium binary without
-// shared libraries (libnss3.so, libnspr4.so, etc.). The -min package fetches
-// a .tar pack from remote that contains BOTH the binary and its .so deps,
-// then extracts them into the same /tmp directory. Without this, Vercel's
-// minimal Linux container will always throw "cannot open shared object file".
-// ============================================================================
 
 function assertBrowserAllowed(browser: AutomationBrowser) {
   if (IS_SERVERLESS && browser !== 'chromium') {
@@ -63,29 +43,23 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
     const sparticuzMod = await import('@sparticuz/chromium-min');
     const chromiumPack = (sparticuzMod as any).default as SparticuzChromiumMin;
 
-    // VITAL: @sparticuz/chromium-min checks AWS_LAMBDA_JS_RUNTIME at module
-    // load time. If missing, it may pick wrong binary arch or skip extraction.
     if (!process.env.AWS_LAMBDA_JS_RUNTIME) {
       process.env.AWS_LAMBDA_JS_RUNTIME = 'nodejs22.x';
     }
 
-    // Prevent GPU/SwiftShader freeze on serverless.
     if (typeof chromiumPack.setGraphicsMode === 'function') {
       chromiumPack.setGraphicsMode(false);
     }
 
     // Build remote pack URL from the ACTUALLY installed package version.
-    // Hard-coding a version string risks mismatch when package.json resolves
-    // to a different patch. We read package.json at runtime to stay in sync.
     let remotePackUrl = process.env.CHROMIUM_REMOTE_EXEC_PATH;
     if (!remotePackUrl) {
       try {
-        const pkg = (await import('@sparticuz/chromium-min/package.json')) as { version: string };
+        const pkgPath = require.resolve('@sparticuz/chromium-min/package.json');
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
         const v = pkg.version;
-        // Sparticuz releases use .tar (plain) or .tar.br (brotli). Try .tar first.
         remotePackUrl = `https://github.com/Sparticuz/chromium/releases/download/v${v}/chromium-v${v}-pack.tar`;
       } catch {
-        // Fallback if package.json can't be read for any reason.
         remotePackUrl = 'https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar';
       }
     }
@@ -105,22 +79,12 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
       throw err;
     }
 
-    // CRITICAL FIX: Point LD_LIBRARY_PATH at the directory containing BOTH
-    // the Chromium binary AND the extracted shared libraries (libnss3.so,
-    // libnspr4.so, libatk-bridge.so, etc.). @sparticuz/chromium-min extracts
-    // the entire .tar into one folder under /tmp; the binary and .so files
-    // live side-by-side there. Without this, the Linux dynamic linker won't
-    // find the libraries in Vercel's minimal container.
     const execDir = dirname(executablePath);
     process.env.LD_LIBRARY_PATH = execDir;
 
-    // Belt-and-suspenders: verify the .so files actually landed next to the
-    // binary. If not, the remote pack may be corrupt or the wrong format.
     const hasLibnss = existsSync(join(execDir, 'libnss3.so'));
     const hasLibnspr = existsSync(join(execDir, 'libnspr4.so'));
     if (!hasLibnss || !hasLibnspr) {
-      // Log warning but don't hard-fail here; some packs name libs differently
-      // or nest them in a subdir. The LD_LIBRARY_PATH fix often still works.
       console.warn(
         `[browser-runner] Warning: expected shared libraries not found in ${execDir} ` +
           `(libnss3.so exists=${hasLibnss}, libnspr4.so exists=${hasLibnspr}). ` +
@@ -140,7 +104,6 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
           '--disable-dev-shm-usage',
         ],
         executablePath,
-        // Coerce "shell" | true → boolean to satisfy Playwright TS types.
         headless: Boolean(chromiumPack.headless),
       });
     } catch (err: any) {
@@ -162,8 +125,6 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
     return { context, close: () => browser.close() };
   }
 
-  // Local / self-hosted: full `playwright` package with real browser binaries
-  // on disk (`npx playwright install`) - all 3 engines available.
   const playwright = await import('playwright');
   if (browserChoice === 'firefox') {
     const browser = await playwright.firefox.launch({ headless: true });
@@ -178,9 +139,6 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
 }
 
 // ── Auth: cookie injection or best-effort UI login flow ─────────────────────
-// Credentials/tokens are used in-memory ONLY for this one call - never logged,
-// never returned to the client, never persisted or sent to the AI prompt.
-// See app/api/automation/inspect/route.ts and app/api/automation/run/route.ts.
 
 async function injectCookieIfPresent(context: any, env: EnvironmentConfig) {
   if (!env.cookie_token) return;
@@ -200,12 +158,6 @@ async function firstVisibleMatch(page: any, selectors: string[]) {
   return null;
 }
 
-/**
- * Best-effort UI login: tries common username/password field patterns, fills
- * and submits. This is a heuristic (QAJD doesn't know the target app's DOM in
- * advance) - if it can't confidently find both fields it gives up and returns
- * a warning rather than guessing further.
- */
 async function performLoginFlow(page: any, login: { username: string; password: string }): Promise<string[]> {
   const warnings: string[] = [];
   const usernameField = await firstVisibleMatch(page, [
@@ -244,7 +196,7 @@ async function performLoginFlow(page: any, login: { username: string; password: 
   return warnings;
 }
 
-// ── DOM/element inspection (grounding context for the Codegen Agent) ───────
+// ── DOM/element inspection ───────
 
 async function extractElementMap(page: any): Promise<ElementMap> {
   const raw: any[] = await page.evaluate(() => {
@@ -377,23 +329,13 @@ export async function inspectEnvironment(env: EnvironmentConfig): Promise<{
   }
 }
 
-// ── Run: execute a generated Playwright script + capture screenshot ────────
-//
-// We don't spawn the full `@playwright/test` CLI here (that's the heavier,
-// filesystem/child-process-hungry path better suited to a self-hosted runner
-// service - option (b) above). Instead, because the Codegen Agent's prompt
-// contract (lib/ai/prompts/playwright-agent.ts) guarantees a single, plain-JS
-// compatible `test('<title>', async ({ page }) => { ... })` block, we extract
-// that callback body and execute it directly against the `page` we already
-// launched, with `expect` imported from `@playwright/test` (its web-first
-// matchers work standalone against a real Page/Locator). This keeps the
-// "Run" action fast and self-contained inside a single serverless function.
+// ── Run: execute generated script ────────
+
 function extractTestBody(code: string): string | null {
   const match = code.match(/async\s*\(\s*\{\s*page[^}]*\}\s*\)\s*=>\s*\{([\s\S]*)\}\s*\)\s*;?\s*$/);
   return match ? match[1] : null;
 }
 
-/** Wraps page.locator/getByRole/getByTestId/... to remember the last selector used, so a failure can be traced back to it for the highlighted screenshot + failure_details.selector. Chained locators aren't tracked - documented heuristic limitation. */
 function instrumentPage(page: any): { getLastSelector: () => string | undefined } {
   let lastSelector: string | undefined;
   const trackedMethods = ['locator', 'getByRole', 'getByTestId', 'getByText', 'getByLabel', 'getByPlaceholder'];
@@ -444,7 +386,7 @@ export async function runGeneratedScript(code: string, env: EnvironmentConfig): 
     }
 
     const { expect } = await import('@playwright/test');
-    // eslint-disable-next-line no-new-func -- controlled input: body comes only from our own Codegen Agent's Zod-validated output, never raw user text.
+    // eslint-disable-next-line no-new-func
     const runTestBody = new Function('page', 'expect', `return (async () => { ${body} })();`);
 
     try {
@@ -456,8 +398,6 @@ export async function runGeneratedScript(code: string, env: EnvironmentConfig): 
       let screenshotBuffer: Buffer | undefined;
       try {
         if (selector) {
-          // Highlight the last-touched locator directly in the DOM (no image
-          // library needed) before capturing the "bug" screenshot.
           // eslint-disable-next-line no-new-func
           const failingLocator: any = new Function('page', `return page.${selector};`)(page);
           await failingLocator
@@ -471,7 +411,7 @@ export async function runGeneratedScript(code: string, env: EnvironmentConfig): 
         }
         screenshotBuffer = await page.screenshot({ fullPage: true });
       } catch {
-        // Failure screenshot is best-effort - a screenshot error shouldn't mask the real test failure.
+        // best-effort
       }
       return {
         status: 'failed',
