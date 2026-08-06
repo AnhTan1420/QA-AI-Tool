@@ -4,8 +4,11 @@ export class ApiError extends Error {
   details?: ApiErrorDetail[];
 }
 
-// lib/api/client.ts
-export async function postJson<T>(url: string, body: unknown): Promise<T> {
+export async function postJson<T>(
+  url: string,
+  body: unknown,
+  fallbackErrorMessage?: string
+): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -15,15 +18,14 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
   const payload = await response.json();
 
   if (!response.ok || !payload.success) {
-    // LOG CHI TIẾT RA CONSOLE ĐỂ DEBUG
     console.error('API Error:', {
       url,
       status: response.status,
       bodySent: body,
       error: payload.error,
-      details: payload.details, // Zod error details
+      details: payload.details,
     });
-    const err = new ApiError(payload.error ?? 'Request failed');
+    const err = new ApiError(payload.error ?? fallbackErrorMessage ?? 'Request failed');
     if (Array.isArray(payload.details)) err.details = payload.details;
     throw err;
   }
