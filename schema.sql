@@ -501,38 +501,63 @@ alter table test_cases add column if not exists automation_status text not null 
   check (automation_status in ('not_generated', 'generated', 'passed', 'failed'));
 
 create table if not exists automation_scripts (
-  id uuid primary key default gen_random_uuid(),
-  test_case_id uuid references test_cases(id) on delete cascade,
-  version int not null default 1,
-  code text not null,
-  imports_used jsonb default '[]'::jsonb,
-  selectors_used jsonb default '[]'::jsonb,
-  warnings jsonb default '[]'::jsonb,
-  -- environment.public shape only (browser/target_url/auth_mode) - KHONG BAO GIO
-  -- chua cookie_token/password, xem toPublicEnvironment() trong lib/validators/playwright.ts.
-  environment jsonb,
-  -- snapshot cua DOM/element map dung lam grounding context cho lan generate nay (audit trail).
-  element_map jsonb,
-  model_used text,
-  generated_by uuid references profiles(id),
-  created_at timestamptz default now()
+  id uuid primary key default gen_random_uuid()
 );
+-- ALTER ... ADD COLUMN IF NOT EXISTS instead of relying on CREATE TABLE IF NOT
+-- EXISTS alone: if a table named automation_scripts already exists in your DB
+-- (e.g. a partial run of an earlier version of this migration), CREATE TABLE
+-- IF NOT EXISTS is a silent no-op and any columns missing from that old shape
+-- would otherwise never get added - which is exactly what produces
+-- "column test_case_id does not exist" on the CREATE INDEX/policy statements
+-- below. This block self-heals regardless of what was already there.
+alter table automation_scripts add column if not exists test_case_id uuid references test_cases(id) on delete cascade;
+alter table automation_scripts add column if not exists version int not null default 1;
+alter table automation_scripts add column if not exists code text;
+alter table automation_scripts add column if not exists imports_used jsonb default '[]'::jsonb;
+alter table automation_scripts add column if not exists selectors_used jsonb default '[]'::jsonb;
+alter table automation_scripts add column if not exists warnings jsonb default '[]'::jsonb;
+-- environment.public shape only (browser/target_url/auth_mode) - KHONG BAO GIO
+-- chua cookie_token/password, xem toPublicEnvironment() trong lib/validators/playwright.ts.
+alter table automation_scripts add column if not exists environment jsonb;
+-- snapshot cua DOM/element map dung lam grounding context cho lan generate nay (audit trail).
+alter table automation_scripts add column if not exists element_map jsonb;
+alter table automation_scripts add column if not exists model_used text;
+alter table automation_scripts add column if not exists generated_by uuid references profiles(id);
+alter table automation_scripts add column if not exists created_at timestamptz default now();
+-- code was added as nullable above (ADD COLUMN can't add a NOT NULL column to
+-- a table that may already have rows without a default); enforce NOT NULL now
+-- that any pre-existing rows would already have a value or this is a fresh table.
+do $$
+begin
+  if not exists (select 1 from automation_scripts where code is null) then
+    alter table automation_scripts alter column code set not null;
+  end if;
+end $$;
 
 create table if not exists automation_runs (
-  id uuid primary key default gen_random_uuid(),
-  test_case_id uuid references test_cases(id) on delete cascade,
-  script_id uuid references automation_scripts(id) on delete set null,
-  status text not null check (status in ('passed', 'failed', 'error')),
-  duration_ms int,
-  -- PATH trong bucket automation-screenshots (vd '<test_case_id>/<run_id>.png'), khong
-  -- phai URL public - bucket la private, UI luon xin signed URL moi khi hien thi.
-  screenshot_url text,
-  failure_details jsonb,
-  code_snapshot text not null,
-  run_by uuid references profiles(id),
-  started_at timestamptz default now(),
-  finished_at timestamptz
+  id uuid primary key default gen_random_uuid()
 );
+alter table automation_runs add column if not exists test_case_id uuid references test_cases(id) on delete cascade;
+alter table automation_runs add column if not exists script_id uuid references automation_scripts(id) on delete set null;
+alter table automation_runs add column if not exists status text check (status in ('passed', 'failed', 'error'));
+alter table automation_runs add column if not exists duration_ms int;
+-- PATH trong bucket automation-screenshots (vd '<test_case_id>/<run_id>.png'), khong
+-- phai URL public - bucket la private, UI luon xin signed URL moi khi hien thi.
+alter table automation_runs add column if not exists screenshot_url text;
+alter table automation_runs add column if not exists failure_details jsonb;
+alter table automation_runs add column if not exists code_snapshot text;
+alter table automation_runs add column if not exists run_by uuid references profiles(id);
+alter table automation_runs add column if not exists started_at timestamptz default now();
+alter table automation_runs add column if not exists finished_at timestamptz;
+do $$
+begin
+  if not exists (select 1 from automation_runs where status is null) then
+    alter table automation_runs alter column status set not null;
+  end if;
+  if not exists (select 1 from automation_runs where code_snapshot is null) then
+    alter table automation_runs alter column code_snapshot set not null;
+  end if;
+end $$;
 
 create index if not exists idx_automation_scripts_test_case_id on automation_scripts(test_case_id);
 create index if not exists idx_automation_runs_test_case_id on automation_runs(test_case_id);
