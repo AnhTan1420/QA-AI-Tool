@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { chromium, firefox, webkit, Browser, BrowserContext, Page } from '@playwright/test';
+import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwright'; // ← FIX: static import
 import { createClient } from '@supabase/supabase-js';
 
 const TMP_DIR = path.join(os.tmpdir(), 'qajd-playwright-scripts');
@@ -185,14 +185,10 @@ export async function uploadScreenshot(
     const { data, error } = await supabase.storage.from('automation-screenshots').upload(fileName, fileBuffer, { contentType: 'image/png', upsert: true });
     if (error) throw error;
     return fileName;
-  } catch (err) {
-    console.error('Upload screenshot failed:', err);
-    return null;
-  }
+  } catch (err) { console.error('Upload screenshot failed:', err); return null; }
 }
 
 export async function crawlPageForDiscovery(url: string, environment: 'chromium' | 'firefox' | 'webkit' = 'chromium') {
-  const { chromium, firefox, webkit } = require('playwright');
   const browserType = { chromium, firefox, webkit }[environment];
   const browser = await browserType.launch({ headless: true });
   const context = await browser.newContext();
@@ -219,19 +215,15 @@ export async function captureStorageStateFromLoginScript(
   loginScript: string,
   environment: 'chromium' | 'firefox' | 'webkit' = 'chromium'
 ): Promise<string> {
-  const { chromium, firefox, webkit } = require('playwright');
   const browserType = { chromium, firefox, webkit }[environment];
   const browser = await browserType.launch({ headless: true });
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    const fs = require('fs');
-    const path = require('path');
-    const os = require('os');
     const tmpDir = path.join(os.tmpdir(), 'qajd-login-scripts');
-    await fs.promises.mkdir(tmpDir, { recursive: true });
+    await fs.mkdir(tmpDir, { recursive: true });
     const scriptPath = path.join(tmpDir, `login-${Date.now()}.js`);
-    await fs.promises.writeFile(scriptPath, `module.exports = async (page) => { ${loginScript} };`);
+    await fs.writeFile(scriptPath, `module.exports = async (page) => { ${loginScript} };`);
     const runLogin = require(scriptPath);
     await runLogin(page);
     await page.waitForTimeout(2000);
