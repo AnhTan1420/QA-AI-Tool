@@ -41,22 +41,39 @@ async function executeAndPersist(
     .select()
     .single();
 
-  let credentials = script.credentials ?? undefined;
-  // app/api/automation/runs/route.ts — Sửa dòng 45
-  if (credentials?.password?.startsWith('ey') || (credentials?.password?.length ?? 0) > 50) {
-    try {
-      credentials = decryptCredentials(credentials);
-    } catch {
-      /* use as-is */
+  // FIX: credentials có thể là object hoặc string (encrypted JSON)
+  let credentials: { username: string; password: string } | undefined = undefined;
+  
+  if (script.credentials) {
+    // Nếu credentials là string (encrypted) hoặc object đã encrypt
+    const raw = script.credentials;
+    if (typeof raw === 'string') {
+      try {
+        credentials = decryptCredentials(raw);
+      } catch {
+        /* ignore invalid encrypted string */
+      }
+    } else if (raw && typeof raw === 'object' && raw.password) {
+      // Nếu là object nhưng password có vẻ đã encrypt (base64-like hoặc dài)
+      const pwd = raw.password as string;
+      if (pwd.startsWith('ey') || pwd.length > 50) {
+        try {
+          credentials = decryptCredentials(raw as any);
+        } catch {
+          credentials = raw as { username: string; password: string };
+        }
+      } else {
+        credentials = raw as { username: string; password: string };
+      }
     }
   }
 
-  let cookieToken = script.cookie_token ?? undefined;
-  if (cookieToken && cookieToken !== '***') {
+  let cookieToken: string | undefined;
+  if (script.cookie_token && script.cookie_token !== '***') {
     try {
-      cookieToken = decryptSecret(cookieToken);
+      cookieToken = decryptSecret(script.cookie_token);
     } catch {
-      /* ignore */
+      cookieToken = script.cookie_token;
     }
   }
 
