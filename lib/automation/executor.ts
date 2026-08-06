@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import { execSync } from 'child_process'; // ← FIX: static import, bỏ inline require
 import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwright';
-
+export type BrowserEnv = 'chromium' | 'firefox' | 'webkit';
 const TMP_DIR = path.join(os.tmpdir(), 'qajd-playwright-scripts');
 
 async function ensureDir(dirPath: string) {
