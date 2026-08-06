@@ -12,7 +12,7 @@
   "dependencies": {
     "@google/genai": "^2.13.0",
     "@playwright/test": "^1.48.0",
-    "@sparticuz/chromium-min": "131.0.1",
+    "@sparticuz/chromium": "^131.0.1",
     "@supabase/ssr": "^0.12.4",
     "@supabase/supabase-js": "^2.111.0",
     "@tailwindcss/postcss": "^4.3.3",
@@ -23,7 +23,7 @@
     "next": "^15.0.0",
     "otpauth": "^9.5.1",
     "pdf-parse": "^1.1.1",
-    "playwright-core": "^1.48.0",
+    "playwright-core": "^1.49.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^2.3.0",

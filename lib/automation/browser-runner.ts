@@ -49,63 +49,87 @@ type LaunchedBrowser = {
   close: () => Promise<void>;
 };
 
+// Runtime shape of @sparticuz/chromium (dynamic CJS import in ESM, types don't
+// perfectly align so we define a minimal interface to keep TS happy).
+interface SparticuzChromium {
+  args: string[];
+  headless: boolean | 'shell';
+  setGraphicsMode(enabled: boolean): void;
+  executablePath(): Promise<string>;
+}
+
 async function launchBrowser(browserChoice: AutomationBrowser): Promise<LaunchedBrowser> {
   assertBrowserAllowed(browserChoice);
 
   if (IS_SERVERLESS) {
     // playwright-core ships no browser binaries (tiny install footprint).
-    // @sparticuz/chromium-min (NOT the full @sparticuz/chromium) supplies the
-    // launch flags but ships zero binary bytes itself - the actual Chromium
-    // pack.tar is fetched from CHROMIUM_REMOTE_EXEC_PATH at cold start and
-    // cached in /tmp. This is required on Vercel: the full @sparticuz/chromium
-    // package bundled directly pushes these routes' function size past
-    // Vercel's limit, causing the deployed bundle to silently lose files
-    // (libnss3.so and friends) even with outputFileTracingIncludes in place.
+    // @sparticuz/chromium supplies the Chromium binary + required shared
+    // libraries (libnss3.so, libnspr4.so, etc.) extracted at cold start.
+    // We use the FULL package (not -min) because the min build strips shared
+    // libraries to save space, causing "cannot open shared object file" on
+    // Vercel. The full package stays under Vercel's function size limit when
+    // listed in serverExternalPackages (next.config.ts).
     const { chromium } = await import('playwright-core');
-    const sparticuzChromium = (await import('@sparticuz/chromium-min')).default;
-    // Build the pack URL from the version of @sparticuz/chromium-min that is
-    // ACTUALLY installed, instead of a hard-coded version string. Those two
-    // must always match exactly - if package.json's semver range ever
-    // resolves to a newer patch than the hard-coded URL (or vice versa),
-    // executablePath() will "succeed" (no thrown error) but hand back a
-    // Chromium tree that doesn't match this JS version's expectations,
-    // manifesting as "libnss3.so: cannot open shared object file" at launch
-    // time rather than as a clear version-mismatch error. package.json pins
-    // an exact version (no `^`) for the same reason - see that file.
-    const { version: sparticuzVersion } = (await import('@sparticuz/chromium-min/package.json')) as {
-      version: string;
-    };
-    const remotePackUrl =
-      process.env.CHROMIUM_REMOTE_EXEC_PATH ??
-      `https://github.com/Sparticuz/chromium/releases/download/v${sparticuzVersion}/chromium-v${sparticuzVersion}-pack.tar`;
+
+    // Dynamic CJS import: the module object itself carries the Chromium class
+    // as its default export. Cast to any first, then to our interface, to
+    // bypass TS "Type 'never' has no call signatures" caused by imperfect
+    // type declarations for ESM dynamic imports of this CJS package.
+    const sparticuzMod = await import('@sparticuz/chromium');
+    const chromiumPack = (sparticuzMod as any).default as SparticuzChromium;
+
+    // VITAL: @sparticuz/chromium checks AWS_LAMBDA_JS_RUNTIME at module load
+    // time. If it's missing, it may pick the wrong binary architecture or
+    // skip library extraction. Set it before any call to executablePath().
+    if (!process.env.AWS_LAMBDA_JS_RUNTIME) {
+      process.env.AWS_LAMBDA_JS_RUNTIME = 'nodejs22.x';
+    }
+
+    // Disable graphics mode to prevent SwiftShader/ANGLE freeze on serverless.
+    if (typeof chromiumPack.setGraphicsMode === 'function') {
+      chromiumPack.setGraphicsMode(false);
+    }
+
     let browser;
     try {
-      const executablePath = await sparticuzChromium.executablePath(remotePackUrl);
-      // Belt-and-suspenders: even when the pack extracted correctly into
-      // /tmp, Chromium's dynamic linker has been reported to sometimes fail
-      // to locate libnss3.so/libnspr4.so and friends unless LD_LIBRARY_PATH
-      // explicitly points at the directory the executable lives in. Cheap to
-      // set, and directly addresses this exact error on Vercel.
+      const executablePath = await chromiumPack.executablePath();
       const { dirname } = await import('node:path');
+
+      // CRITICAL FIX: Explicitly point LD_LIBRARY_PATH at the directory
+      // containing the Chromium binary so the dynamic linker can resolve
+      // libnss3.so, libnspr4.so, libatk-bridge.so, etc.
       process.env.LD_LIBRARY_PATH = dirname(executablePath);
-      browser = await chromium.launch({ args: sparticuzChromium.args, executablePath, headless: true });
+
+      browser = await chromium.launch({
+        args: [
+          ...chromiumPack.args,
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+        ],
+        executablePath,
+        // @sparticuz/chromium returns `true | "shell"`; Playwright TS types
+        // expect `boolean | undefined`. Coerce to boolean to satisfy the type
+        // checker while preserving the runtime intent (always headless on Vercel).
+        headless: Boolean(chromiumPack.headless),
+      });
     } catch (err: any) {
       const message = String(err?.message ?? err);
       if (message.includes('shared object file') || message.includes('.so')) {
         throw new Error(
-          `Không launch được Chromium (thiếu shared library: ${message}). Đang dùng @sparticuz/chromium-min ` +
-            `với remote pack "${remotePackUrl}" - kiểm tra: (1) URL này còn tồn tại và trả về đúng file ` +
-            `.tar cho version Chromium tương ứng (nếu bạn set CHROMIUM_REMOTE_EXEC_PATH riêng, tự host lại ` +
-            `file .tar/.tar.br), (2) /tmp của function chưa bị đầy (giới hạn ~512MB trên Vercel, dọn cache cũ ` +
-            `nếu cold start liên tục), (3) region function có ra được internet để tải file (không bị chặn ` +
-            `bởi allowed-domains/network policy nào).`,
+          `Không launch được Chromium (thiếu shared library: ${message}). Đang dùng @sparticuz/chromium ` +
+            `- kiểm tra: (1) package đã được liệt kê trong ` +
+            `serverExternalPackages của next.config.ts, (2) /tmp của function chưa bị đầy ` +
+            `(giới hạn ~512MB trên Vercel, dọn cache cũ nếu cold start liên tục), ` +
+            `(3) region function có ra được internet để tải file (không bị chặn bởi ` +
+            `allowed-domains/network policy nào), (4) Tắt Fluid Compute trong Vercel Dashboard.`,
         );
       }
       if (message.includes('fetch failed') || message.includes('ENOTFOUND') || message.includes('ETIMEDOUT')) {
         throw new Error(
-          `Không tải được Chromium pack từ "${remotePackUrl}" lúc cold start (${message}). Kiểm tra network ` +
-            `egress của function và tính đúng đắn của URL/version, hoặc tự host file pack.tar ở nơi khác và ` +
-            `set biến môi trường CHROMIUM_REMOTE_EXEC_PATH.`,
+          `Không tải được Chromium pack lúc cold start (${message}). Kiểm tra network egress của ` +
+            `function, hoặc tự host file pack.tar ở nơi khác và set biến môi trường ` +
+            `CHROMIUM_REMOTE_PACK.`,
         );
       }
       throw err;
