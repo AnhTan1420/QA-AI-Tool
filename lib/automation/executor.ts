@@ -1,8 +1,8 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import os from 'os';
-import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwright'; // ← FIX: static import
-import { createClient } from '@supabase/supabase-js';
+import { execSync } from 'child_process'; // ← FIX: static import, bỏ inline require
+import { chromium, firefox, webkit, Browser, BrowserContext, Page } from 'playwright';
 
 const TMP_DIR = path.join(os.tmpdir(), 'qajd-playwright-scripts');
 
@@ -98,7 +98,6 @@ export default defineConfig({
       process.env.TEST_PASSWORD = credentials.password;
     }
 
-    const { execSync } = require('child_process');
     let testOutput = '';
     let testError = '';
 
@@ -188,7 +187,10 @@ export async function uploadScreenshot(
   } catch (err) { console.error('Upload screenshot failed:', err); return null; }
 }
 
-export async function crawlPageForDiscovery(url: string, environment: 'chromium' | 'firefox' | 'webkit' = 'chromium') {
+export async function crawlPageForDiscovery(
+  url: string,
+  environment: 'chromium' | 'firefox' | 'webkit' = 'chromium'
+): Promise<{ url: string; title: string; domSnapshot: any[]; screenshot: string }> {
   const browserType = { chromium, firefox, webkit }[environment];
   const browser = await browserType.launch({ headless: true });
   const context = await browser.newContext();
@@ -206,7 +208,9 @@ export async function crawlPageForDiscovery(url: string, environment: 'chromium'
         attributes: Array.from(el.attributes).map(a => ({ name: a.name, value: a.value })),
       })).slice(0, 50);
     });
-    const screenshot = await page.screenshot({ fullPage: true, encoding: 'base64' });
+    // ← FIX: Buffer → base64 string rõ ràng
+    const screenshotBuffer = await page.screenshot({ fullPage: true });
+    const screenshot = screenshotBuffer.toString('base64');
     return { url: page.url(), title: await page.title(), domSnapshot, screenshot };
   } finally { await browser.close(); }
 }
@@ -220,11 +224,9 @@ export async function captureStorageStateFromLoginScript(
   const context = await browser.newContext();
   const page = await context.newPage();
   try {
-    const tmpDir = path.join(os.tmpdir(), 'qajd-login-scripts');
-    await fs.mkdir(tmpDir, { recursive: true });
-    const scriptPath = path.join(tmpDir, `login-${Date.now()}.js`);
-    await fs.writeFile(scriptPath, `module.exports = async (page) => { ${loginScript} };`);
-    const runLogin = require(scriptPath);
+    // ← FIX: Dùng AsyncFunction thay vì write file + dynamic require (tránh Critical dependency warning)
+    const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+    const runLogin = new AsyncFunction('page', loginScript);
     await runLogin(page);
     await page.waitForTimeout(2000);
     const state = await context.storageState();
