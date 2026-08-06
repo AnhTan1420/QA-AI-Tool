@@ -42,7 +42,8 @@ async function executeAndPersist(
     .single();
 
   let credentials = script.credentials ?? undefined;
-  if (credentials?.password?.startsWith('ey') || credentials?.password?.length > 50) {
+  // app/api/automation/runs/route.ts — Sửa dòng 45
+  if (credentials?.password?.startsWith('ey') || (credentials?.password?.length ?? 0) > 50) {
     try {
       credentials = decryptCredentials(credentials);
     } catch {
