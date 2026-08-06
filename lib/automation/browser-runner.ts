@@ -53,31 +53,40 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
   assertBrowserAllowed(browserChoice);
 
   if (IS_SERVERLESS) {
-    // playwright-core ships no browser binaries (tiny install footprint);
-    // @sparticuz/chromium supplies a Chromium build + the exact launch flags
-    // required to run inside a Lambda/Vercel-style function filesystem.
+    // playwright-core ships no browser binaries (tiny install footprint).
+    // @sparticuz/chromium-min (NOT the full @sparticuz/chromium) supplies the
+    // launch flags but ships zero binary bytes itself - the actual Chromium
+    // pack.tar is fetched from CHROMIUM_REMOTE_EXEC_PATH at cold start and
+    // cached in /tmp. This is required on Vercel: the full @sparticuz/chromium
+    // package bundled directly pushes these routes' function size past
+    // Vercel's limit, causing the deployed bundle to silently lose files
+    // (libnss3.so and friends) even with outputFileTracingIncludes in place.
     const { chromium } = await import('playwright-core');
-    const sparticuzChromium = (await import('@sparticuz/chromium')).default;
-    const executablePath = await sparticuzChromium.executablePath();
+    const sparticuzChromium = (await import('@sparticuz/chromium-min')).default;
+    const remotePackUrl =
+      process.env.CHROMIUM_REMOTE_EXEC_PATH ??
+      'https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar';
     let browser;
     try {
+      const executablePath = await sparticuzChromium.executablePath(remotePackUrl);
       browser = await chromium.launch({ args: sparticuzChromium.args, executablePath, headless: true });
     } catch (err: any) {
       const message = String(err?.message ?? err);
       if (message.includes('shared object file') || message.includes('.so')) {
-        // Classic symptom: @sparticuz/chromium's bundled shared libraries
-        // (bin/*.tar.br, extracted to /tmp at cold start) didn't make it into
-        // the deployed function bundle - see the outputFileTracingIncludes
-        // entry for this route in next.config.ts. If that's already in place
-        // and this still happens, the function bundle may be exceeding
-        // Vercel's size limit with the full binary included; consider
-        // switching to `@sparticuz/chromium-min` (fetches the binary from a
-        // remote URL at cold start instead of bundling it) per its README.
         throw new Error(
-          `Không launch được Chromium (thiếu shared library: ${message}). Kiểm tra next.config.ts đã có ` +
-            `outputFileTracingIncludes cho route này trỏ tới node_modules/@sparticuz/chromium/**/* chưa - ` +
-            `nếu vẫn lỗi sau khi deploy lại, function bundle có thể đang vượt giới hạn kích thước của Vercel, ` +
-            `cân nhắc dùng @sparticuz/chromium-min (tải binary từ URL ngoài lúc cold start).`,
+          `Không launch được Chromium (thiếu shared library: ${message}). Đang dùng @sparticuz/chromium-min ` +
+            `với remote pack "${remotePackUrl}" - kiểm tra: (1) URL này còn tồn tại và trả về đúng file ` +
+            `.tar cho version Chromium tương ứng (nếu bạn set CHROMIUM_REMOTE_EXEC_PATH riêng, tự host lại ` +
+            `file .tar/.tar.br), (2) /tmp của function chưa bị đầy (giới hạn ~512MB trên Vercel, dọn cache cũ ` +
+            `nếu cold start liên tục), (3) region function có ra được internet để tải file (không bị chặn ` +
+            `bởi allowed-domains/network policy nào).`,
+        );
+      }
+      if (message.includes('fetch failed') || message.includes('ENOTFOUND') || message.includes('ETIMEDOUT')) {
+        throw new Error(
+          `Không tải được Chromium pack từ "${remotePackUrl}" lúc cold start (${message}). Kiểm tra network ` +
+            `egress của function và tính đúng đắn của URL/version, hoặc tự host file pack.tar ở nơi khác và ` +
+            `set biến môi trường CHROMIUM_REMOTE_EXEC_PATH.`,
         );
       }
       throw err;
