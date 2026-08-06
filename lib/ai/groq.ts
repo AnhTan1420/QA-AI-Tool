@@ -1,10 +1,6 @@
 import Groq from "groq-sdk";
 import { extractJson } from "./parse";
 
-/**
- * Fallback toc do cao khi Gemini rate-limit. Danh sach model duoc truyen tu
- * ben ngoai (provider.ts) - khong hard-code o day.
- */
 export async function generateWithGroq(
   systemPrompt: string,
   userPrompt: string,

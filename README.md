@@ -1,3 +1,4 @@
+Built by **Jordan Le** (Le Van Anh Tan)
 # QAJD — AI Test Case Generator & QA Toolkit
 
 > An internal QA platform that leverages AI to generate test cases with an independent Senior QA Review Agent for coverage scoring, a project-based test case library, and a client-side QA Utility Toolkit.
@@ -130,6 +131,7 @@ npm run dev
 | RAG Support | Vector embeddings for semantic search and retrieval (DB + `/api/ai/embed` ready, not yet wired into the UI) |
 | QA Utilities | JSON formatter, Base64, UUID, Regex tester, Hash generator (SHA-1/256), Timestamp converter, Fake File generator, SG NRIC/FIN generator & validator, Lorem Ipsum generator |
 | Team Management | Role-based project access (`qa` / `admin`) with email invitation |
+| Playwright Automation Agent | Generate, run, and maintain Playwright TypeScript automation scripts from any test case — grounded in a real, server-inspected DOM/element map, with screenshot capture and an annotated failure callout on the "Automation" tab |
 | Bilingual UI | Full Vietnamese/English UI toggle (`components/layout/language-toggle.tsx`) |
 | OAuth & Email Auth | Supabase Auth with Google OAuth and email/password |
 
@@ -143,6 +145,7 @@ Backend:      Next.js API Routes + Server Components
 Database:     Supabase PostgreSQL + pgvector
 Auth:         Supabase Auth (Email/Password + Google OAuth)
 AI/LLM:       Google Gemini + Groq (with automatic fallback)
+Automation:   Playwright (playwright-core + @sparticuz/chromium on serverless, full `playwright` when self-hosted)
 Validation:   Zod (all AI I/O)
 Deployment:   Vercel / Self-hosted
 ```
@@ -162,7 +165,7 @@ QA-AI-Tool/
 │   │   ├── projects/              # Project list + create
 │   │   │   └── [projectId]/
 │   │   │       ├── generate/      # AI generation wizard
-│   │   │       ├── test-cases/    # Test case library (list + detail)
+│   │   │       ├── test-cases/    # Test case library (list + detail, incl. Automation tab)
 │   │   │       └── team/          # Member management
 │   │   └── tools/                 # QA Utility Toolkit
 │   ├── api/
@@ -170,23 +173,26 @@ QA-AI-Tool/
 │   │   │   ├── generate/          # Generation Agent
 │   │   │   ├── enhance/           # Review / Enhance Agent
 │   │   │   ├── documents/parse/   # AI Document Reader
-│   │   │   └── embed/             # RAG embeddings
+│   │   │   ├── embed/             # RAG embeddings
+│   │   │   └── playwright/        # Playwright Codegen Agent
 │   │   ├── ai-reviews/            # Persist review results
 │   │   ├── projects/              # Project CRUD + members
 │   │   ├── test-case-sets/        # Requirement + set creation
-│   │   └── test-cases/            # Test case CRUD + comments + versions
+│   │   ├── automation/             # Playwright inspect + run endpoints
+│   │   └── test-cases/            # Test case CRUD + comments + versions + automation scripts/runs
 │   ├── layout.tsx
 │   └── page.tsx
 ├── components/
 │   ├── auth/                      # Sign-out button
 │   ├── layout/                    # Nav links, language toggle
 │   ├── team/                      # Team management (hook + UI)
-│   ├── test-case/                 # Generation wizard, version history, comments
+│   ├── test-case/                 # Generation wizard, version history, comments, Automation tab
 │   ├── test-case-form/            # Create/edit test case form
 │   ├── test-case-list/            # Library list view (hook + table + pagination)
 │   └── tools/                     # QA Utility Toolkit (9 tools)
 ├── lib/
 │   ├── ai/                        # LLM providers, prompts, parsing
+│   ├── automation/                # Playwright browser runner (inspect + run), screenshot storage
 │   ├── documents/                 # AI Document Reader helpers
 │   ├── api/                       # Shared fetch helper
 │   ├── i18n/                      # Vietnamese / English dictionaries
@@ -340,6 +346,10 @@ GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
 # AI Document Reader (optional) — server-side fallback Figma token used when the
 # user doesn't paste their own Personal Access Token in the generation wizard.
 FIGMA_ACCESS_TOKEN=your-figma-personal-access-token
+
+# Playwright Automation Agent (Phase 3) — see lib/automation/browser-runner.ts
+AI_MODEL_PLAYWRIGHT_CODEGEN=gemini-3.6-flash
+AUTOMATION_RUNTIME=serverless   # 'serverless' (Chromium only, default on Vercel) or 'local' (all 3 engines — self-hosted only)
 ```
 
 > Every task (`generation` / `review` / `classification`) tries its own Gemini model first, then `AI_MODEL_FALLBACK`, then Groq's `GROQ_MODEL_PRIMARY` → `GROQ_MODEL_FALLBACK` — see `lib/ai/provider.ts`.
@@ -413,6 +423,11 @@ FIGMA_ACCESS_TOKEN=your-figma-personal-access-token
 | `/api/ai/enhance` | `POST` | Review (`mode: "review"`) or rewrite (`mode: "enhance"`) a set of test cases |
 | `/api/ai/documents/parse` | `POST` | AI Document Reader — atomize a Figma file, a Markdown/logic-doc/FS (.md/.txt/.pdf/.docx), or an ERD/diagram image into `DocumentAtom`s for the Generation Agent |
 | `/api/ai/embed` | `POST` | Create a vector embedding for RAG (backend ready, not yet called by the UI) |
+| `/api/ai/playwright` | `POST` | Playwright Codegen Agent — generate a `@playwright/test` script grounded in an inspected element map, saved as a new `automation_scripts` version |
+| `/api/automation/inspect` | `POST` | Launch a real browser server-side, navigate + auth, and extract a DOM/element map |
+| `/api/automation/run` | `POST` | Execute a generated (or ad-hoc) Playwright script and capture a screenshot + failure details into `automation_runs` |
+| `/api/test-cases/[id]/automation/scripts` | `GET` | Version history of generated Playwright scripts for a test case |
+| `/api/test-cases/[id]/automation/runs` | `GET` | Run history (pass/fail, screenshots, failure details) for a test case |
 | `/api/ai-reviews` | `POST` | Persist a review result against a test case set |
 | `/api/projects` | `GET`/`POST` | List / create projects |
 | `/api/projects/[projectId]` | `DELETE` | Delete a project |
@@ -513,13 +528,16 @@ WHERE tcs.project_id = 'uuid';
 - **AI Document Reader** — Reads and parses Figma designs (live via the Figma REST API), Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams (PDF/DOCX/image) for smarter test case generation. Each source is "atomized" into `DocumentAtom`s (`lib/validators/document.ts`); the Generation Agent is required to map every atom into a test case's `source_requirement_ids` (PHASE 0.5 of `lib/ai/prompts/generation-agent.ts`), and `/api/ai/generate` cross-checks that mapping server-side (`lib/documents/coverage.ts`) and returns a `document_coverage` score instead of just trusting the model's word. See `components/test-case/generate-workspace/document-reader-panel.tsx` and `app/api/ai/documents/parse/route.ts`.
 - **Can access project environment** — read the UI, auto create test data
 
-### Phase 3 — Planned
+### Phase 3 — Implemented
 
-- **Automation test with AI**
-  1. Open a test case detail
-  2. Click **Generate Playwright Code**
-  3. The AI will produce executable Playwright TypeScript code
-  4. Copy and use in test suite
+- **Automation test with AI** ✅
+  1. Open a test case detail → **Automation** tab
+  2. Configure the test environment (browser, target URL, optional cookie/session token or login credentials) and click **Inspect target page** — QAJD launches a real headless browser server-side and extracts a DOM/element map (role, accessible name, `data-testid`/id, tag)
+  3. Click **Generate Playwright Code** — the Playwright Codegen Agent produces a complete `@playwright/test` TypeScript file grounded in that element map (never a hallucinated selector), shown with syntax highlighting and a **Copy** button for your external suite
+  4. Click **Run Automation Test** to execute it right inside QAJD: on pass, the final-state screenshot is stored; on fail, the failing element is highlighted in the screenshot alongside structured failure details (error message, selector, which step)
+  5. Every generation is kept as a version (`automation_scripts`) and every run is kept in history (`automation_runs`), both visible from the same tab — an "Automation" status badge (not generated / generated / passed / failed) also shows on the test case in the library list
+
+See `lib/ai/prompts/playwright-agent.ts`, `lib/automation/browser-runner.ts`, and the **Architecture Decision** comment at the top of that file for why Vercel serverless deployments are Chromium-only (Firefox/Edge require self-hosting with `AUTOMATION_RUNTIME=local`).
 
 ---
 

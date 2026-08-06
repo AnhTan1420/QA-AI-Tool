@@ -35,3 +35,16 @@ export const PRIORITY_STYLES: Record<string, string> = {
 export function getPriorityStyle(value: string) {
   return PRIORITY_STYLES[value] ?? PRIORITY_STYLES.Normal;
 }
+
+// ── Automation status (Playwright Automation Agent — Phase 3 roadmap item) ──
+// Badge shown on the test case card/library list, see components/test-case-list/test-case-table.tsx.
+export const AUTOMATION_STATUS_STYLES: Record<string, string> = {
+  not_generated: 'bg-slate-50 text-slate-400 border border-slate-200',
+  generated: 'bg-blue-50 text-blue-700 border border-blue-200',
+  passed: 'bg-green-50 text-green-700 border border-green-200',
+  failed: 'bg-red-50 text-red-700 border border-red-200',
+};
+
+export function getAutomationStatusStyle(value: string | undefined) {
+  return AUTOMATION_STATUS_STYLES[value ?? 'not_generated'] ?? AUTOMATION_STATUS_STYLES.not_generated;
+}

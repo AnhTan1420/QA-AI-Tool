@@ -476,183 +476,145 @@ end $$;
 -- ----------------------------------------------------------------------------
 alter table test_case_sets add column if not exists analysis jsonb;
 
--- =========================================================================
--- Automation Agent: browser profiles, scripts, runs, healing logs
--- =========================================================================
+-- ============================================================================
+-- Phase 3 roadmap item: "Automation test with AI" (Playwright Automation Agent).
+-- Xem lib/ai/prompts/playwright-agent.ts, lib/validators/playwright.ts,
+-- lib/automation/browser-runner.ts, app/api/ai/playwright + app/api/automation/*.
+--
+-- automation_scripts: 1 ban ghi = 1 lan "Generate Playwright Code" cho 1 test case.
+--   Giong tinh than test_case_versions - KHONG BAO GIO ghi de, luon insert version
+--   moi (version tang dan) de QA xem lai lich su / diff cac lan generate.
+-- automation_runs: 1 ban ghi = 1 lan "Run Automation Test". Luu status, thoi gian
+--   chay, screenshot (path trong storage bucket automation-screenshots, KHONG luu
+--   public URL vi bucket private), chi tiet loi (neu fail/error), va snapshot code
+--   THUC SU da chay (co the khac ban moi nhat trong automation_scripts neu QA sua tay).
+--
+-- Ca 2 bang deu join qua test_cases -> test_case_sets -> project_members giong het
+-- pattern cua test_case_versions/comments (xem RLS ben duoi) - test_cases van KHONG
+-- co project_id truc tiep, tuan thu dung "Core Principle #4" cua README.
+-- ============================================================================
 
-create table if not exists browser_profiles (
-  id uuid primary key default gen_random_uuid(),
-  project_id uuid not null references projects(id) on delete cascade,
-  name text not null,
-  storage_state text,
-  description text,
-  created_by uuid not null references profiles(id),
-  created_at timestamptz not null default now()
-);
+-- Badge trang thai automation tren the test case (library list) - xem
+-- components/test-case-list/test-case-table.tsx. Cap nhat boi app/api/ai/playwright
+-- (not_generated -> generated) va app/api/automation/run (-> passed | failed).
+alter table test_cases add column if not exists automation_status text not null default 'not_generated'
+  check (automation_status in ('not_generated', 'generated', 'passed', 'failed'));
 
 create table if not exists automation_scripts (
   id uuid primary key default gen_random_uuid(),
-  test_case_id uuid not null references test_cases(id) on delete cascade,
-  test_case_set_id uuid not null references test_case_sets(id) on delete cascade,
-  browser_profile_id uuid references browser_profiles(id) on delete set null,
-  environment varchar(20) not null check (environment in ('chromium', 'firefox', 'webkit')),
-  target_url text not null,
-  cookie_token text,
-  credentials jsonb,
-  generated_code text not null,
-  status varchar(20) not null default 'draft'
-    check (status in ('draft', 'generated', 'verified', 'deprecated')),
-  baseline_screenshot_path text,
-  created_by uuid not null references profiles(id),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  test_case_id uuid references test_cases(id) on delete cascade,
+  version int not null default 1,
+  code text not null,
+  imports_used jsonb default '[]'::jsonb,
+  selectors_used jsonb default '[]'::jsonb,
+  warnings jsonb default '[]'::jsonb,
+  -- environment.public shape only (browser/target_url/auth_mode) - KHONG BAO GIO
+  -- chua cookie_token/password, xem toPublicEnvironment() trong lib/validators/playwright.ts.
+  environment jsonb,
+  -- snapshot cua DOM/element map dung lam grounding context cho lan generate nay (audit trail).
+  element_map jsonb,
+  model_used text,
+  generated_by uuid references profiles(id),
+  created_at timestamptz default now()
 );
 
 create table if not exists automation_runs (
   id uuid primary key default gen_random_uuid(),
-  script_id uuid not null references automation_scripts(id) on delete cascade,
-  status varchar(20) not null
-    check (status in ('running', 'passed', 'failed', 'error', 'timeout')),
-  execution_log text,
-  screenshot_path text,
-  annotated_screenshot_path text,
-  bug_analysis jsonb,
-  visual_regression_score numeric(5,2),
-  duration_ms integer,
-  healing_log jsonb,
-  browser_results jsonb,
-  created_by uuid not null references profiles(id),
-  created_at timestamptz not null default now()
-);
-
-create table if not exists automation_script_versions (
-  id uuid primary key default gen_random_uuid(),
-  script_id uuid not null references automation_scripts(id) on delete cascade,
-  code text not null,
-  change_summary text,
-  changed_by uuid not null references profiles(id),
-  created_at timestamptz not null default now()
-);
-
-create table if not exists automation_healing_logs (
-  id uuid primary key default gen_random_uuid(),
-  run_id uuid not null references automation_runs(id) on delete cascade,
-  script_id uuid not null references automation_scripts(id) on delete cascade,
-  failed_selector text not null,
-  healed_selector text,
-  healing_confidence numeric(3,2),
-  screenshot_path text,
-  applied boolean default false,
-  created_at timestamptz not null default now()
+  test_case_id uuid references test_cases(id) on delete cascade,
+  script_id uuid references automation_scripts(id) on delete set null,
+  status text not null check (status in ('passed', 'failed', 'error')),
+  duration_ms int,
+  -- PATH trong bucket automation-screenshots (vd '<test_case_id>/<run_id>.png'), khong
+  -- phai URL public - bucket la private, UI luon xin signed URL moi khi hien thi.
+  screenshot_url text,
+  failure_details jsonb,
+  code_snapshot text not null,
+  run_by uuid references profiles(id),
+  started_at timestamptz default now(),
+  finished_at timestamptz
 );
 
 create index if not exists idx_automation_scripts_test_case_id on automation_scripts(test_case_id);
-create index if not exists idx_automation_scripts_test_case_set_id on automation_scripts(test_case_set_id);
-create index if not exists idx_automation_runs_script_id on automation_runs(script_id);
-create index if not exists idx_automation_runs_created_at on automation_runs(created_at desc);
-create index if not exists idx_browser_profiles_project_id on browser_profiles(project_id);
-create index if not exists idx_automation_healing_logs_run_id on automation_healing_logs(run_id);
+create index if not exists idx_automation_runs_test_case_id on automation_runs(test_case_id);
 
-alter table browser_profiles enable row level security;
 alter table automation_scripts enable row level security;
 alter table automation_runs enable row level security;
-alter table automation_script_versions enable row level security;
-alter table automation_healing_logs enable row level security;
-
-drop policy if exists browser_profiles_member_access on browser_profiles;
-create policy browser_profiles_member_access on browser_profiles for all using (
-  is_project_member(browser_profiles.project_id)
-) with check (
-  is_project_member(browser_profiles.project_id)
-);
 
 drop policy if exists automation_scripts_member_access on automation_scripts;
 create policy automation_scripts_member_access on automation_scripts for all using (
   exists (
-    select 1 from test_case_sets s
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
     join project_members pm on pm.project_id = s.project_id
-    where s.id = automation_scripts.test_case_set_id and pm.user_id = auth.uid()
+    where tc.id = automation_scripts.test_case_id and pm.user_id = auth.uid()
   )
 ) with check (
   exists (
-    select 1 from test_case_sets s
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
     join project_members pm on pm.project_id = s.project_id
-    where s.id = automation_scripts.test_case_set_id and pm.user_id = auth.uid()
+    where tc.id = automation_scripts.test_case_id and pm.user_id = auth.uid()
   )
 );
 
 drop policy if exists automation_runs_member_access on automation_runs;
 create policy automation_runs_member_access on automation_runs for all using (
   exists (
-    select 1 from automation_scripts scr
-    join test_case_sets s on s.id = scr.test_case_set_id
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
     join project_members pm on pm.project_id = s.project_id
-    where scr.id = automation_runs.script_id and pm.user_id = auth.uid()
+    where tc.id = automation_runs.test_case_id and pm.user_id = auth.uid()
   )
 ) with check (
   exists (
-    select 1 from automation_scripts scr
-    join test_case_sets s on s.id = scr.test_case_set_id
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
     join project_members pm on pm.project_id = s.project_id
-    where scr.id = automation_runs.script_id and pm.user_id = auth.uid()
+    where tc.id = automation_runs.test_case_id and pm.user_id = auth.uid()
   )
 );
 
-drop policy if exists automation_script_versions_member_access on automation_script_versions;
-create policy automation_script_versions_member_access on automation_script_versions for all using (
-  exists (
-    select 1 from automation_scripts scr
-    join test_case_sets s on s.id = scr.test_case_set_id
-    join project_members pm on pm.project_id = s.project_id
-    where scr.id = automation_script_versions.script_id and pm.user_id = auth.uid()
-  )
-) with check (
-  exists (
-    select 1 from automation_scripts scr
-    join test_case_sets s on s.id = scr.test_case_set_id
-    join project_members pm on pm.project_id = s.project_id
-    where scr.id = automation_script_versions.script_id and pm.user_id = auth.uid()
-  )
-);
-
-drop policy if exists automation_healing_logs_member_access on automation_healing_logs;
-create policy automation_healing_logs_member_access on automation_healing_logs for all using (
-  exists (
-    select 1 from automation_runs r
-    join automation_scripts scr on scr.id = r.script_id
-    join test_case_sets s on s.id = scr.test_case_set_id
-    join project_members pm on pm.project_id = s.project_id
-    where r.id = automation_healing_logs.run_id and pm.user_id = auth.uid()
-  )
-) with check (
-  exists (
-    select 1 from automation_runs r
-    join automation_scripts scr on scr.id = r.script_id
-    join test_case_sets s on s.id = scr.test_case_set_id
-    join project_members pm on pm.project_id = s.project_id
-    where r.id = automation_healing_logs.run_id and pm.user_id = auth.uid()
-  )
-);
-
--- Supabase Storage: automation-screenshots bucket (private, project-scoped paths)
+-- ----------------------------------------------------------------------------
+-- Storage: bucket rieng cho screenshot cua automation run, PRIVATE (khong public) -
+-- object name convention: '<test_case_id>/<run_id>.png' (xem lib/automation/screenshot-storage.ts),
+-- de policy duoi day co the tach test_case_id ra tu ten object va doi chieu project_members
+-- (giong het "join qua test_case_sets" cua moi bang khac trong file nay).
+-- ----------------------------------------------------------------------------
 insert into storage.buckets (id, name, public)
 values ('automation-screenshots', 'automation-screenshots', false)
 on conflict (id) do nothing;
 
+create or replace function public.can_access_automation_screenshot(object_name text)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
+    join project_members pm on pm.project_id = s.project_id
+    where tc.id::text = split_part(object_name, '/', 1) and pm.user_id = auth.uid()
+  );
+$$;
+
 drop policy if exists automation_screenshots_select on storage.objects;
 create policy automation_screenshots_select on storage.objects for select using (
-  bucket_id = 'automation-screenshots'
-  and is_project_member((storage.foldername(name))[1]::uuid)
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
 );
 
 drop policy if exists automation_screenshots_insert on storage.objects;
 create policy automation_screenshots_insert on storage.objects for insert with check (
-  bucket_id = 'automation-screenshots'
-  and is_project_member((storage.foldername(name))[1]::uuid)
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
+);
+
+drop policy if exists automation_screenshots_update on storage.objects;
+create policy automation_screenshots_update on storage.objects for update using (
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
 );
 
 drop policy if exists automation_screenshots_delete on storage.objects;
 create policy automation_screenshots_delete on storage.objects for delete using (
-  bucket_id = 'automation-screenshots'
-  and is_project_member((storage.foldername(name))[1]::uuid)
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
 );

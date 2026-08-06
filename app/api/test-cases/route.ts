@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('test_cases')
-    .select('*, test_case_sets!inner(project_id), automation_scripts(id)')
+    .select('*, test_case_sets!inner(project_id)')
     .eq('test_case_sets.project_id', projectId)
     .order('created_at', { ascending: false });
 

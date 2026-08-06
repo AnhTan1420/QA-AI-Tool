@@ -1,0 +1,112 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useLanguage } from '@/lib/i18n/language-context';
+
+type ScriptEntry = {
+  id: string;
+  version: number;
+  code: string;
+  warnings: string[];
+  created_at: string;
+  profiles: { full_name: string | null } | null;
+};
+
+type RunEntry = {
+  id: string;
+  status: 'passed' | 'failed' | 'error';
+  duration_ms: number;
+  screenshot_url: string | null;
+  failure_details: { error_message: string; selector?: string } | null;
+  started_at: string;
+  profiles: { full_name: string | null } | null;
+};
+
+/** Read-only history of past generated script versions + past run results for this test case (see requirement 6: "view/edit source after a run"). */
+export function AutomationHistory({ testCaseId }: { testCaseId: string }) {
+  const { t } = useLanguage();
+  const h = t.automation.history;
+
+  const [scripts, setScripts] = useState<ScriptEntry[]>([]);
+  const [runs, setRuns] = useState<RunEntry[]>([]);
+  const [expandedScriptId, setExpandedScriptId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      const [scriptsRes, runsRes] = await Promise.all([
+        fetch(`/api/test-cases/${testCaseId}/automation/scripts`).then((r) => r.json()),
+        fetch(`/api/test-cases/${testCaseId}/automation/runs`).then((r) => r.json()),
+      ]);
+      if (cancelled) return;
+      if (scriptsRes.success) setScripts(scriptsRes.data ?? []);
+      if (runsRes.success) setRuns(runsRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [testCaseId]);
+
+  if (loading) return null;
+  if (scripts.length === 0 && runs.length === 0) return null;
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      {scripts.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white p-6">
+          <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-700">{h.scriptsHeading}</h3>
+          <ol className="space-y-2">
+            {scripts.map((s) => {
+              const isExpanded = expandedScriptId === s.id;
+              return (
+                <li key={s.id} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedScriptId(isExpanded ? null : s.id)}
+                    className="flex w-full items-center justify-between gap-3 text-left text-xs"
+                  >
+                    <span className="font-semibold text-gray-800">
+                      {t.automation.code.versionLabel(s.version)}
+                      <span className="ml-2 font-normal text-gray-400">{new Date(s.created_at).toLocaleString()}</span>
+                    </span>
+                    <span className="text-gray-400">{s.profiles?.full_name ?? ''}</span>
+                  </button>
+                  {isExpanded && (
+                    <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
+                      {s.code}
+                    </pre>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      )}
+
+      {runs.length > 0 && (
+        <div className="rounded-xl border border-gray-200 bg-white p-6">
+          <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-700">{h.runsHeading}</h3>
+          <ol className="space-y-2">
+            {runs.map((run) => (
+              <li key={run.id} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50/60 p-3 text-xs">
+                <span
+                  className={`rounded-full px-2 py-0.5 font-bold ${
+                    run.status === 'passed' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                  }`}
+                >
+                  {t.automation.run.status[run.status]}
+                </span>
+                <span className="text-gray-500">{t.automation.run.durationLabel(run.duration_ms)}</span>
+                <span className="ml-auto text-gray-400">{new Date(run.started_at).toLocaleString()}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  );
+}

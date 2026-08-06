@@ -3,9 +3,6 @@ import { extractJson } from "./parse";
 
 /**
  * Goi Gemini o che do multimodal (text + anh) de doc diagram/ERD/UI mockup.
- * Cung 1 co che retry-qua-model-ke-tiep nhu generateWithGemini (lib/ai/gemini.ts),
- * nhung KHONG co fallback sang Groq vi groq-sdk trong project nay chi dung cho
- * text — vision la Gemini-only (xem lib/ai/provider.ts::runDocumentVisionAgent).
  */
 export type VisionImageInput = { mimeType: string; base64Data: string };
 

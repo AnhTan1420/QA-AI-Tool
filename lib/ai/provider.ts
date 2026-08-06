@@ -4,33 +4,17 @@ import { generateWithGroq } from "./groq";
 import { generateWithGeminiVision, type VisionImageInput } from "./vision";
 
 export type { VisionImageInput };
-export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction' | 'vision';
+export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction' | 'playwright_codegen';
 
-/**
- * Model routing theo tác vụ (mục II của spec):
- * - generation / review: model mạnh nhất (AI_MODEL_GENERATION / AI_MODEL_REVIEW)
- * - classification: model nhẹ/rẻ hơn (AI_MODEL_CLASSIFICATION)
- * - document_extraction: model đọc/atomize tài liệu (Figma/Markdown/FS/logic-doc/
- *   PDF/DOCX + ảnh ERD/diagram/UI mockup) cho AI Document Reader — dùng
- *   AI_MODEL_DOCUMENT_EXTRACTION, PHẢI là model Gemini hỗ trợ multimodal (đa số
- *   dòng Gemini flash đều hỗ trợ) vì nhánh ảnh (runDocumentVisionAgent) tái sử
- *   dụng cùng danh sách model này.
- * Mỗi biến đều đọc từ .env - không hard-code model ID trong code.
- * 
- * Lưu ý: maxOutputTokens được cấu hình cố định ở từng provider:
- *   - Gemini: 8192 tokens (lib/ai/gemini.ts, lib/ai/vision.ts)
- *   - Groq: 8000 tokens   (lib/ai/groq.ts)
- * (Từng bị 4096/3500 - qua thấp, khien AI bi cat cut JSON giua chung khi document/
- * set test case co nhieu atom/case, gay loi "Expected ',' or ']' after array
- * element". Da tang len + them co che tu phuc hoi JSON bi cat trong lib/ai/parse.ts.)
- */
 function getGeminiModelsForTask(task: AITask): string[] {
   const primaryByTask: Record<AITask, string | undefined> = {
     generation: process.env.AI_MODEL_GENERATION,
     review: process.env.AI_MODEL_REVIEW,
     classification: process.env.AI_MODEL_CLASSIFICATION,
     document_extraction: process.env.AI_MODEL_DOCUMENT_EXTRACTION,
-    vision: process.env.AI_MODEL_VISION ?? process.env.AI_MODEL_DOCUMENT_EXTRACTION,
+    // Playwright Automation Agent (Phase 3 roadmap item) - dedicated model, falls back
+    // to AI_MODEL_FALLBACK -> Groq like every other task. Never hardcode a model id here.
+    playwright_codegen: process.env.AI_MODEL_PLAYWRIGHT_CODEGEN,
   };
   const primary = primaryByTask[task];
   const fallback = process.env.AI_MODEL_FALLBACK;
@@ -45,22 +29,11 @@ function getGeminiModelsForTask(task: AITask): string[] {
 }
 
 function getGroqModelsForTask(): string[] {
-  // Groq chỉ dùng như fallback tốc độ cao khi Gemini lỗi - dùng chung 1 cặp model
-  // cho mọi tác vụ, khai báo qua GROQ_MODEL_PRIMARY / GROQ_MODEL_FALLBACK.
   return [process.env.GROQ_MODEL_PRIMARY, process.env.GROQ_MODEL_FALLBACK].filter(
     (m): m is string => Boolean(m)
   );
 }
 
-/**
- * Gọi AI sinh JSON theo tác vụ (Gemini trước, fallback Groq khi Gemini lỗi hạ tầng/rate-limit).
- *
- * `responseSchema` (optional): Gemini Structured Output schema - chỉ có tác dụng
- * ở nhánh Gemini (xem lib/ai/gemini.ts); Groq không nhận tham số này, vẫn dùng
- * response_format: "json_object" như cũ. Hiện tại chỉ route generate truyền vào
- * (xem lib/ai/prompts/generation-response-schema.ts) - các tác vụ khác gọi
- * runAIAgent như cũ (undefined), hành vi không đổi.
- */
 export async function runAIAgent(
   fullPrompt: string,
   task: AITask = 'generation',
@@ -86,8 +59,6 @@ export async function runAIAgent(
 
 /**
  * Gọi Gemini ở chế độ vision để đọc ảnh diagram/ERD/UI mockup cho AI Document
- * Reader (xem lib/documents/, lib/ai/prompts/document-extraction-agent.ts).
- * KHÔNG fallback sang Groq — groq-sdk trong project này chỉ được dùng cho text.
  */
 export async function runDocumentVisionAgent(fullPrompt: string, images: VisionImageInput[]) {
   const systemPrompt = "You are a meticulous Document Vision Analyst for a QA test-case tool. Return ONLY valid JSON format.";
