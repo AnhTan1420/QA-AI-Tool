@@ -1,63 +1,71 @@
-import { NextResponse } from 'next/server';
-import { ZodError } from 'zod';
+// app/api/ai/automation/generate/route.ts
+// FIX: credentials phải JSON.stringify vì AutomationGenerationInput expect string
+
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { createClient } from '@/lib/supabase/server';
-import { generateAutomationRequestSchema } from '@/lib/validators/automation';
 import { runPlaywrightGenerationAgent } from '@/lib/automation/agents';
-import { fetchTestCaseWithContext } from '@/lib/automation/db-helpers';
 
-export const maxDuration = 300;
-export const runtime = 'nodejs';
+const GenerateSchema = z.object({
+  test_case_id: z.string().uuid(),
+  environment: z.enum(['chromium', 'firefox', 'webkit']),
+  target_url: z.string().url(),
+  cookie_token: z.string().optional(),
+  credentials: z.object({ username: z.string(), password: z.string() }).optional(),
+  browser_profile_id: z.string().uuid().optional(),
+  language: z.enum(['English', 'Vietnamese']).default('English'),
+});
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
-    const input = generateAutomationRequestSchema.parse(await req.json());
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    const body = await req.json();
+    const parsed = GenerateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid input', details: parsed.error.flatten().fieldErrors },
+        { status: 400 }
+      );
     }
 
-    const tc = await fetchTestCaseWithContext(input.test_case_id);
-    if (!tc) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
+    const input = parsed.data;
+
+    // Fetch test case + requirement
+    const { data: testCase, error: tcError } = await supabase
+      .from('test_cases')
+      .select('*, test_case_sets!inner(*)')
+      .eq('id', input.test_case_id)
+      .single();
+
+    if (tcError || !testCase) {
       return NextResponse.json({ success: false, error: 'Test case not found' }, { status: 404 });
     }
 
-    const sets = tc.test_case_sets as {
-      id: string;
-      project_id: string;
-      requirements?: { description?: string } | null;
-    };
-
-    const stepsText = (tc.steps as { step_number: number; action: string; expected_result: string }[])
-      .map((s) => `${s.step_number}. ${s.action} → ${s.expected_result}`)
-      .join('\n');
-
     const result = await runPlaywrightGenerationAgent({
-      title: tc.title,
-      steps: stepsText,
-      expected_result: tc.expected_result ?? '',
-      priority: tc.priority,
-      category: tc.category,
+      title: testCase.title,
+      steps: testCase.steps,
+      expected_result: testCase.expected_result,
+      priority: testCase.priority,
+      category: testCase.category,
       environment: input.environment,
       target_url: input.target_url,
       requires_auth: Boolean(input.credentials || input.cookie_token || input.browser_profile_id),
       cookie_token: input.cookie_token,
-      credentials: input.credentials,
-      requirement_description: sets.requirements?.description,
+      credentials: input.credentials ? JSON.stringify(input.credentials) : undefined, // ← FIX
+      has_profile: !!input.browser_profile_id,
+      requirement_description: testCase.test_case_sets?.requirement_description || '',
+      document_atoms: '',
     });
 
     return NextResponse.json({ success: true, data: result });
-  } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid input', details: error.issues },
-        { status: 400 },
-      );
-    }
-    const message = error instanceof Error ? error.message : 'Generation failed';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  } catch (error: any) {
+    console.error('Generate API Error:', error);
+    return NextResponse.json(
+      { success: false, error: error.message || 'Internal server error' },
+      { status: 500 }
+    );
   }
 }
