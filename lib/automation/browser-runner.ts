@@ -59,7 +59,29 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
     const { chromium } = await import('playwright-core');
     const sparticuzChromium = (await import('@sparticuz/chromium')).default;
     const executablePath = await sparticuzChromium.executablePath();
-    const browser = await chromium.launch({ args: sparticuzChromium.args, executablePath, headless: true });
+    let browser;
+    try {
+      browser = await chromium.launch({ args: sparticuzChromium.args, executablePath, headless: true });
+    } catch (err: any) {
+      const message = String(err?.message ?? err);
+      if (message.includes('shared object file') || message.includes('.so')) {
+        // Classic symptom: @sparticuz/chromium's bundled shared libraries
+        // (bin/*.tar.br, extracted to /tmp at cold start) didn't make it into
+        // the deployed function bundle - see the outputFileTracingIncludes
+        // entry for this route in next.config.ts. If that's already in place
+        // and this still happens, the function bundle may be exceeding
+        // Vercel's size limit with the full binary included; consider
+        // switching to `@sparticuz/chromium-min` (fetches the binary from a
+        // remote URL at cold start instead of bundling it) per its README.
+        throw new Error(
+          `Không launch được Chromium (thiếu shared library: ${message}). Kiểm tra next.config.ts đã có ` +
+            `outputFileTracingIncludes cho route này trỏ tới node_modules/@sparticuz/chromium/**/* chưa - ` +
+            `nếu vẫn lỗi sau khi deploy lại, function bundle có thể đang vượt giới hạn kích thước của Vercel, ` +
+            `cân nhắc dùng @sparticuz/chromium-min (tải binary từ URL ngoài lúc cold start).`,
+        );
+      }
+      throw err;
+    }
     const context = await browser.newContext();
     return { context, close: () => browser.close() };
   }
