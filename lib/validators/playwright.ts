@@ -26,6 +26,11 @@ export const environmentConfigSchema = z
   .object({
     browser: automationBrowserSchema,
     target_url: z.string().url('target_url phải là một URL hợp lệ'),
+    // Either a raw single value (injected as one cookie named "session" - fine for
+    // apps using one session cookie), OR a JSON array string
+    // '[{"name":"SID","value":"..."},...]' when the target needs several cookies at
+    // once (e.g. Google/YouTube auth uses SID/HSID/SSID/APISID/SAPISID and friends,
+    // not a single cookie). See lib/automation/browser-runner.ts#injectCookieIfPresent.
     cookie_token: z.string().optional(),
     login: z
       .object({
@@ -94,6 +99,18 @@ export const inspectionStepSchema = z.object({
 });
 export type InspectionStep = z.infer<typeof inspectionStepSchema>;
 
+// Whole-site crawl option: instead of (or in addition to) manually specified
+// inspection_steps, follow same-origin links breadth-first starting at target_url and
+// snapshot each page visited. Bounded by max_pages since a real crawl inside a single
+// request has to stay within the route's maxDuration - this is meant for "give me a
+// broad map of a small-to-medium site", not a full sitemap crawl of a large app.
+export const crawlOptionsSchema = z.object({
+  enabled: z.boolean().default(false),
+  max_pages: z.coerce.number().int().min(1).max(20).default(5), // includes the initial target_url page
+  max_depth: z.coerce.number().int().min(1).max(5).default(2), // link hops away from target_url
+});
+export type CrawlOptions = z.infer<typeof crawlOptionsSchema>;
+
 // ── Inspect endpoint (app/api/automation/inspect) ───────────────────────────
 export const inspectRequestSchema = z.object({
   environment: environmentConfigSchema,
@@ -101,6 +118,9 @@ export const inspectRequestSchema = z.object({
   // snapshots, so multi-page flows (login redirects, modals, wizards) end up
   // grounded in the element map instead of producing TODOs in the generated code.
   inspection_steps: z.array(inspectionStepSchema).max(10).optional(),
+  // Optional: after inspection_steps run, crawl same-origin links breadth-first and
+  // snapshot each page found (see crawlOptionsSchema).
+  crawl: crawlOptionsSchema.optional(),
 });
 
 export const inspectResponseDataSchema = z.object({
