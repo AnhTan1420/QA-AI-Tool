@@ -28,6 +28,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^2.3.0",
+    "typescript": "^5",
     "xlsx": "^0.18.5",
     "zod": "^3.23.0"
   },
@@ -39,7 +40,6 @@
     "eslint-config-next": "^14.2.0",
     "playwright": "^1.48.0",
     "postcss": "^8",
-    "tailwindcss": "^4.3.3",
-    "typescript": "^5"
+    "tailwindcss": "^4.3.3"
   }
 }

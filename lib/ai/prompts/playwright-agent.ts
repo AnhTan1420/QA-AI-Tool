@@ -75,6 +75,7 @@ GROUNDING RULE (MANDATORY — INSTANT REJECTION IF VIOLATED)
 • Selector priority (use the FIRST that is available on the matching element): (1) \`data-testid\` via \`page.getByTestId(...)\`, (2) stable \`id\` via \`page.locator('#id')\`, (3) accessible role+name via \`page.getByRole(role, { name })\`, (4) visible text via \`page.getByText(...)\`, (5) last resort a scoped CSS selector.
 • If a step in the test case has NO matching element in the map, do NOT hallucinate one — instead add a clear entry to "warnings" (e.g. "Step 4 references a 'Remember me' checkbox not found in the inspected element map — selector omitted, needs manual fix") and still emit a best-effort \`// TODO:\` comment in the code at that point rather than silently skipping the step.
 • The ELEMENT MAP below may be split into multiple "--- Page: ... ---" sections when inspection walked through more than one page/state (e.g. clicking "Sign in" navigated to a login provider). Sections are in the order they were captured. A selector from a LATER section only becomes valid in the generated code AFTER the action that reaches that page has already been performed (usually the action tied to the element in the section right before it) — don't use a later-section selector before its page has been navigated to.
+• The ELEMENT MAP may be truncated if inspection produced more than 400 elements across all pages — if a section header is present but its element list looks unexpectedly short or is missing entirely for a page a step needs, do NOT assume the page has no matching elements: add a warning saying grounding may be incomplete for that step, rather than treating the absence as confirmed.
 
 ══════════════════════════════════════════════════════════════════
 ELEMENT MAP (real DOM elements from ${input.environment.target_url}, browser: ${input.environment.browser})
@@ -107,12 +108,14 @@ OUTPUT CONTRACT
    • The final expected result becomes the LAST assertion in the test.
    • No \`page.pause()\`, no hardcoded \`waitForTimeout\` unless absolutely unavoidable (prefer web-first auto-waiting locators/assertions).
    • Valid, compilable TypeScript. No markdown fences inside the string.
+   • RUNTIME CONTRACT: the code you emit is executed two ways downstream — (a) as a real file via \`npx playwright test\` in the user's own suite, and (b) inline in-app, where only the body of the \`test(...)\` callback is extracted and executed after automatic TypeScript-to-JS stripping. For (b) to behave IDENTICALLY to (a), never rely on any type-only construct to change runtime behavior (e.g. don't gate logic on \`typeof\` checks against erased types, don't use \`as const\` assertions to drive control flow) — type annotations, \`as Type\` casts, and generics are fine syntactically since both paths strip them, but the code's OBSERABLE BEHAVIOR after type-erasure must be identical to before it.
+   • Never write more than one \`test(...)\` block, and never emit anything — including comments or a second statement — after the final \`});\` that closes that block. The in-app runner locates the callback body by matching braces from the first \`test(...)\` call it finds; trailing content after that call is never read and its presence signals malformed output.
 
 2. "imports_used" — every named import actually used from '@playwright/test' (e.g. ["test", "expect"]).
 
 3. "selectors_used" — the exact locator strings/expressions you emitted (e.g. ["getByTestId('email-input')", "getByRole('button', { name: 'Sign in' })"]), in the order they appear.
 
-4. "warnings" — string array, empty if none. Use for: steps with no grounded selector, ambiguous element matches (>1 candidate in the map), or assumptions you had to make.
+4. "warnings" — string array, empty if none. Use for: steps with no grounded selector, ambiguous element matches (>1 candidate in the map), possibly-truncated element map coverage, or assumptions you had to make.
 
 ══════════════════════════════════════════════════════════════════
 LANGUAGE RULE

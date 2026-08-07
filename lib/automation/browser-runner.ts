@@ -112,6 +112,65 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
   return { context: await browser.newContext(), close: () => browser.close() };
 }
 
+// ── SSRF guard ────────────────────────────────────────────────────────────
+// A headless browser running server-side is a network proxy for whoever
+// controls target_url / inspection_steps[].url / crawled links. Every
+// user-suppliable URL MUST pass through this before page.goto ever sees it,
+// or this becomes a way to reach cloud metadata endpoints / internal
+// services from inside the deployment's own network.
+import { isIP } from 'node:net';
+
+const BLOCKED_HOSTNAMES = new Set(['localhost', '169.254.169.254', 'metadata.google.internal', '0.0.0.0']);
+
+function isPrivateIPv4(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return false;
+  const [a, b] = parts;
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) // link-local, includes cloud metadata (169.254.169.254)
+  );
+}
+
+export async function assertPublicUrl(rawUrl: string): Promise<void> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error(`URL không hợp lệ: ${rawUrl}`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error(`URL protocol không được hỗ trợ: ${url.protocol}`);
+  }
+  const hostname = url.hostname.toLowerCase();
+  if (BLOCKED_HOSTNAMES.has(hostname)) {
+    throw new Error(`Target URL bị chặn (địa chỉ nội bộ/metadata): ${hostname}`);
+  }
+  if (isIP(hostname) && isPrivateIPv4(hostname)) {
+    throw new Error(`Target URL trỏ tới IP nội bộ, không được phép: ${hostname}`);
+  }
+  // DNS-rebinding guard: a public-looking hostname can still resolve to a
+  // private IP. Resolve and re-check before trusting it.
+  if (!isIP(hostname)) {
+    try {
+      const dns = await import('node:dns/promises');
+      const records = await dns.lookup(hostname, { all: true });
+      for (const rec of records) {
+        if (isPrivateIPv4(rec.address)) {
+          throw new Error(`Target URL phân giải tới IP nội bộ (${rec.address}), không được phép: ${hostname}`);
+        }
+      }
+    } catch (err: any) {
+      if (err instanceof Error && err.message.includes('không được phép')) throw err;
+      // Any other DNS failure (NXDOMAIN, network hiccup) - let page.goto surface
+      // the real, more specific error instead of masking it here.
+    }
+  }
+}
+
 // ── Auth: cookie injection or best-effort UI login flow ─────────────────────
 
 // Cookie injection accepts two shapes in `cookie_token`, kept backward-compatible:
@@ -149,24 +208,31 @@ function parseCookieToken(token: string): RawCookieEntry[] | null {
 async function injectCookieIfPresent(context: any, env: EnvironmentConfig) {
   if (!env.cookie_token) return;
   const url = new URL(env.target_url);
+  const isHttps = url.protocol === 'https:';
   const multiCookies = parseCookieToken(env.cookie_token);
 
+  // __Secure-/__Host- prefixed cookies (Google auth SID/HSID and friends, among
+  // others) REQUIRE the Secure attribute by spec, and are commonly rejected by
+  // the browser if injected without it. Real providers this tool targets (the
+  // module doc comment above literally cites Google/YouTube) use exactly this
+  // prefix, so this was previously a silent auth-injection failure for the
+  // flagship use case.
+  const withSecureDefaults = (c: RawCookieEntry) => ({
+    name: c.name,
+    value: c.value,
+    domain: c.domain ?? url.hostname,
+    path: c.path ?? '/',
+    secure: c.name.startsWith('__Secure-') || c.name.startsWith('__Host-') || isHttps,
+    sameSite: 'Lax' as const,
+  });
+
   if (multiCookies) {
-    await context.addCookies(
-      multiCookies.map((c) => ({
-        name: c.name,
-        value: c.value,
-        domain: c.domain ?? url.hostname,
-        path: c.path ?? '/',
-      })),
-    );
+    await context.addCookies(multiCookies.map(withSecureDefaults));
     return;
   }
 
   // Legacy fallback: a single raw value, injected as one cookie named "session".
-  await context.addCookies([
-    { name: 'session', value: env.cookie_token, domain: url.hostname, path: '/' },
-  ]);
+  await context.addCookies([withSecureDefaults({ name: 'session', value: env.cookie_token })]);
 }
 
 async function firstVisibleMatch(page: any, selectors: string[]) {
@@ -215,6 +281,89 @@ async function performLoginFlow(page: any, login: { username: string; password: 
   }
   await page.waitForLoadState('domcontentloaded').catch(() => {});
   return warnings;
+}
+
+// ── Safe selector DSL ────────────────────────────────────────────────────
+// Every place that used to build a locator from a free-text string via
+// `new Function('page', 'return page.' + selector)(page)` is a code-injection
+// vector: `selector` can originate from inspection_steps (user input, only
+// validated as a non-empty string by the zod schema) or from AI-generated
+// code's own selector text. `new Function` executes with access to the full
+// Node global scope (process, fetch, Buffer, ...), so a crafted selector is
+// remote code execution, not just a bad locator.
+//
+// This parses a strict, small call-chain grammar - method name from an
+// allowlist, arguments that are only string/number/boolean/flat-object
+// literals - and resolves it by actually calling the real Playwright methods.
+// Nothing that isn't on the allowlist, and no argument that isn't a JSON-safe
+// literal, can ever reach an evaluator.
+type SelectorCall = { method: string; args: unknown[] };
+
+const ALLOWED_LOCATOR_METHODS = new Set([
+  'locator',
+  'getByRole',
+  'getByTestId',
+  'getByText',
+  'getByLabel',
+  'getByPlaceholder',
+  'getByTitle',
+  'getByAltText',
+  'first',
+  'last',
+  'nth',
+]);
+
+function parseArgs(rawArgs: string): unknown[] {
+  const trimmed = rawArgs.trim();
+  if (!trimmed) return [];
+  // Only accept a single string literal and/or a flat { key: 'value' } object
+  // literal - exactly what getByRole/getByText/locator/etc. need. Anything
+  // else (identifiers, function calls, template literals with ${}) is rejected
+  // outright rather than "best-effort" evaluated.
+  try {
+    const jsonish = trimmed.replace(/'/g, '"').replace(/(\w+)\s*:/g, '"$1":');
+    const parsed = JSON.parse(`[${jsonish}]`);
+    return parsed;
+  } catch {
+    throw new Error(`Selector argument không an toàn hoặc không hợp lệ: ${rawArgs}`);
+  }
+}
+
+function parseSelectorChain(selector: string): SelectorCall[] {
+  const calls: SelectorCall[] = [];
+  const callPattern = /([a-zA-Z]+)\(([^()]*)\)/g;
+  let match: RegExpExecArray | null;
+  let consumed = 0;
+
+  while ((match = callPattern.exec(selector)) !== null) {
+    const [full, method, rawArgs] = match;
+    if (match.index !== consumed) {
+      throw new Error(`Selector không hợp lệ (ký tự lạ trước "${full}"): ${selector}`);
+    }
+    if (!ALLOWED_LOCATOR_METHODS.has(method)) {
+      throw new Error(`Selector method không được phép: "${method}"`);
+    }
+    calls.push({ method, args: parseArgs(rawArgs) });
+    consumed = match.index + full.length;
+  }
+
+  if (consumed !== selector.length || calls.length === 0) {
+    throw new Error(`Selector không parse được toàn bộ chuỗi (còn dư ký tự lạ): ${selector}`);
+  }
+  return calls;
+}
+
+/** Safely resolves a validated selector chain against a live page/locator - no eval. */
+function resolveSelectorChain(page: any, selector: string): any {
+  const calls = parseSelectorChain(selector);
+  let target: any = page;
+  for (const { method, args } of calls) {
+    if (typeof target[method] !== 'function') {
+      throw new Error(`"${method}" không tồn tại trên đối tượng hiện tại.`);
+    }
+    target = target[method](...(args as []));
+  }
+  return target;
 }
 
 // ── DOM/element inspection ───────
@@ -341,12 +490,12 @@ async function runInspectionStep(page: any, step: InspectionStep): Promise<strin
   try {
     if (step.action === 'goto') {
       if (!step.url) return `Bước "${step.label}": thiếu "url" cho action goto.`;
+      await assertPublicUrl(step.url);
       await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       return null;
     }
     if (!step.selector) return `Bước "${step.label}": thiếu "selector" cho action ${step.action}.`;
-    // eslint-disable-next-line no-new-func
-    const locator: any = new Function('page', `return page.${step.selector};`)(page);
+    const locator = resolveSelectorChain(page, step.selector); // safe - no eval, see above
     if (step.action === 'click') {
       await locator.first().click({ timeout: 10000 });
     } else if (step.action === 'fill') {
@@ -428,6 +577,7 @@ async function crawlSite(
     alreadyVisited.add(key);
 
     try {
+      await assertPublicUrl(url); // same-origin doesn't imply safe - re-check every hop
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
     } catch (err: any) {
       warnings.push(`Crawl: không thể mở "${url}" (${String(err?.message ?? err)}) - bỏ qua.`);
@@ -466,6 +616,7 @@ export async function inspectEnvironment(
   element_map: ElementMap;
   warnings: string[];
 }> {
+  await assertPublicUrl(env.target_url);
   const { context, close } = await launchBrowser(env.browser);
   const warnings: string[] = [];
   try {
@@ -494,7 +645,13 @@ export async function inspectEnvironment(
       }
       visitedUrls.add(normalizeUrlForDedupe(page.url()));
       const snapshot = await extractElementMap(page, step.label);
+      const before = element_map.length + snapshot.length;
       element_map = [...element_map, ...snapshot].slice(0, MAX_TOTAL_ELEMENTS);
+      if (before > MAX_TOTAL_ELEMENTS) {
+        warnings.push(
+          `Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau bước "${step.label}" - một số phần tử đã bị cắt bớt, selector cho các bước sau có thể thiếu grounding.`,
+        );
+      }
     }
 
     // Whole-site crawl (opt-in): follow same-origin links breadth-first from wherever
@@ -508,7 +665,11 @@ export async function inspectEnvironment(
         visitedUrls,
         crawlOptions.max_pages,
       );
+      const before = element_map.length + crawledMap.length;
       element_map = [...element_map, ...crawledMap].slice(0, MAX_TOTAL_ELEMENTS);
+      if (before > MAX_TOTAL_ELEMENTS) {
+        warnings.push(`Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau crawl - một số phần tử đã bị cắt bớt.`);
+      }
       warnings.push(...crawlWarnings);
     }
 
@@ -520,9 +681,54 @@ export async function inspectEnvironment(
 
 // ── Run: execute generated script ────────
 
+/**
+ * Extracts the body of the single `test('...', async ({ page }) => { ... })`
+ * block via brace-matching from the call boundary, rather than a whole-file
+ * anchored regex. This tolerates trailing content after the test() call
+ * (extra comments, blank lines) that would previously make extraction return
+ * null with no useful diagnostic.
+ */
 function extractTestBody(code: string): string | null {
-  const match = code.match(/async\s*\(\s*\{\s*page[^}]*\}\s*\)\s*=>\s*\{([\s\S]*)\}\s*\)\s*;?\s*$/);
-  return match ? match[1] : null;
+  const headerPattern = /test\s*\(\s*['"`][\s\S]*?['"`]\s*,\s*async\s*\(\s*\{\s*page[^}]*\}\s*\)\s*=>\s*\{/;
+  const headerMatch = headerPattern.exec(code);
+  if (!headerMatch) return null;
+
+  const braceStart = code.indexOf('{', code.indexOf('=>', headerMatch.index));
+  if (braceStart === -1) return null;
+
+  let depth = 0;
+  for (let i = braceStart; i < code.length; i++) {
+    if (code[i] === '{') depth++;
+    else if (code[i] === '}') {
+      depth--;
+      if (depth === 0) return code.slice(braceStart + 1, i);
+    }
+  }
+  return null; // unbalanced braces - genuinely malformed generated code
+}
+
+/**
+ * Strips TypeScript-only syntax (type annotations, `as` casts, generics) from
+ * the extracted body so it's guaranteed to be valid plain JavaScript before
+ * it reaches `new Function`. The codegen prompt (lib/ai/prompts/playwright-agent.ts)
+ * explicitly asks the model for "valid, compilable TypeScript" - without this
+ * step, any type-only construct the model emits throws a raw SyntaxError at
+ * run time and gets reported as an opaque "error" run with no indication the
+ * test's actual logic was fine.
+ */
+function transpileBodyToJs(body: string): string {
+  // Lazy import: keeps this off the cold-start path for requests that don't run scripts.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const ts = require('typescript') as typeof import('typescript');
+  const wrapped = `(async () => {\n${body}\n})`;
+  const result = ts.transpileModule(wrapped, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020,
+      module: ts.ModuleKind.None,
+    },
+    reportDiagnostics: false,
+  });
+  return result.outputText;
 }
 
 function instrumentPage(page: any): { getLastSelector: () => string | undefined } {
@@ -546,19 +752,28 @@ export type RunOutcome = {
   failure_details?: FailureDetails;
 };
 
+// Keep well under the hosting platform's own hard function-timeout so a hung
+// generated script fails cleanly and reports a diagnosable result, instead of
+// the whole invocation being hard-killed with zero information returned.
+const RUN_TIMEOUT_MS = 45_000;
+
 export async function runGeneratedScript(code: string, env: EnvironmentConfig): Promise<RunOutcome> {
   const startedAt = Date.now();
   let close: (() => Promise<void>) | null = null;
 
   try {
+    await assertPublicUrl(env.target_url);
     const launched = await launchBrowser(env.browser);
     close = launched.close;
     await injectCookieIfPresent(launched.context, env);
     const page = await launched.context.newPage();
 
+    const loginWarnings: string[] = [];
     if (env.login) {
       await page.goto(env.target_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await performLoginFlow(page, env.login);
+      // Previously discarded: a silent login failure here used to surface as an
+      // unrelated assertion failure several steps later with zero signal why.
+      loginWarnings.push(...(await performLoginFlow(page, env.login)));
     }
 
     const { getLastSelector } = instrumentPage(page);
@@ -569,26 +784,43 @@ export async function runGeneratedScript(code: string, env: EnvironmentConfig): 
         duration_ms: Date.now() - startedAt,
         failure_details: {
           error_message:
-            'Không thể trích xuất nội dung test từ code đã sinh (không khớp mẫu test(\'...\', async ({ page }) => {...})). Hãy Generate lại, hoặc chạy file này bằng `npx playwright test` trong bộ automation suite thật của bạn.',
+            'Không thể trích xuất nội dung test từ code đã sinh (không khớp mẫu test(\'...\', async ({ page }) => {...}) hoặc brace không cân bằng). Hãy Generate lại, hoặc chạy file này bằng `npx playwright test` trong bộ automation suite thật của bạn.',
+        },
+      };
+    }
+
+    let compiledBody: string;
+    try {
+      compiledBody = transpileBodyToJs(body);
+    } catch (err: any) {
+      return {
+        status: 'error',
+        duration_ms: Date.now() - startedAt,
+        failure_details: {
+          error_message: `Code sinh ra không hợp lệ về cú pháp TypeScript: ${String(err?.message ?? err)}`,
         },
       };
     }
 
     const { expect } = await import('@playwright/test');
     // eslint-disable-next-line no-new-func
-    const runTestBody = new Function('page', 'expect', `return (async () => { ${body} })();`);
+    const runTestBody = new Function('page', 'expect', `return (${compiledBody})();`);
 
     try {
-      await runTestBody(page, expect);
-      const screenshotBuffer = await page.screenshot({ fullPage: true });
+      await Promise.race([
+        runTestBody(page, expect),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Test vượt quá timeout ${RUN_TIMEOUT_MS}ms.`)), RUN_TIMEOUT_MS),
+        ),
+      ]);
+      const screenshotBuffer = await page.screenshot({ fullPage: true }).catch(() => undefined);
       return { status: 'passed', duration_ms: Date.now() - startedAt, screenshotBuffer };
     } catch (err: any) {
       const selector = getLastSelector();
       let screenshotBuffer: Buffer | undefined;
       try {
         if (selector) {
-          // eslint-disable-next-line no-new-func
-          const failingLocator: any = new Function('page', `return page.${selector};`)(page);
+          const failingLocator = resolveSelectorChain(page, selector); // safe - no eval
           await failingLocator
             .first()
             .evaluate((el: HTMLElement) => {
@@ -606,7 +838,10 @@ export async function runGeneratedScript(code: string, env: EnvironmentConfig): 
         status: 'failed',
         duration_ms: Date.now() - startedAt,
         screenshotBuffer,
-        failure_details: { error_message: String(err?.message ?? err), selector },
+        failure_details: {
+          error_message: [String(err?.message ?? err), ...loginWarnings].filter(Boolean).join(' | '),
+          selector,
+        },
       };
     }
   } catch (err: any) {
