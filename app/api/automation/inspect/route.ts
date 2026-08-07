@@ -3,8 +3,9 @@ import { ZodError } from 'zod';
 import { inspectRequestSchema, inspectResponseDataSchema, toPublicEnvironment } from '@/lib/validators/playwright';
 import { inspectEnvironment } from '@/lib/automation/browser-runner';
 
-// Có thể chạy lâu hơn request thường (launch browser + navigate + optional login flow).
-export const maxDuration = 60;
+// Có thể chạy lâu hơn request thường - launch browser + navigate + optional login flow +
+// (nếu bật crawl) duyệt qua nhiều trang cùng domain, mỗi trang có timeout riêng ~20s.
+export const maxDuration = 180;
 export const runtime = 'nodejs';
 
 /**
@@ -22,9 +23,9 @@ export const runtime = 'nodejs';
 export async function POST(req: Request) {
   try {
     const rawBody = await req.json();
-    const { environment, inspection_steps } = inspectRequestSchema.parse(rawBody);
+    const { environment, inspection_steps, crawl } = inspectRequestSchema.parse(rawBody);
 
-    const result = await inspectEnvironment(environment, inspection_steps ?? []);
+    const result = await inspectEnvironment(environment, inspection_steps ?? [], crawl);
 
     const responseData = inspectResponseDataSchema.parse({
       environment: toPublicEnvironment(environment),
