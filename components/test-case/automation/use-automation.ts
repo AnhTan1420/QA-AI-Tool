@@ -68,6 +68,9 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
+  const [crawlEnabled, setCrawlEnabled] = useState(false);
+  const [crawlMaxPages, setCrawlMaxPages] = useState(5);
+
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState('');
   const [elementMap, setElementMap] = useState<InspectedElement[]>([]);
@@ -97,7 +100,10 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
       const res = await fetch('/api/automation/inspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ environment: buildEnvironmentPayload() }),
+        body: JSON.stringify({
+          environment: buildEnvironmentPayload(),
+          crawl: crawlEnabled ? { enabled: true, max_pages: crawlMaxPages } : undefined,
+        }),
       });
       const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Inspect failed');
@@ -173,6 +179,10 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
     setUsername,
     password,
     setPassword,
+    crawlEnabled,
+    setCrawlEnabled,
+    crawlMaxPages,
+    setCrawlMaxPages,
     inspecting,
     inspectError,
     elementMap,
