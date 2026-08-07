@@ -68,15 +68,39 @@ export const inspectedElementSchema = z.object({
   test_id: z.string().optional(),
   input_type: z.string().optional(), // for <input>: text, email, password, checkbox...
   is_visible: z.boolean().default(true),
+  // Which captured page/state this element came from - populated when inspection
+  // spans more than one page (see inspection_steps below). Lets the codegen prompt
+  // ground multi-page flows (e.g. "Sign in" button on page A, email field on page B)
+  // instead of only ever seeing the very first page loaded.
+  page_url: z.string().optional(),
+  page_label: z.string().optional(), // human label for the step that produced this page, e.g. "After clicking Sign in"
 });
 export type InspectedElement = z.infer<typeof inspectedElementSchema>;
 
 export const elementMapSchema = z.array(inspectedElementSchema);
 export type ElementMap = z.infer<typeof elementMapSchema>;
 
+// A single "drive the browser one step further, then re-snapshot the DOM" action.
+// Lets the user (or the test-case steps themselves) walk the inspector through a
+// multi-page flow - e.g. click "Sign in" -> capture Google's login page -> fill
+// email -> click Next -> capture the password page - instead of only ever seeing
+// the very first page loaded at target_url.
+export const inspectionStepSchema = z.object({
+  label: z.string().min(1), // free text, shown back as page_label, e.g. "Click Sign in"
+  action: z.enum(['click', 'fill', 'press_enter', 'goto']),
+  selector: z.string().optional(), // required for click/fill/press_enter - a Playwright locator string, e.g. "getByRole('button', { name: 'Sign in' })"
+  value: z.string().optional(), // required for fill - NEVER a real secret, use placeholder text (real creds still only come from environment.login)
+  url: z.string().optional(), // required for goto
+});
+export type InspectionStep = z.infer<typeof inspectionStepSchema>;
+
 // ── Inspect endpoint (app/api/automation/inspect) ───────────────────────────
 export const inspectRequestSchema = z.object({
   environment: environmentConfigSchema,
+  // Optional sequence of extra steps to drive the browser through before/between
+  // snapshots, so multi-page flows (login redirects, modals, wizards) end up
+  // grounded in the element map instead of producing TODOs in the generated code.
+  inspection_steps: z.array(inspectionStepSchema).max(10).optional(),
 });
 
 export const inspectResponseDataSchema = z.object({
