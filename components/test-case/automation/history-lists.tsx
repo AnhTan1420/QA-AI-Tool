@@ -37,8 +37,8 @@ export function AutomationHistory({ testCaseId }: { testCaseId: string }) {
     async function load() {
       setLoading(true);
       const [scriptsRes, runsRes] = await Promise.all([
-        fetch(`/api/test-cases/${testCaseId}/automation/scripts`).then((r) => r.json()),
-        fetch(`/api/test-cases/${testCaseId}/automation/runs`).then((r) => r.json()),
+        fetch(`/api/test-cases/${testCaseId}/automation/scripts`).then((r) => r.json()).catch(() => ({ success: false, data: [] })),
+        fetch(`/api/test-cases/${testCaseId}/automation/runs`).then((r) => r.json()).catch(() => ({ success: false, data: [] })),
       ]);
       if (cancelled) return;
       if (scriptsRes.success) setScripts(scriptsRes.data ?? []);
