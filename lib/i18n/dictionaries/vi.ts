@@ -314,6 +314,10 @@ const vi = {
       copied: 'Đã copy!',
       warningsHeading: 'Cảnh báo từ AI',
       versionLabel: (v: number) => `Version ${v}`,
+      specTabLabel: 'Spec Test',
+      pageObjectForLabel: (page: string) => `Page Object cho: ${page}`,
+      pageObjectsHeading: 'Page Objects',
+      noPageObjects: 'Không có Page Object nào (chỉ có spec).',
     },
     run: {
       button: 'Run Automation Test',

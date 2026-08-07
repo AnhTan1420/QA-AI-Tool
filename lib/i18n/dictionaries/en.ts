@@ -316,6 +316,10 @@ const en: Dictionary = {
       copied: 'Copied!',
       warningsHeading: 'AI warnings',
       versionLabel: (v: number) => `Version ${v}`,
+      specTabLabel: 'Spec Test',
+      pageObjectForLabel: (page: string) => `Page Object for: ${page}`,
+      pageObjectsHeading: 'Page Objects',
+      noPageObjects: 'No Page Objects (spec only).',
     },
     run: {
       button: 'Run Automation Test',

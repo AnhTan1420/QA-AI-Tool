@@ -34,8 +34,17 @@ export type InspectedElement = {
   is_visible: boolean;
 };
 
+export type PageObject = {
+  class_name: string;
+  file_name: string;
+  page_label?: string;
+  page_url?: string;
+  code: string;
+};
+
 export type PlaywrightScript = {
   script_id: string | null;
+  page_objects: PageObject[];
   code: string;
   imports_used: string[];
   selectors_used: string[];
@@ -153,6 +162,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
           test_case_id: testCaseId,
           script_id: script.script_id ?? undefined,
           code: script.script_id ? undefined : script.code,
+          page_objects: script.script_id ? undefined : script.page_objects,
           environment: buildEnvironmentPayload(),
         }),
       });

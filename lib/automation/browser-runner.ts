@@ -6,6 +6,7 @@ import type {
   FailureDetails,
   InspectedElement,
   InspectionStep,
+  PageObject,
 } from '@/lib/validators/playwright';
 
 const IS_SERVERLESS = Boolean(process.env.VERCEL) || process.env.AUTOMATION_RUNTIME === 'serverless';
@@ -728,7 +729,90 @@ function transpileBodyToJs(body: string): string {
     },
     reportDiagnostics: false,
   });
-  return result.outputText;
+  // ts.transpileModule ALWAYS prepends a `"use strict";` statement to its output, even
+  // for a plain wrapped expression with no import/export. Left in place, it breaks the
+  // `return (${compiledBody})();` call site below - `return (` immediately followed by a
+  // bare statement (as opposed to the expression `return` expects) is a SyntaxError, not
+  // a "use strict" no-op, because it's now sitting INSIDE a parenthesized expression
+  // position. Confirmed via direct repro before this fix; strip it rather than restructure
+  // the call site, since the callback itself is still wrapped in an IIFE that's implicitly
+  // strict-mode anyway (all `class` bodies and ES module code already are).
+  return stripUseStrictPrologue(result.outputText);
+}
+
+function stripUseStrictPrologue(js: string): string {
+  // Also drop the trailing `;` ts.transpileModule adds after the wrapped expression
+  // statement (it emits `(async () => {...});`, not `(async () => {...})`) - left in
+  // place, `return (${compiledBody})();` becomes `return ((async () => {...});)();`,
+  // a SyntaxError, since that semicolon now sits inside an expression position instead
+  // of terminating a statement. Confirmed via direct repro before this fix.
+  return js.replace(/^"use strict";\s*\n?/, '').replace(/;\s*$/, '');
+}
+
+/**
+ * Page Object Model support (Requirement 1 v2 — see lib/ai/prompts/playwright-agent.ts
+ * and lib/validators/playwright.ts#pageObjectSchema). The codegen agent now emits one
+ * standalone `.page.ts` file PER page/state (real-file usage: dropped next to the spec,
+ * imported via `import { X } from './x-page'`) instead of one flat spec. To run that
+ * same output inline in-app - where there's no real module resolver, just `new
+ * Function('page', 'expect', <js source>)` - every page object class needs to become a
+ * plain `class X { ... }` declaration living in the SAME function scope as the spec
+ * body, so `new LoginPage(page)` inside the spec resolves.
+ *
+ * Two things a compiled TS module normally needs are exactly what breaks a bare
+ * `new Function` scope, so both are stripped BEFORE transpiling (never at file-export
+ * time - the untouched `.code` is what gets saved/downloaded for real `npx playwright
+ * test` usage):
+ *   1. `import ...` lines - the only one the prompt allows is a type-only
+ *      `import type { Page } from '@playwright/test'`, which `ts.transpileModule`
+ *      already elides from its output on its own (verified: it never reaches the
+ *      compiled JS), but stripping the source line first is cheap insurance against a
+ *      value import slipping through and leaving a dangling `require(...)` call.
+ *   2. `export ` keywords - `ts.transpileModule` compiles `export class X` as CommonJS
+ *      (`exports.X = ...`), and there is no `exports` object inside `new Function`'s
+ *      scope - `class X { ... }` alone is both valid TS and valid JS and behaves
+ *      identically at the call site (`new X(...)`).
+ */
+function stripImportsAndExports(source: string): string {
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*import\b/.test(line))
+    .join('\n')
+    .replace(/^(\s*)export\s+(?=class\b|const\b|function\b|async\s+function\b)/gm, '$1');
+}
+
+function transpilePageObjectToJs(code: string): string {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const ts = require('typescript') as typeof import('typescript');
+  const stripped = stripImportsAndExports(code);
+  const result = ts.transpileModule(stripped, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2020,
+      module: ts.ModuleKind.None,
+    },
+    reportDiagnostics: false,
+  });
+  return stripUseStrictPrologue(result.outputText);
+}
+
+/**
+ * Transpiles every page object to plain JS class declarations and concatenates them,
+ * ready to be prepended to the compiled spec body inside the same `new Function` scope
+ * (see runGeneratedScript). Throws with the offending class_name/file_name on failure so
+ * a malformed page object reports a diagnosable error instead of a bare SyntaxError.
+ */
+function compilePageObjectsToJs(pageObjects: PageObject[]): string {
+  return pageObjects
+    .map((po) => {
+      try {
+        return `// ── Page Object: ${po.class_name} (${po.file_name}) ──\n${transpilePageObjectToJs(po.code)}`;
+      } catch (err: any) {
+        throw new Error(
+          `Page Object "${po.class_name}" (${po.file_name}) không hợp lệ về cú pháp TypeScript: ${String(err?.message ?? err)}`,
+        );
+      }
+    })
+    .join('\n');
 }
 
 function instrumentPage(page: any): { getLastSelector: () => string | undefined } {
@@ -757,7 +841,13 @@ export type RunOutcome = {
 // the whole invocation being hard-killed with zero information returned.
 const RUN_TIMEOUT_MS = 45_000;
 
-export async function runGeneratedScript(code: string, env: EnvironmentConfig): Promise<RunOutcome> {
+export type GeneratedScript = {
+  code: string;
+  page_objects?: PageObject[];
+};
+
+export async function runGeneratedScript(script: GeneratedScript, env: EnvironmentConfig): Promise<RunOutcome> {
+  const { code, page_objects: pageObjects = [] } = script;
   const startedAt = Date.now();
   let close: (() => Promise<void>) | null = null;
 
@@ -790,8 +880,10 @@ export async function runGeneratedScript(code: string, env: EnvironmentConfig): 
     }
 
     let compiledBody: string;
+    let compiledPageObjects: string;
     try {
       compiledBody = transpileBodyToJs(body);
+      compiledPageObjects = compilePageObjectsToJs(pageObjects);
     } catch (err: any) {
       return {
         status: 'error',
@@ -803,8 +895,14 @@ export async function runGeneratedScript(code: string, env: EnvironmentConfig): 
     }
 
     const { expect } = await import('@playwright/test');
+    // Page Object classes are defined FIRST, in the same function scope as the spec
+    // body right after - see compilePageObjectsToJs's doc comment for why this is safe
+    // and necessary (`new LoginPage(page)` etc. inside compiledBody resolves against
+    // these declarations). Trust boundary is unchanged from before Page Objects existed:
+    // this is still 100% AI-generated Playwright code running via `new Function`, same
+    // as the single-file spec always did - nothing here reaches raw/unsanitized user input.
     // eslint-disable-next-line no-new-func
-    const runTestBody = new Function('page', 'expect', `return (${compiledBody})();`);
+    const runTestBody = new Function('page', 'expect', `${compiledPageObjects}\nreturn (${compiledBody})();`);
 
     try {
       await Promise.race([

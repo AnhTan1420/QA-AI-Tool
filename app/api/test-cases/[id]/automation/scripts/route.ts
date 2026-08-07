@@ -13,7 +13,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data, error } = await supabase
     .from('automation_scripts')
-    .select('id, version, code, imports_used, selectors_used, warnings, environment, model_used, created_at, profiles(full_name)')
+    .select('id, version, page_objects, code, imports_used, selectors_used, warnings, environment, model_used, created_at, profiles(full_name)')
     .eq('test_case_id', id)
     .order('version', { ascending: false });
 

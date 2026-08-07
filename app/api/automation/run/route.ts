@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
-import { runRequestSchema } from '@/lib/validators/playwright';
+import { runRequestSchema, type PageObject } from '@/lib/validators/playwright';
 import { runGeneratedScript } from '@/lib/automation/browser-runner';
 import { uploadRunScreenshot } from '@/lib/automation/screenshot-storage';
 import { createClient } from '@/lib/supabase/server';
@@ -29,15 +29,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Bạn cần đăng nhập.' }, { status: 401 });
     }
 
-    // Resolve the code to run: an explicit ad-hoc `code` payload, or a saved
-    // automation_scripts version (RLS already scopes this select to project members).
+    // Resolve the code to run: an explicit ad-hoc `code` (+ `page_objects`) payload, or
+    // a saved automation_scripts version (RLS already scopes this select to project
+    // members). Page Objects travel WITH the spec code from here on - see
+    // lib/automation/browser-runner.ts#runGeneratedScript, which compiles them into the
+    // same execution scope as the spec body.
     let codeToRun = input.code ?? null;
+    let pageObjectsToRun: PageObject[] = input.page_objects ?? [];
     let scriptId = input.script_id ?? null;
 
     if (!codeToRun && scriptId) {
       const { data: script, error: scriptError } = await supabase
         .from('automation_scripts')
-        .select('id, code, test_case_id')
+        .select('id, code, page_objects, test_case_id')
         .eq('id', scriptId)
         .maybeSingle();
 
@@ -45,6 +49,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false, error: 'Không tìm thấy script để chạy.' }, { status: 404 });
       }
       codeToRun = script.code;
+      pageObjectsToRun = (script.page_objects as PageObject[] | null) ?? [];
     }
 
     if (!codeToRun) {
@@ -61,7 +66,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Test case không tồn tại hoặc bạn không có quyền truy cập.' }, { status: 404 });
     }
 
-    const outcome = await runGeneratedScript(codeToRun, input.environment);
+    const outcome = await runGeneratedScript({ code: codeToRun, page_objects: pageObjectsToRun }, input.environment);
 
     // Insert the run row first (without screenshot_url) so we always have a
     // run_id to key the screenshot's storage path on.
@@ -74,6 +79,7 @@ export async function POST(req: Request) {
         duration_ms: outcome.duration_ms,
         failure_details: outcome.failure_details ?? null,
         code_snapshot: codeToRun,
+        page_objects_snapshot: pageObjectsToRun,
         run_by: user.id,
         finished_at: new Date().toISOString(),
       })

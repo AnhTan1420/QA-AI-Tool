@@ -513,6 +513,15 @@ create table if not exists automation_scripts (
 alter table automation_scripts add column if not exists test_case_id uuid references test_cases(id) on delete cascade;
 alter table automation_scripts add column if not exists version int not null default 1;
 alter table automation_scripts add column if not exists code text;
+-- Page Object Model classes (Requirement 1 v2 - lay cam hung tu
+-- ai-agent-playwright-typescript-template's src/pages/ui/*.ts layout). Moi phan tu:
+-- {class_name, file_name, page_label, page_url, code} - xem pageObjectSchema trong
+-- lib/validators/playwright.ts. "code" instantiates chung qua `new <class_name>(page)`.
+-- Duoc bien dich + noi vao CUNG scope voi spec body khi chay inline (xem
+-- lib/automation/browser-runner.ts#compilePageObjectsToJs), va la nguon cho tinh nang
+-- "Export Playwright Project" (Requirement 2 roadmap - moi page object -> 1 file rieng
+-- duoi src/pages/ui/).
+alter table automation_scripts add column if not exists page_objects jsonb default '[]'::jsonb;
 alter table automation_scripts add column if not exists imports_used jsonb default '[]'::jsonb;
 alter table automation_scripts add column if not exists selectors_used jsonb default '[]'::jsonb;
 alter table automation_scripts add column if not exists warnings jsonb default '[]'::jsonb;
@@ -546,6 +555,9 @@ alter table automation_runs add column if not exists duration_ms int;
 alter table automation_runs add column if not exists screenshot_url text;
 alter table automation_runs add column if not exists failure_details jsonb;
 alter table automation_runs add column if not exists code_snapshot text;
+-- Snapshot cua page_objects DUNG khi chay lan nay (cung tinh than voi code_snapshot -
+-- co the khac ban moi nhat trong automation_scripts neu chay ad-hoc code chua luu).
+alter table automation_runs add column if not exists page_objects_snapshot jsonb default '[]'::jsonb;
 alter table automation_runs add column if not exists run_by uuid references profiles(id);
 alter table automation_runs add column if not exists started_at timestamptz default now();
 alter table automation_runs add column if not exists finished_at timestamptz;

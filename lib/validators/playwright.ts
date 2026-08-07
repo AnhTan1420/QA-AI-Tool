@@ -132,8 +132,32 @@ export const inspectResponseDataSchema = z.object({
 export type InspectResponseData = z.infer<typeof inspectResponseDataSchema>;
 
 // ── Codegen agent output (Requirement 1) ────────────────────────────────────
+// Page Object Model output (inspired by ai-agent-playwright-typescript-template's
+// `src/pages/ui/*.ts` structure) — Requirement 1 v2. Instead of one flat spec file,
+// the Codegen Agent groups the ELEMENT MAP by page/state (see playwright-agent.ts)
+// and emits one class per page, then a thin spec file that instantiates and calls
+// them. Kept as a SEPARATE array (not inlined into `code`) so:
+//  (a) the real-file export (Phase 2 roadmap item) can drop each one at
+//      `src/pages/ui/<file_name>` next to a spec that imports it, matching the
+//      template's project layout 1:1, and
+//  (b) the in-app inline runner (lib/automation/browser-runner.ts) can transpile
+//      + concatenate them into the same execution scope as the spec body without
+//      needing a real module resolver — see `compilePageObjectsToJs`.
+export const pageObjectSchema = z.object({
+  class_name: z.string().min(1), // PascalCase, e.g. "LoginPage" — must match what `code` instantiates via `new <class_name>(page)`
+  file_name: z.string().min(1), // kebab-case + "-page.ts", e.g. "login-page.ts" (matches template's `home-page.ts` convention)
+  page_label: z.string().optional(), // matches the "--- Page: <label> ---" section this class was grounded on
+  page_url: z.string().optional(),
+  // Full class source, e.g. `import type { Page } from '@playwright/test';\n\nexport class LoginPage { ... }`.
+  // MUST be standalone-compilable (real `npx playwright test` usage) — imports/`export`
+  // are stripped at inline-run time only, never at file-export time.
+  code: z.string().min(1),
+});
+export type PageObject = z.infer<typeof pageObjectSchema>;
+
 export const playwrightScriptSchema = z.object({
-  code: z.string().min(1), // full @playwright/test TypeScript source
+  page_objects: z.array(pageObjectSchema).default([]), // one per distinct page/state grounded in the element map
+  code: z.string().min(1), // thin spec file: imports + instantiates page_objects, one `test(...)` block
   imports_used: z.array(z.string()).default([]),
   selectors_used: z.array(z.string()).default([]),
   warnings: z.array(z.string()).default([]), // e.g. "no stable selector found for step 3, used text match"
@@ -165,8 +189,9 @@ export type PlaywrightCodegenRequest = z.infer<typeof playwrightCodegenRequestSc
 // ── /api/automation/run request + result ────────────────────────────────────
 export const runRequestSchema = z.object({
   test_case_id: z.string().uuid(),
-  script_id: z.string().uuid().optional(), // run a stored version...
+  script_id: z.string().uuid().optional(), // run a stored version (page_objects loaded from DB alongside its code)...
   code: z.string().min(1).optional(), // ...or run ad-hoc code not yet saved
+  page_objects: z.array(pageObjectSchema).default([]), // only used with ad-hoc `code`; ignored when script_id is given
   environment: environmentConfigSchema,
 }).refine((v) => Boolean(v.script_id || v.code), {
   message: 'Cần script_id (bản đã lưu) hoặc code (chạy thử chưa lưu).',

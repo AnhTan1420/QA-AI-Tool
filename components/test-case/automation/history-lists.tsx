@@ -3,9 +3,17 @@
 import { useEffect, useState } from 'react';
 import { useLanguage } from '@/lib/i18n/language-context';
 
+type PageObjectEntry = {
+  class_name: string;
+  file_name: string;
+  page_label?: string;
+  code: string;
+};
+
 type ScriptEntry = {
   id: string;
   version: number;
+  page_objects: PageObjectEntry[];
   code: string;
   warnings: string[];
   created_at: string;
@@ -76,9 +84,24 @@ export function AutomationHistory({ testCaseId }: { testCaseId: string }) {
                     <span className="text-gray-400">{s.profiles?.full_name ?? ''}</span>
                   </button>
                   {isExpanded && (
-                    <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
-                      {s.code}
-                    </pre>
+                    <div className="mt-2 space-y-2">
+                      {(s.page_objects ?? []).map((po) => (
+                        <div key={po.file_name}>
+                          <p className="mb-1 font-mono text-[11px] text-gray-400">{po.file_name}</p>
+                          <pre className="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
+                            {po.code}
+                          </pre>
+                        </div>
+                      ))}
+                      <div>
+                        {(s.page_objects ?? []).length > 0 && (
+                          <p className="mb-1 font-mono text-[11px] text-gray-400">{t.automation.code.specTabLabel}</p>
+                        )}
+                        <pre className="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
+                          {s.code}
+                        </pre>
+                      </div>
+                    </div>
                   )}
                 </li>
               );

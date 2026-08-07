@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { runAIAgent } from '@/lib/ai/provider';
-import { buildPlaywrightCodegenPrompt } from '@/lib/ai/prompts/playwright-agent';
+import { buildPlaywrightCodegenPrompt, groupElementMapByPage } from '@/lib/ai/prompts/playwright-agent';
 import { buildPlaywrightResponseSchema } from '@/lib/ai/prompts/playwright-response-schema';
 import { playwrightCodegenRequestSchema, playwrightScriptSchema } from '@/lib/validators/playwright';
 import { createClient } from '@/lib/supabase/server';
@@ -59,6 +59,30 @@ export async function POST(req: Request) {
       );
     }
 
+    // 3b) Defense-in-depth Page Object identity check (never trust raw AI JSON, applied
+    // to IDENTITY not just shape): class_name/file_name are DETERMINISTIC, derived from
+    // the element map in buildPlaywrightCodegenPrompt - the prompt hands the model the
+    // exact roster to copy, but the model can still drift. Cross-check rather than
+    // reject outright (a drifted name is still runnable, just not what the roster
+    // promised), so a near-miss doesn't throw away an otherwise-good generation.
+    const expectedRoster = groupElementMapByPage(input.element_map);
+    const expectedNames = new Set(expectedRoster.map((g) => g.class_name));
+    const actualNames = new Set(parsed.data.page_objects.map((po) => po.class_name));
+    const rosterWarnings: string[] = [];
+    if (expectedRoster.length > 0 && parsed.data.page_objects.length === 0) {
+      rosterWarnings.push(
+        'AI không trả về Page Object nào dù element map có dữ liệu - code sinh ra có thể không theo kiến trúc POM như mong đợi, kiểm tra lại trước khi dùng.',
+      );
+    }
+    for (const name of expectedNames) {
+      if (!actualNames.has(name)) {
+        rosterWarnings.push(`Thiếu Page Object dự kiến "${name}" (đã tính từ element map) trong kết quả AI trả về.`);
+      }
+    }
+    if (rosterWarnings.length > 0) {
+      parsed.data.warnings = [...parsed.data.warnings, ...rosterWarnings];
+    }
+
     // 4) (Best-effort) tìm test_case_id nếu client gửi kèm, để tự lưu version luôn -
     // giữ optional để route này vẫn dùng được độc lập (VD preview trước khi có test case đã lưu).
     const testCaseId = typeof rawBody?.test_case_id === 'string' ? rawBody.test_case_id : null;
@@ -85,6 +109,7 @@ export async function POST(req: Request) {
         .insert({
           test_case_id: testCaseId,
           version: nextVersion,
+          page_objects: parsed.data.page_objects,
           code: parsed.data.code,
           imports_used: parsed.data.imports_used,
           selectors_used: parsed.data.selectors_used,
