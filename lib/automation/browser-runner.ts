@@ -4,6 +4,7 @@ import type {
   EnvironmentConfig,
   FailureDetails,
   InspectedElement,
+  InspectionStep,
 } from '@/lib/validators/playwright';
 
 const IS_SERVERLESS = Boolean(process.env.VERCEL) || process.env.AUTOMATION_RUNTIME === 'serverless';
@@ -170,7 +171,7 @@ async function performLoginFlow(page: any, login: { username: string; password: 
 
 // ── DOM/element inspection ───────
 
-async function extractElementMap(page: any): Promise<ElementMap> {
+async function extractElementMap(page: any, pageLabel?: string): Promise<ElementMap> {
   const raw: any[] = await page.evaluate(() => {
     const interactiveSelector =
       'a[href], button, input, select, textarea, [role], [tabindex]:not([tabindex="-1"]), [onclick]';
@@ -230,6 +231,9 @@ async function extractElementMap(page: any): Promise<ElementMap> {
     }));
   });
 
+  const pageUrl = await page.url();
+  const context = { page_url: pageUrl, page_label: pageLabel };
+
   return raw.map((el): InspectedElement => {
     if (el.test_id) {
       return {
@@ -241,6 +245,7 @@ async function extractElementMap(page: any): Promise<ElementMap> {
         test_id: el.test_id,
         input_type: el.input_type,
         is_visible: el.is_visible,
+        ...context,
       };
     }
     if (el.id) {
@@ -252,6 +257,7 @@ async function extractElementMap(page: any): Promise<ElementMap> {
         selector_strategy: 'id',
         input_type: el.input_type,
         is_visible: el.is_visible,
+        ...context,
       };
     }
     if (el.accessible_name) {
@@ -263,6 +269,7 @@ async function extractElementMap(page: any): Promise<ElementMap> {
         selector_strategy: 'role_name',
         input_type: el.input_type,
         is_visible: el.is_visible,
+        ...context,
       };
     }
     return {
@@ -273,11 +280,43 @@ async function extractElementMap(page: any): Promise<ElementMap> {
       selector_strategy: 'css',
       input_type: el.input_type,
       is_visible: el.is_visible,
+      ...context,
     };
   });
 }
 
-export async function inspectEnvironment(env: EnvironmentConfig): Promise<{
+// Drives the page one step further (click / fill / press Enter / goto) so the next
+// extractElementMap() call captures whatever page that action landed on. Used to walk
+// multi-page flows (e.g. YouTube "Sign in" -> Google login -> password page) during
+// inspection, instead of only ever snapshotting the very first page loaded.
+async function runInspectionStep(page: any, step: InspectionStep): Promise<string | null> {
+  try {
+    if (step.action === 'goto') {
+      if (!step.url) return `Bước "${step.label}": thiếu "url" cho action goto.`;
+      await page.goto(step.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      return null;
+    }
+    if (!step.selector) return `Bước "${step.label}": thiếu "selector" cho action ${step.action}.`;
+    // eslint-disable-next-line no-new-func
+    const locator: any = new Function('page', `return page.${step.selector};`)(page);
+    if (step.action === 'click') {
+      await locator.first().click({ timeout: 10000 });
+    } else if (step.action === 'fill') {
+      await locator.first().fill(step.value ?? '', { timeout: 10000 });
+    } else if (step.action === 'press_enter') {
+      await locator.first().press('Enter', { timeout: 10000 });
+    }
+    await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+    return null;
+  } catch (err: any) {
+    return `Bước "${step.label}" thất bại (${String(err?.message ?? err)}) - trang có thể đã đổi hoặc phần tử không còn đúng như kỳ vọng. Bỏ qua và giữ nguyên element map đã có tới thời điểm này.`;
+  }
+}
+
+export async function inspectEnvironment(
+  env: EnvironmentConfig,
+  inspectionSteps: InspectionStep[] = [],
+): Promise<{
   page_title: string;
   element_map: ElementMap;
   warnings: string[];
@@ -293,8 +332,24 @@ export async function inspectEnvironment(env: EnvironmentConfig): Promise<{
       warnings.push(...(await performLoginFlow(page, env.login)));
     }
 
+    // Snapshot every page in the flow, not just the first one: capture target_url as-is,
+    // then for each inspection step drive the browser forward and re-snapshot. Elements
+    // are tagged with page_url/page_label (see extractElementMap) so the codegen prompt
+    // can tell which page each selector belongs to instead of assuming a single page.
+    let element_map: ElementMap = await extractElementMap(page, 'Initial page (target_url)');
     const page_title = await page.title();
-    const element_map = await extractElementMap(page);
+
+    const MAX_TOTAL_ELEMENTS = 400; // keep the prompt bounded across many pages
+    for (const step of inspectionSteps) {
+      const stepWarning = await runInspectionStep(page, step);
+      if (stepWarning) {
+        warnings.push(stepWarning);
+        continue; // page likely didn't change as expected - don't snapshot a stale/broken state
+      }
+      const snapshot = await extractElementMap(page, step.label);
+      element_map = [...element_map, ...snapshot].slice(0, MAX_TOTAL_ELEMENTS);
+    }
+
     return { page_title, element_map, warnings };
   } finally {
     await close();
