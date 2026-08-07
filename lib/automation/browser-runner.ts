@@ -5,10 +5,24 @@ import type {
   FailureDetails,
   InspectedElement,
 } from '@/lib/validators/playwright';
-import { existsSync, readFileSync } from 'fs';
-import { join, dirname } from 'path';
 
 const IS_SERVERLESS = Boolean(process.env.VERCEL) || process.env.AUTOMATION_RUNTIME === 'serverless';
+
+// ----------------------------------------------------------------------------
+// @sparticuz/chromium only extracts its bundled shared libraries (libnss3.so
+// and friends, shipped as bin/al2.tar.br / bin/al2023.tar.br) and sets
+// LD_LIBRARY_PATH/FONTCONFIG_PATH when it detects it's running natively
+// inside AWS Lambda - it checks process.env.AWS_EXECUTION_ENV /
+// AWS_LAMBDA_JS_RUNTIME (see node_modules/@sparticuz/chromium/build/helper.js).
+// Vercel's Node.js Serverless Functions run ON Lambda under the hood but do
+// NOT set either of those variables, so that detection silently returns
+// false there - the library archive never gets extracted and Chromium fails
+// to start with "libnss3.so: cannot open shared object file". We force the
+// AL2023 (Node 20+) code path ourselves before ever touching the package,
+// without clobbering a value that's already set (e.g. real Lambda/Netlify).
+if (IS_SERVERLESS && !process.env.AWS_LAMBDA_JS_RUNTIME && !process.env.AWS_EXECUTION_ENV) {
+  process.env.AWS_LAMBDA_JS_RUNTIME = 'nodejs20.x';
+}
 
 function assertBrowserAllowed(browser: AutomationBrowser) {
   if (IS_SERVERLESS && browser !== 'chromium') {
@@ -25,97 +39,52 @@ type LaunchedBrowser = {
   close: () => Promise<void>;
 };
 
-// Minimal runtime interface for @sparticuz/chromium-min (CJS dynamic import).
-interface SparticuzChromiumMin {
-  args: string[];
-  headless: boolean | 'shell';
-  setGraphicsMode(enabled: boolean): void;
-  executablePath(remotePackUrl?: string): Promise<string>;
-}
-
 async function launchBrowser(browserChoice: AutomationBrowser): Promise<LaunchedBrowser> {
   assertBrowserAllowed(browserChoice);
 
   if (IS_SERVERLESS) {
+    // playwright-core ships no browser binaries (tiny install footprint);
+    // @sparticuz/chromium bundles a Chromium build + its required shared
+    // libraries directly in the deployed function (~64MB compressed, well
+    // under Vercel's function size limit - see next.config.ts's
+    // outputFileTracingIncludes) so there's no network fetch on cold start.
+    // (We deliberately use the BUNDLED package, not @sparticuz/chromium-min:
+    // -min defers the ~50-90MB Chromium download to a GitHub Releases URL on
+    // every cold start, which from some Vercel regions can alone exceed the
+    // function's time budget - that's what caused a 504
+    // FUNCTION_INVOCATION_TIMEOUT here. Bundling trades ~64MB of deploy size
+    // for a cold start with zero external network dependency.)
     const { chromium } = await import('playwright-core');
+    const sparticuzChromium = (await import('@sparticuz/chromium')).default;
 
-    // Dynamic CJS import: cast through `any` to avoid TS "never" inference.
-    const sparticuzMod = await import('@sparticuz/chromium-min');
-    const chromiumPack = (sparticuzMod as any).default as SparticuzChromiumMin;
-
-    if (!process.env.AWS_LAMBDA_JS_RUNTIME) {
-      process.env.AWS_LAMBDA_JS_RUNTIME = 'nodejs22.x';
-    }
-
-    if (typeof chromiumPack.setGraphicsMode === 'function') {
-      chromiumPack.setGraphicsMode(false);
-    }
-
-    // Build remote pack URL from the ACTUALLY installed package version.
-    let remotePackUrl = process.env.CHROMIUM_REMOTE_EXEC_PATH;
-    if (!remotePackUrl) {
-      try {
-        const pkgPath = require.resolve('@sparticuz/chromium-min/package.json');
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version: string };
-        const v = pkg.version;
-        remotePackUrl = `https://github.com/Sparticuz/chromium/releases/download/v${v}/chromium-v${v}-pack.tar`;
-      } catch {
-        remotePackUrl = 'https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar';
-      }
+    // Skip extracting the WebGL/swiftshader stack - we only need to screenshot
+    // real page content, not render 3D graphics, and skipping it shaves time
+    // off every cold start's extraction step.
+    if (typeof (sparticuzChromium as any).setGraphicsMode === 'function') {
+      (sparticuzChromium as any).setGraphicsMode(false);
     }
 
     let executablePath: string;
     try {
-      executablePath = await chromiumPack.executablePath(remotePackUrl);
+      executablePath = await sparticuzChromium.executablePath();
     } catch (err: any) {
-      const message = String(err?.message ?? err);
-      if (message.includes('fetch failed') || message.includes('ENOTFOUND') || message.includes('ETIMEDOUT') || message.includes('ECONNREFUSED')) {
-        throw new Error(
-          `Không tải được Chromium pack từ "${remotePackUrl}" (${message}). ` +
-            `Kiểm tra: (1) URL còn tồn tại, (2) function có internet egress, ` +
-            `(3) thử tự host file .tar/.tar.br và set CHROMIUM_REMOTE_EXEC_PATH.`,
-        );
-      }
-      throw err;
-    }
-
-    const execDir = dirname(executablePath);
-    process.env.LD_LIBRARY_PATH = execDir;
-
-    const hasLibnss = existsSync(join(execDir, 'libnss3.so'));
-    const hasLibnspr = existsSync(join(execDir, 'libnspr4.so'));
-    if (!hasLibnss || !hasLibnspr) {
-      console.warn(
-        `[browser-runner] Warning: expected shared libraries not found in ${execDir} ` +
-          `(libnss3.so exists=${hasLibnss}, libnspr4.so exists=${hasLibnspr}). ` +
-          `If Chromium launch fails with ".so not found", the remote pack may be ` +
-          `incomplete or you may need to set CHROMIUM_REMOTE_EXEC_PATH to a ` +
-          `self-hosted .tar/.tar.br that includes the full Chromium + libraries tree.`,
-      );
+      throw new Error(`Không thể giải nén Chromium binary: ${String(err?.message ?? err)}`);
     }
 
     let browser;
     try {
       browser = await chromium.launch({
-        args: [
-          ...chromiumPack.args,
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-        ],
+        args: [...sparticuzChromium.args, '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
         executablePath,
-        headless: Boolean(chromiumPack.headless),
+        headless: true,
       });
     } catch (err: any) {
       const message = String(err?.message ?? err);
       if (message.includes('shared object file') || message.includes('.so')) {
         throw new Error(
-          `Không launch được Chromium (thiếu shared library: ${message}). ` +
-            `Đang dùng @sparticuz/chromium-min với remote pack "${remotePackUrl}". ` +
-            `Kiểm tra: (1) file .tar có chứa đầy đủ binary + .so libraries không, ` +
-            `(2) /tmp chưa bị đầy (~512MB limit trên Vercel), ` +
-            `(3) Tắt Fluid Compute trong Vercel Dashboard, ` +
-            `(4) set CHROMIUM_REMOTE_EXEC_PATH trỏ đến self-hosted pack nếu GitHub bị chặn.`,
+          `Không launch được Chromium (thiếu shared library: ${message}). Kiểm tra: (1) next.config.ts có ` +
+            `outputFileTracingIncludes trỏ tới node_modules/@sparticuz/chromium/**/* cho route này chưa, ` +
+            `(2) biến AWS_LAMBDA_JS_RUNTIME có bị override thành giá trị khác 'nodejs20.x'/'nodejs22.x' ở đâu đó không.`,
         );
       }
       throw err;
@@ -125,12 +94,15 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
     return { context, close: () => browser.close() };
   }
 
+  // Local / self-hosted: full `playwright` package with real browser binaries
+  // on disk (`npx playwright install`) - all 3 engines available.
   const playwright = await import('playwright');
   if (browserChoice === 'firefox') {
     const browser = await playwright.firefox.launch({ headless: true });
     return { context: await browser.newContext(), close: () => browser.close() };
   }
   if (browserChoice === 'edge') {
+    // No separate Edge rendering engine - Chromium launched with the msedge channel.
     const browser = await playwright.chromium.launch({ headless: true, channel: 'msedge' });
     return { context: await browser.newContext(), close: () => browser.close() };
   }
