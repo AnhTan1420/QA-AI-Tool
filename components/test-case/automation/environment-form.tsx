@@ -62,13 +62,14 @@ export function EnvironmentForm({ automation }: { automation: ReturnType<typeof 
         {automation.authMode === 'cookie' && (
           <div className="mt-3">
             <label className="mb-1 block text-xs font-semibold text-gray-600">{e.cookieLabel}</label>
-            <input
-              type="password"
+            <textarea
               value={automation.cookieToken}
               onChange={(ev) => automation.setCookieToken(ev.target.value)}
               placeholder={e.cookiePlaceholder}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              rows={3}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="mt-1 text-xs text-gray-400">{e.cookieHelp}</p>
           </div>
         )}
 
@@ -96,6 +97,32 @@ export function EnvironmentForm({ automation }: { automation: ReturnType<typeof 
         )}
 
         {automation.authMode !== 'none' && <p className="mt-2 text-xs italic text-gray-400">{e.secretNote}</p>}
+      </div>
+
+      <div className="mt-4 border-t border-gray-100 pt-4">
+        <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+          <input
+            type="checkbox"
+            checked={automation.crawlEnabled}
+            onChange={(ev) => automation.setCrawlEnabled(ev.target.checked)}
+            className="h-4 w-4 rounded border-gray-300"
+          />
+          {e.crawlLabel}
+        </label>
+        <p className="mt-1 text-xs text-gray-400">{e.crawlHelp}</p>
+        {automation.crawlEnabled && (
+          <div className="mt-2 flex items-center gap-2">
+            <label className="text-xs text-gray-600">{e.crawlMaxPagesLabel}</label>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={automation.crawlMaxPages}
+              onChange={(ev) => automation.setCrawlMaxPages(Number(ev.target.value))}
+              className="w-20 rounded-lg border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        )}
       </div>
 
       <div className="mt-5 flex items-center gap-3">
