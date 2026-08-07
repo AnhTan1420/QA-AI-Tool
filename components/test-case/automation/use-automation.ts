@@ -3,6 +3,25 @@
 import { useState } from 'react';
 import { useLanguage } from '@/lib/i18n/language-context';
 
+/**
+ * Vercel/Next can return a non-JSON body on a hard failure (function crash,
+ * timeout -> HTML error page, empty body) - res.json() throws a cryptic
+ * "unexpected character at line 1 column 1" in that case. Read as text first
+ * so we can surface something readable instead.
+ */
+async function parseJsonResponse(res: Response): Promise<any> {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(
+      text
+        ? `Server trả về phản hồi không hợp lệ (HTTP ${res.status}): ${text.slice(0, 200)}`
+        : `Server không phản hồi (HTTP ${res.status}) - có thể function đã crash hoặc timeout.`,
+    );
+  }
+}
+
 export type AutomationBrowser = 'chromium' | 'firefox' | 'edge';
 export type AuthMode = 'none' | 'cookie' | 'login';
 
@@ -80,7 +99,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ environment: buildEnvironmentPayload() }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Inspect failed');
       setElementMap(json.data.element_map);
       setPageTitle(json.data.page_title);
@@ -106,7 +125,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
           language: locale === 'vi' ? 'Tiếng Việt' : 'English',
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Generate failed');
       setScript(json.data);
     } catch (err) {
@@ -131,7 +150,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
           environment: buildEnvironmentPayload(),
         }),
       });
-      const json = await res.json();
+      const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Run failed');
       setRunResult(json.data);
     } catch (err) {
