@@ -1,5 +1,6 @@
 import type {
   AutomationBrowser,
+  CrawlOptions,
   ElementMap,
   EnvironmentConfig,
   FailureDetails,
@@ -113,9 +114,56 @@ async function launchBrowser(browserChoice: AutomationBrowser): Promise<Launched
 
 // ── Auth: cookie injection or best-effort UI login flow ─────────────────────
 
+// Cookie injection accepts two shapes in `cookie_token`, kept backward-compatible:
+//  1) A plain string -> injected as a single cookie named "session" (legacy behavior,
+//     fine for apps you built yourself that use one session cookie).
+//  2) A JSON array string, e.g. copied straight from DevTools -> Application -> Cookies:
+//     '[{"name":"SID","value":"..."},{"name":"HSID","value":"..."},...]'
+//     -> every entry is injected as-is. Needed for providers like Google/YouTube that
+//     authenticate via several cookies at once rather than a single session cookie.
+type RawCookieEntry = { name: string; value: string; domain?: string; path?: string };
+
+function parseCookieToken(token: string): RawCookieEntry[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(token);
+  } catch {
+    return null; // not JSON -> treat as legacy single-value token
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const entries: RawCookieEntry[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') return null;
+    const { name, value, domain, path } = item as Record<string, unknown>;
+    if (typeof name !== 'string' || !name || typeof value !== 'string') return null;
+    entries.push({
+      name,
+      value,
+      domain: typeof domain === 'string' ? domain : undefined,
+      path: typeof path === 'string' ? path : undefined,
+    });
+  }
+  return entries;
+}
+
 async function injectCookieIfPresent(context: any, env: EnvironmentConfig) {
   if (!env.cookie_token) return;
   const url = new URL(env.target_url);
+  const multiCookies = parseCookieToken(env.cookie_token);
+
+  if (multiCookies) {
+    await context.addCookies(
+      multiCookies.map((c) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain ?? url.hostname,
+        path: c.path ?? '/',
+      })),
+    );
+    return;
+  }
+
+  // Legacy fallback: a single raw value, injected as one cookie named "session".
   await context.addCookies([
     { name: 'session', value: env.cookie_token, domain: url.hostname, path: '/' },
   ]);
@@ -313,9 +361,106 @@ async function runInspectionStep(page: any, step: InspectionStep): Promise<strin
   }
 }
 
+// Links that would change auth/data state or aren't real navigable pages - never
+// follow these during an automatic crawl (manual inspection_steps can still target
+// them explicitly if the user really wants to, since that's an intentional action).
+const CRAWL_SKIP_PATTERNS = /logout|signout|sign-out|dang-xuat|đăng-xuất|\/delete|\/remove/i;
+
+function normalizeUrlForDedupe(url: string): string {
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+// Same-origin <a href> links visible on the current page, resolved to absolute URLs.
+async function extractSameOriginLinks(page: any, originHostname: string): Promise<string[]> {
+  const hrefs: string[] = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('a[href]'))
+      .map((a) => (a as HTMLAnchorElement).href)
+      .filter(Boolean);
+  });
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const href of hrefs) {
+    try {
+      const u = new URL(href);
+      if (u.hostname !== originHostname) continue;
+      if (!['http:', 'https:'].includes(u.protocol)) continue;
+      if (CRAWL_SKIP_PATTERNS.test(u.pathname)) continue;
+      const key = normalizeUrlForDedupe(u.toString());
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(u.toString());
+    } catch {
+      // ignore malformed hrefs
+    }
+  }
+  return result;
+}
+
+// Breadth-first same-origin crawl starting from the page's current URL. Visits up to
+// crawlOptions.max_pages pages (including the one already snapshotted before this is
+// called), snapshotting each with extractElementMap tagged by its own URL. Bounded by
+// both max_pages and max_depth so this can't run away inside a single request.
+async function crawlSite(
+  page: any,
+  crawlOptions: CrawlOptions,
+  alreadyVisited: Set<string>,
+  budgetRemaining: number,
+): Promise<{ element_map: ElementMap; warnings: string[] }> {
+  const warnings: string[] = [];
+  let element_map: ElementMap = [];
+  if (budgetRemaining <= 0) return { element_map, warnings };
+
+  const originHostname = new URL(page.url()).hostname;
+  type QueueItem = { url: string; depth: number };
+  const queue: QueueItem[] = (await extractSameOriginLinks(page, originHostname)).map((url) => ({ url, depth: 1 }));
+  let pagesVisited = 0;
+
+  while (queue.length > 0 && pagesVisited < budgetRemaining) {
+    const { url, depth } = queue.shift()!;
+    const key = normalizeUrlForDedupe(url);
+    if (alreadyVisited.has(key)) continue;
+    alreadyVisited.add(key);
+
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    } catch (err: any) {
+      warnings.push(`Crawl: không thể mở "${url}" (${String(err?.message ?? err)}) - bỏ qua.`);
+      continue;
+    }
+
+    pagesVisited += 1;
+    const snapshot = await extractElementMap(page, `Crawled (depth ${depth}): ${url}`);
+    element_map = [...element_map, ...snapshot];
+
+    if (depth < crawlOptions.max_depth && pagesVisited < budgetRemaining) {
+      const nextLinks = await extractSameOriginLinks(page, originHostname);
+      for (const next of nextLinks) {
+        if (!alreadyVisited.has(normalizeUrlForDedupe(next))) {
+          queue.push({ url: next, depth: depth + 1 });
+        }
+      }
+    }
+  }
+
+  if (queue.length > 0) {
+    warnings.push(
+      `Crawl dừng ở giới hạn max_pages=${crawlOptions.max_pages} - còn ${queue.length} link cùng domain chưa được kiểm tra. Tăng max_pages nếu cần bao phủ rộng hơn.`,
+    );
+  }
+
+  return { element_map, warnings };
+}
+
 export async function inspectEnvironment(
   env: EnvironmentConfig,
   inspectionSteps: InspectionStep[] = [],
+  crawlOptions?: CrawlOptions,
 ): Promise<{
   page_title: string;
   element_map: ElementMap;
@@ -338,6 +483,7 @@ export async function inspectEnvironment(
     // can tell which page each selector belongs to instead of assuming a single page.
     let element_map: ElementMap = await extractElementMap(page, 'Initial page (target_url)');
     const page_title = await page.title();
+    const visitedUrls = new Set<string>([normalizeUrlForDedupe(page.url())]);
 
     const MAX_TOTAL_ELEMENTS = 400; // keep the prompt bounded across many pages
     for (const step of inspectionSteps) {
@@ -346,8 +492,24 @@ export async function inspectEnvironment(
         warnings.push(stepWarning);
         continue; // page likely didn't change as expected - don't snapshot a stale/broken state
       }
+      visitedUrls.add(normalizeUrlForDedupe(page.url()));
       const snapshot = await extractElementMap(page, step.label);
       element_map = [...element_map, ...snapshot].slice(0, MAX_TOTAL_ELEMENTS);
+    }
+
+    // Whole-site crawl (opt-in): follow same-origin links breadth-first from wherever
+    // inspection_steps left the browser, snapshotting each page. Counts toward
+    // crawl.max_pages (the initial + inspection_steps pages aren't counted against it,
+    // since those are explicit user-requested pages, not crawl discoveries).
+    if (crawlOptions?.enabled) {
+      const { element_map: crawledMap, warnings: crawlWarnings } = await crawlSite(
+        page,
+        crawlOptions,
+        visitedUrls,
+        crawlOptions.max_pages,
+      );
+      element_map = [...element_map, ...crawledMap].slice(0, MAX_TOTAL_ELEMENTS);
+      warnings.push(...crawlWarnings);
     }
 
     return { page_title, element_map, warnings };
