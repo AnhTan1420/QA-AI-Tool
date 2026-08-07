@@ -22,9 +22,9 @@ export const runtime = 'nodejs';
 export async function POST(req: Request) {
   try {
     const rawBody = await req.json();
-    const { environment } = inspectRequestSchema.parse(rawBody);
+    const { environment, inspection_steps } = inspectRequestSchema.parse(rawBody);
 
-    const result = await inspectEnvironment(environment);
+    const result = await inspectEnvironment(environment, inspection_steps ?? []);
 
     const responseData = inspectResponseDataSchema.parse({
       environment: toPublicEnvironment(environment),
