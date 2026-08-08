@@ -216,3 +216,53 @@ export const automationRunResultSchema = z.object({
   failure_details: failureDetailsSchema.optional(),
 });
 export type AutomationRunResult = z.infer<typeof automationRunResultSchema>;
+
+// ============================================================================
+// Batch Automation (Phase 4 roadmap item) — see schema.sql's "Batch Automation"
+// section for the Vercel-Hobby architecture constraint (client-driven polling,
+// no server-side worker) this all sits on top of.
+// ============================================================================
+
+// ── project_environments (saved, NON-secret target config) ─────────────────
+// Deliberately the public subset only — never cookie_token/login. See
+// environmentConfigSchema above for where the actual secrets live (request-only,
+// never persisted).
+export const projectEnvironmentSchema = z.object({
+  name: z.string().min(1, 'Đặt tên cho environment, VD: Staging, Production'),
+  browser: automationBrowserSchema,
+  target_url: z.string().url('target_url phải là một URL hợp lệ'),
+  auth_mode: z.enum(['none', 'cookie', 'login']),
+});
+export type ProjectEnvironmentInput = z.infer<typeof projectEnvironmentSchema>;
+
+// ── POST /api/automation/batch-run (create a batch) ─────────────────────────
+export const createBatchRunSchema = z.object({
+  project_id: z.string().uuid(),
+  test_case_ids: z.array(z.string().uuid()).min(1, 'Chọn ít nhất 1 test case để chạy automation.'),
+  environment_id: z.string().uuid(),
+});
+export type CreateBatchRunRequest = z.infer<typeof createBatchRunSchema>;
+
+// ── POST /api/automation/batch-run/[id]/process-next ────────────────────────
+// Advances the batch by exactly ONE queued item (see architecture note in
+// schema.sql — each call must comfortably fit inside Vercel Hobby's 60s cap,
+// so this never processes more than one test case per invocation). Credentials
+// are supplied fresh on every call — see header comment in schema.sql.
+export const processNextBatchItemSchema = z.object({
+  batch_id: z.string().uuid(),
+  cookie_token: z.string().optional(),
+  login: z
+    .object({
+      username: z.string().min(1),
+      password: z.string().min(1),
+    })
+    .optional(),
+  language: z.enum(['vi', 'en']).default('vi'),
+});
+export type ProcessNextBatchItemRequest = z.infer<typeof processNextBatchItemSchema>;
+
+export const batchRunItemStatusSchema = z.enum(['queued', 'running', 'passed', 'failed', 'error', 'skipped']);
+export type BatchRunItemStatus = z.infer<typeof batchRunItemStatusSchema>;
+
+export const batchRunStatusSchema = z.enum(['queued', 'running', 'paused', 'completed']);
+export type BatchRunStatus = z.infer<typeof batchRunStatusSchema>;

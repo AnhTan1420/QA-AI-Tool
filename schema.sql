@@ -655,3 +655,187 @@ drop policy if exists automation_screenshots_delete on storage.objects;
 create policy automation_screenshots_delete on storage.objects for delete using (
   bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
 );
+
+-- ============================================================================
+-- Phase 4 roadmap item: "Batch Automation" (Import test cases -> run automation
+-- on many/all at once instead of one record at a time). See AUTOMATION_QA_FIXES.md
+-- for the browser-runner.ts hardening this batch layer sits on top of unchanged -
+-- batch execution reuses runGeneratedScript() as-is, one test case per invocation.
+--
+-- Architecture constraint driving this design: deployed on Vercel HOBBY plan.
+--   - maxDuration is hard-capped at 60s regardless of what a route declares.
+--   - Vercel Cron on Hobby only fires once/day - NOT usable as a queue "tick".
+--   - No long-running worker process exists on serverless.
+-- => There is no server-side background runner. The queue is advanced by the
+--    browser tab itself calling /api/automation/batch-run/[id]/process-next
+--    once per item, in a loop, for as long as the tab stays open. A batch is
+--    fully resumable: closing the tab just pauses it at whatever's still
+--    'queued' - reopening and clicking Resume continues from there. This is a
+--    deliberate trade-off for the current hosting tier, not a hidden limitation.
+--
+-- Security: automation_batch_run_items NEVER stores cookie_token / username /
+-- password - same "never persisted" rule as environment_config_schema in
+-- lib/validators/playwright.ts. Credentials (when the chosen environment's
+-- auth_mode isn't 'none') are entered once by the user at batch-start time,
+-- held only in browser memory (React state) for the lifetime of the batch, and
+-- resent with every process-next call. Reopening a paused batch asks for them
+-- again - that's the accepted cost of not persisting secrets.
+-- ============================================================================
+
+-- project_environments: reusable, NON-secret automation target config per
+-- project (browser + target_url + which auth mode to prompt for) - saved so a
+-- QA doesn't retype the target URL for every single test case / every batch.
+-- Deliberately holds NOTHING secret - see header comment above.
+create table if not exists project_environments (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references projects(id) on delete cascade,
+  name text not null,
+  browser text not null default 'chromium' check (browser in ('chromium', 'firefox', 'edge')),
+  target_url text not null,
+  auth_mode text not null default 'none' check (auth_mode in ('none', 'cookie', 'login')),
+  created_by uuid references profiles(id),
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_project_environments_project_id on project_environments(project_id);
+
+alter table project_environments enable row level security;
+
+drop policy if exists project_environments_member_access on project_environments;
+create policy project_environments_member_access on project_environments for all using (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = project_environments.project_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = project_environments.project_id and pm.user_id = auth.uid()
+  )
+);
+
+-- automation_batch_runs: 1 row = 1 "Run Automation on N test cases" batch.
+-- status is derived/updated as items complete (not a live aggregate query) so
+-- the batch list page stays a cheap single-table read.
+create table if not exists automation_batch_runs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references projects(id) on delete cascade,
+  environment_id uuid references project_environments(id) on delete set null,
+  -- Denormalized snapshot of the environment's public config at batch-start time
+  -- (browser/target_url/auth_mode) - so a batch's history stays meaningful even
+  -- if the saved environment is later edited or deleted (on delete set null above).
+  environment_snapshot jsonb not null,
+  total_count int not null default 0,
+  queued_count int not null default 0,
+  running_count int not null default 0,
+  passed_count int not null default 0,
+  failed_count int not null default 0,
+  error_count int not null default 0,
+  status text not null default 'queued' check (status in ('queued', 'running', 'paused', 'completed')),
+  created_by uuid references profiles(id),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_automation_batch_runs_project_id on automation_batch_runs(project_id);
+
+-- automation_batch_run_items: 1 row = 1 test case's place in a batch. Deliberately
+-- thin - the actual pass/fail evidence (screenshot, failure_details) is still
+-- written to automation_runs by the exact same runGeneratedScript()+insert path
+-- app/api/automation/run already uses (see app/api/automation/batch-run/[id]/process-next),
+-- linked back here via run_id. This table only tracks QUEUE POSITION/STATUS, not
+-- run results, so there's exactly one source of truth for "what happened".
+create table if not exists automation_batch_run_items (
+  id uuid primary key default gen_random_uuid(),
+  batch_id uuid references automation_batch_runs(id) on delete cascade,
+  test_case_id uuid references test_cases(id) on delete cascade,
+  -- Order test cases were added to the batch in - process-next always picks the
+  -- lowest-position 'queued' item, so results land in a predictable order.
+  position int not null default 0,
+  status text not null default 'queued' check (status in ('queued', 'running', 'passed', 'failed', 'error', 'skipped')),
+  -- Set when this item required a Generate step first (no automation_scripts yet)
+  -- and that step itself failed - distinct from a run failure.
+  generate_error text,
+  run_id uuid references automation_runs(id) on delete set null,
+  started_at timestamptz,
+  finished_at timestamptz
+);
+
+create index if not exists idx_automation_batch_run_items_batch_id on automation_batch_run_items(batch_id);
+create index if not exists idx_automation_batch_run_items_status on automation_batch_run_items(batch_id, status);
+
+alter table automation_batch_runs enable row level security;
+alter table automation_batch_run_items enable row level security;
+
+drop policy if exists automation_batch_runs_member_access on automation_batch_runs;
+create policy automation_batch_runs_member_access on automation_batch_runs for all using (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_batch_runs.project_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_batch_runs.project_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_batch_run_items_member_access on automation_batch_run_items;
+create policy automation_batch_run_items_member_access on automation_batch_run_items for all using (
+  exists (
+    select 1 from automation_batch_runs b
+    join project_members pm on pm.project_id = b.project_id
+    where b.id = automation_batch_run_items.batch_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from automation_batch_runs b
+    join project_members pm on pm.project_id = b.project_id
+    where b.id = automation_batch_run_items.batch_id and pm.user_id = auth.uid()
+  )
+);
+
+-- Atomically claims the next queued item in a batch (FOR UPDATE SKIP LOCKED so
+-- two tabs polling the same batch — or the client tab + a future cron fallback —
+-- never both grab the same test case). SECURITY DEFINER (matching
+-- is_project_member's pattern above) because it needs to lock across rows
+-- regardless of the caller's own RLS visibility ordering; the membership check
+-- is done explicitly up front since SECURITY DEFINER bypasses the table's RLS.
+create or replace function public.claim_next_batch_item(p_batch_id uuid)
+returns automation_batch_run_items
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  claimed automation_batch_run_items;
+begin
+  if not exists (
+    select 1 from automation_batch_runs b
+    join project_members pm on pm.project_id = b.project_id
+    where b.id = p_batch_id and pm.user_id = auth.uid()
+  ) then
+    raise exception 'Không có quyền truy cập batch này.';
+  end if;
+
+  select * into claimed
+  from automation_batch_run_items
+  where batch_id = p_batch_id and status = 'queued'
+  order by position asc
+  for update skip locked
+  limit 1;
+
+  if claimed.id is null then
+    return null;
+  end if;
+
+  update automation_batch_run_items
+  set status = 'running', started_at = now()
+  where id = claimed.id
+  returning * into claimed;
+
+  return claimed;
+end;
+$$;
+
+grant execute on function public.claim_next_batch_item(uuid) to authenticated;

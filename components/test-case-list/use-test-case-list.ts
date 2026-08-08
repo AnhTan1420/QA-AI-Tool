@@ -132,6 +132,7 @@ export function useTestCaseList(projectId: string) {
     page, setPage, pageSize, handlePageSizeChange,
     paginatedCases, totalPages,
     handleCreate, handleStatusChange, handleExport, handleBulkDelete,
+    refresh: fetchCases,
   };
 }
 
