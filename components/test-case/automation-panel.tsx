@@ -24,14 +24,18 @@ type TestCaseForAutomation = {
  * annotated failure callout. Lives next to VersionHistory/CommentsPanel, same
  * visual language (cards, badges, spacing).
  */
-export default function AutomationPanel({ testCase }: { testCase: TestCaseForAutomation }) {
+export default function AutomationPanel({ testCase, projectId }: { testCase: TestCaseForAutomation; projectId?: string }) {
   const { t } = useLanguage();
-  const automation = useAutomation(testCase.id, {
-    title: testCase.title,
-    preconditions: testCase.preconditions,
-    steps: testCase.steps,
-    expected_result: testCase.expected_result,
-  });
+  const automation = useAutomation(
+    testCase.id,
+    {
+      title: testCase.title,
+      preconditions: testCase.preconditions,
+      steps: testCase.steps,
+      expected_result: testCase.expected_result,
+    },
+    projectId,
+  );
 
   return (
     <div className="space-y-6">
@@ -40,7 +44,7 @@ export default function AutomationPanel({ testCase }: { testCase: TestCaseForAut
       <ElementPreview automation={automation} />
       <CodeViewer automation={automation} />
       <RunResultPanel automation={automation} />
-      <AutomationHistory testCaseId={testCase.id} />
+      <AutomationHistory testCaseId={testCase.id} refreshKey={automation.historyRefreshKey} />
     </div>
   );
 }

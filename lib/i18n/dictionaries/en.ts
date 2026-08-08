@@ -282,6 +282,8 @@ const en: Dictionary = {
     intro: 'Generate and run a Playwright automation script directly from this test case.',
     environment: {
       heading: 'Test Environment Configuration',
+      savedEnvironmentLabel: 'Load from saved environment',
+      savedEnvironmentPlaceholder: 'Choose a saved environment (optional)…',
       browser: 'Browser',
       browserOptions: { chromium: 'Chrome (Chromium)', firefox: 'Firefox', edge: 'Edge' },
       browserEdgeNote: 'Playwright has no separate Edge engine — "Edge" runs Chromium with the msedge channel.',

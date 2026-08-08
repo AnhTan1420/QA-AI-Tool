@@ -30,20 +30,32 @@ type RunEntry = {
   profiles: { full_name: string | null } | null;
 };
 
-/** Read-only history of past generated script versions + past run results for this test case (see requirement 6: "view/edit source after a run"). */
-export function AutomationHistory({ testCaseId }: { testCaseId: string }) {
+/**
+ * Read-only history of past generated script versions + past run results for this test
+ * case (see requirement 6: "view/edit source after a run").
+ *
+ * `refreshKey` lets the parent (AutomationPanel) force a re-fetch right after a new
+ * script is generated or a new run finishes, WITHOUT this component needing to know
+ * anything about useAutomation's internals - bump a counter and this effect re-runs.
+ * Before this, the list only ever fetched once on mount, so a freshly generated script
+ * or a freshly finished run was invisible here until the whole page was reloaded, even
+ * though it was already saved correctly in the DB.
+ */
+export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: string; refreshKey?: number }) {
   const { t } = useLanguage();
   const h = t.automation.history;
 
   const [scripts, setScripts] = useState<ScriptEntry[]>([]);
   const [runs, setRuns] = useState<RunEntry[]>([]);
   const [expandedScriptId, setExpandedScriptId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Only the VERY FIRST load blanks the panel - a refresh triggered by refreshKey (new
+  // script/run just completed) keeps showing the current list while the new data comes
+  // in, instead of flickering to nothing and back on every Generate/Run.
+  const [initialLoading, setInitialLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      setLoading(true);
       const [scriptsRes, runsRes] = await Promise.all([
         fetch(`/api/test-cases/${testCaseId}/automation/scripts`).then((r) => r.json()).catch(() => ({ success: false, data: [] })),
         fetch(`/api/test-cases/${testCaseId}/automation/runs`).then((r) => r.json()).catch(() => ({ success: false, data: [] })),
@@ -51,15 +63,15 @@ export function AutomationHistory({ testCaseId }: { testCaseId: string }) {
       if (cancelled) return;
       if (scriptsRes.success) setScripts(scriptsRes.data ?? []);
       if (runsRes.success) setRuns(runsRes.data ?? []);
-      setLoading(false);
+      setInitialLoading(false);
     }
     load();
     return () => {
       cancelled = true;
     };
-  }, [testCaseId]);
+  }, [testCaseId, refreshKey]);
 
-  if (loading) return null;
+  if (initialLoading) return null;
   if (scripts.length === 0 && runs.length === 0) return null;
 
   return (

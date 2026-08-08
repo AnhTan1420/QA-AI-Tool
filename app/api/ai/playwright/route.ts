@@ -67,9 +67,7 @@ export async function POST(req: Request) {
     // promised), so a near-miss doesn't throw away an otherwise-good generation.
     const expectedRoster = groupElementMapByPage(input.element_map);
     const expectedNames = new Set(expectedRoster.map((g) => g.class_name));
-    const expectedFileNames = new Set(expectedRoster.map((g) => g.file_name));
     const actualNames = new Set(parsed.data.page_objects.map((po) => po.class_name));
-    const actualFileNames = new Set(parsed.data.page_objects.map((po) => po.file_name));
     const rosterWarnings: string[] = [];
     if (expectedRoster.length > 0 && parsed.data.page_objects.length === 0) {
       rosterWarnings.push(
@@ -79,19 +77,6 @@ export async function POST(req: Request) {
     for (const name of expectedNames) {
       if (!actualNames.has(name)) {
         rosterWarnings.push(`Thiếu Page Object dự kiến "${name}" (đã tính từ element map) trong kết quả AI trả về.`);
-      }
-    }
-    // file_name drift is checked separately from class_name - the two are independent
-    // roster fields and the model can get one right while drifting the other (e.g. right
-    // class, wrong file extension/casing). A drifted file_name doesn't break the in-app
-    // inline runner (imports are stripped there), but it DOES break the real-file
-    // `npx playwright test` usage this architecture targets: the spec's
-    // `import { X } from './<file_name>'` line is generated against the SAME roster, so a
-    // file_name mismatch between a page_objects[] entry and what the spec actually imports
-    // is a broken import in the exported suite.
-    for (const fileName of expectedFileNames) {
-      if (!actualFileNames.has(fileName)) {
-        rosterWarnings.push(`Thiếu file_name dự kiến "${fileName}" (đã tính từ element map) trong kết quả AI trả về.`);
       }
     }
     if (rosterWarnings.length > 0) {

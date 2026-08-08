@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { parseJsonResponse } from '@/lib/utils/fetch-json';
+import type { ProjectEnvironment } from '@/components/automation/use-environments';
 
 export type AutomationBrowser = 'chromium' | 'firefox' | 'edge';
 export type AuthMode = 'none' | 'cookie' | 'login';
@@ -48,8 +49,17 @@ type TestCaseForCodegen = {
   expected_result: string;
 };
 
-/** All state + API calls for the "Automation" tab on the test case detail page. */
-export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) {
+/**
+ * All state + API calls for the "Automation" tab on the test case detail page.
+ *
+ * `projectId` is optional (kept backward-compatible for any other caller) but should be
+ * passed whenever available: it lets this tab reuse a project's saved, non-secret
+ * `project_environments` (Staging/Production/...) the same way the batch "Run Automation
+ * on N test cases" modal already does, instead of forcing the browser/target URL to be
+ * retyped by hand for every single test case. Secrets (cookie/login) are still entered
+ * fresh here regardless - saved environments never store them, same rule everywhere else.
+ */
+export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, projectId?: string) {
   const { locale } = useLanguage();
 
   const [browser, setBrowser] = useState<AutomationBrowser>('chromium');
@@ -58,6 +68,38 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
   const [cookieToken, setCookieToken] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+
+  // Saved project environments (Staging/Production/...) — quick-select convenience only;
+  // never a source of secrets. Silently unavailable (empty list) if projectId isn't passed.
+  const [savedEnvironments, setSavedEnvironments] = useState<ProjectEnvironment[]>([]);
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
+
+  useEffect(() => {
+    if (!projectId) return;
+    let cancelled = false;
+    fetch(`/api/projects/${projectId}/environments`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (!cancelled && json.success) setSavedEnvironments(json.data ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  function applySavedEnvironment(id: string) {
+    setSelectedEnvironmentId(id);
+    const env = savedEnvironments.find((e) => e.id === id);
+    if (!env) return;
+    setBrowser(env.browser);
+    setTargetUrl(env.target_url);
+    setAuthMode(env.auth_mode);
+    // Secrets are never stored on a saved environment - always re-entered here.
+    setCookieToken('');
+    setUsername('');
+    setPassword('');
+  }
 
   const [crawlEnabled, setCrawlEnabled] = useState(false);
   const [crawlMaxPages, setCrawlMaxPages] = useState(5);
@@ -74,6 +116,12 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState('');
   const [runResult, setRunResult] = useState<RunResult | null>(null);
+
+  // Bumped after a script is successfully generated or a run finishes, so
+  // <AutomationHistory> (which otherwise only fetches once on mount) knows to
+  // re-fetch and show the new version/run without requiring a full page reload.
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const bumpHistoryRefresh = useCallback(() => setHistoryRefreshKey((k) => k + 1), []);
 
   function buildEnvironmentPayload() {
     return {
@@ -125,6 +173,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
       const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Generate failed');
       setScript(json.data);
+      bumpHistoryRefresh();
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : 'Generate failed');
     } finally {
@@ -151,6 +200,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
       const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Run failed');
       setRunResult(json.data);
+      bumpHistoryRefresh();
     } catch (err) {
       setRunError(err instanceof Error ? err.message : 'Run failed');
     } finally {
@@ -159,6 +209,10 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen) 
   }
 
   return {
+    historyRefreshKey,
+    savedEnvironments,
+    selectedEnvironmentId,
+    applySavedEnvironment,
     browser,
     setBrowser,
     targetUrl,

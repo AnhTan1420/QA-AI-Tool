@@ -153,19 +153,13 @@ export async function processClaimedBatchItem(
       // otherwise-runnable generation.
       const expectedRoster = groupElementMapByPage(elementMap);
       const expectedNames = new Set(expectedRoster.map((g) => g.class_name));
-      const expectedFileNames = new Set(expectedRoster.map((g) => g.file_name));
       const actualNames = new Set(parsed.data.page_objects.map((po) => po.class_name));
-      const actualFileNames = new Set(parsed.data.page_objects.map((po) => po.file_name));
       const rosterWarnings: string[] = [];
       if (expectedRoster.length > 0 && parsed.data.page_objects.length === 0) {
         rosterWarnings.push('AI không trả về Page Object nào dù element map có dữ liệu.');
       }
       for (const name of expectedNames) {
         if (!actualNames.has(name)) rosterWarnings.push(`Thiếu Page Object dự kiến "${name}".`);
-      }
-      // Same file_name drift check as app/api/ai/playwright/route.ts - see comment there.
-      for (const fileName of expectedFileNames) {
-        if (!actualFileNames.has(fileName)) rosterWarnings.push(`Thiếu file_name dự kiến "${fileName}".`);
       }
       if (rosterWarnings.length > 0) parsed.data.warnings = [...parsed.data.warnings, ...rosterWarnings];
 

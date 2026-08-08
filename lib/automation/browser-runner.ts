@@ -314,76 +314,6 @@ const ALLOWED_LOCATOR_METHODS = new Set([
   'nth',
 ]);
 
-/**
- * Converts a selector-call argument list (single-quoted JS-literal style, e.g.
- * `'button', { name: 'Don\'t click' }`, or already-double-quoted JSON, e.g. what
- * instrumentPage's JSON.stringify produces for object args) into valid JSON text,
- * by walking it char-by-char and quote-converting ONLY actual string literals -
- * never a blind `.replace(/'/g, '"')` across the whole arg list.
- *
- * That blind global replace was the previous implementation, and it silently
- * corrupted any accessible name containing an apostrophe: an object-arg string
- * already JSON-escaped as `"Don't click"` has its interior `'` swapped to `"` too,
- * turning it into invalid/garbled JSON (`"Don"t click"`) - which made the
- * failing-element screenshot highlight in runGeneratedScript silently fail
- * (swallowed by its own try/catch) for any element whose accessible name/label
- * contained an apostrophe - a common case in real UI copy ("Don't have an
- * account?", "User's profile", etc).
- */
-function toJsonArgsList(rawArgs: string): string {
-  let out = '';
-  let i = 0;
-  const n = rawArgs.length;
-  while (i < n) {
-    const ch = rawArgs[i];
-    if (ch === "'") {
-      // Single-quoted JS string literal - re-emit as a properly JSON-escaped
-      // double-quoted string, unescaping the JS `\'` along the way (JSON has no
-      // such escape) and escaping any `"`/`\` the content actually contains.
-      let content = '';
-      i++;
-      while (i < n && rawArgs[i] !== "'") {
-        if (rawArgs[i] === '\\' && i + 1 < n) {
-          content += rawArgs[i + 1] === "'" ? "'" : rawArgs[i] + rawArgs[i + 1];
-          i += 2;
-        } else {
-          content += rawArgs[i];
-          i++;
-        }
-      }
-      if (i >= n) throw new Error('chuỗi single-quote không được đóng');
-      i++; // skip closing '
-      out += `"${content.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
-      continue;
-    }
-    if (ch === '"') {
-      // Already-double-quoted JSON string (e.g. from JSON.stringify) - copy
-      // verbatim, respecting its own escapes, rather than re-processing it.
-      let seg = '"';
-      i++;
-      while (i < n && rawArgs[i] !== '"') {
-        if (rawArgs[i] === '\\' && i + 1 < n) {
-          seg += rawArgs[i] + rawArgs[i + 1];
-          i += 2;
-        } else {
-          seg += rawArgs[i];
-          i++;
-        }
-      }
-      if (i >= n) throw new Error('chuỗi double-quote không được đóng');
-      seg += '"';
-      i++;
-      out += seg;
-      continue;
-    }
-    out += ch;
-    i++;
-  }
-  // Quote bare object keys (`{ name: ...` / `, name: ...`) - only ever applied
-  // outside string literals, since those were already fully consumed above.
-  return out.replace(/([{,]\s*)([A-Za-z_$][\w$]*)(\s*:)/g, '$1"$2"$3');
-}
-
 function parseArgs(rawArgs: string): unknown[] {
   const trimmed = rawArgs.trim();
   if (!trimmed) return [];
@@ -392,7 +322,7 @@ function parseArgs(rawArgs: string): unknown[] {
   // else (identifiers, function calls, template literals with ${}) is rejected
   // outright rather than "best-effort" evaluated.
   try {
-    const jsonish = toJsonArgsList(trimmed);
+    const jsonish = trimmed.replace(/'/g, '"').replace(/(\w+)\s*:/g, '"$1":');
     const parsed = JSON.parse(`[${jsonish}]`);
     return parsed;
   } catch {
@@ -439,17 +369,11 @@ function resolveSelectorChain(page: any, selector: string): any {
 
 // ── DOM/element inspection ───────
 
-// Per-page cap applied inside extractElementMap - kept as a named constant (rather than
-// a magic 200 buried in the page.evaluate below) so the truncation check right after the
-// evaluate call - and the warning it produces - can reference the exact same number.
-const MAX_ELEMENTS_PER_PAGE = 200;
-
-async function extractElementMap(page: any, pageLabel?: string): Promise<{ elements: ElementMap; truncated: boolean }> {
-  const { rows: raw, truncated }: { rows: any[]; truncated: boolean } = await page.evaluate((cap: number) => {
+async function extractElementMap(page: any, pageLabel?: string): Promise<ElementMap> {
+  const raw: any[] = await page.evaluate(() => {
     const interactiveSelector =
       'a[href], button, input, select, textarea, [role], [tabindex]:not([tabindex="-1"]), [onclick]';
-    const allNodes = Array.from(document.querySelectorAll(interactiveSelector));
-    const nodes = allNodes.slice(0, cap);
+    const nodes = Array.from(document.querySelectorAll(interactiveSelector)).slice(0, 200);
 
     function accessibleName(el: Element): string {
       const aria = el.getAttribute('aria-label');
@@ -493,29 +417,22 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<{ eleme
       return 'generic';
     }
 
-    return {
-      rows: nodes.map((el) => ({
-        tag: el.tagName.toLowerCase(),
-        role: defaultRole(el),
-        accessible_name: accessibleName(el),
-        test_id:
-          el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || undefined,
-        id: el.id || undefined,
-        input_type: el instanceof HTMLInputElement ? el.type : undefined,
-        is_visible: isVisible(el),
-      })),
-      // Previously silent: a page with more than `cap` interactive elements had the
-      // excess dropped with zero signal anywhere - neither to the user nor into the
-      // codegen prompt, which could then be asked to ground a step in an element that
-      // was on the page but never made it into the map. Surface it instead.
-      truncated: allNodes.length > cap,
-    };
-  }, MAX_ELEMENTS_PER_PAGE);
+    return nodes.map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      role: defaultRole(el),
+      accessible_name: accessibleName(el),
+      test_id:
+        el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test') || undefined,
+      id: el.id || undefined,
+      input_type: el instanceof HTMLInputElement ? el.type : undefined,
+      is_visible: isVisible(el),
+    }));
+  });
 
   const pageUrl = await page.url();
   const context = { page_url: pageUrl, page_label: pageLabel };
 
-  const elements = raw.map((el): InspectedElement => {
+  return raw.map((el): InspectedElement => {
     if (el.test_id) {
       return {
         role: el.role,
@@ -564,8 +481,6 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<{ eleme
       ...context,
     };
   });
-
-  return { elements, truncated };
 }
 
 // Drives the page one step further (click / fill / press Enter / goto) so the next
@@ -671,14 +586,8 @@ async function crawlSite(
     }
 
     pagesVisited += 1;
-    const pageLabel = `Crawled (depth ${depth}): ${url}`;
-    const snapshot = await extractElementMap(page, pageLabel);
-    element_map = [...element_map, ...snapshot.elements];
-    if (snapshot.truncated) {
-      warnings.push(
-        `Trang "${pageLabel}" có hơn ${MAX_ELEMENTS_PER_PAGE} phần tử tương tác - phần vượt quá đã bị cắt bớt, một số selector cho trang này có thể thiếu grounding.`,
-      );
-    }
+    const snapshot = await extractElementMap(page, `Crawled (depth ${depth}): ${url}`);
+    element_map = [...element_map, ...snapshot];
 
     if (depth < crawlOptions.max_depth && pagesVisited < budgetRemaining) {
       const nextLinks = await extractSameOriginLinks(page, originHostname);
@@ -724,13 +633,7 @@ export async function inspectEnvironment(
     // then for each inspection step drive the browser forward and re-snapshot. Elements
     // are tagged with page_url/page_label (see extractElementMap) so the codegen prompt
     // can tell which page each selector belongs to instead of assuming a single page.
-    const initialSnapshot = await extractElementMap(page, 'Initial page (target_url)');
-    let element_map: ElementMap = initialSnapshot.elements;
-    if (initialSnapshot.truncated) {
-      warnings.push(
-        `Trang ban đầu (target_url) có hơn ${MAX_ELEMENTS_PER_PAGE} phần tử tương tác - phần vượt quá đã bị cắt bớt, một số selector cho trang này có thể thiếu grounding.`,
-      );
-    }
+    let element_map: ElementMap = await extractElementMap(page, 'Initial page (target_url)');
     const page_title = await page.title();
     const visitedUrls = new Set<string>([normalizeUrlForDedupe(page.url())]);
 
@@ -743,13 +646,8 @@ export async function inspectEnvironment(
       }
       visitedUrls.add(normalizeUrlForDedupe(page.url()));
       const snapshot = await extractElementMap(page, step.label);
-      if (snapshot.truncated) {
-        warnings.push(
-          `Trang "${step.label}" có hơn ${MAX_ELEMENTS_PER_PAGE} phần tử tương tác - phần vượt quá đã bị cắt bớt, một số selector cho trang này có thể thiếu grounding.`,
-        );
-      }
-      const before = element_map.length + snapshot.elements.length;
-      element_map = [...element_map, ...snapshot.elements].slice(0, MAX_TOTAL_ELEMENTS);
+      const before = element_map.length + snapshot.length;
+      element_map = [...element_map, ...snapshot].slice(0, MAX_TOTAL_ELEMENTS);
       if (before > MAX_TOTAL_ELEMENTS) {
         warnings.push(
           `Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau bước "${step.label}" - một số phần tử đã bị cắt bớt, selector cho các bước sau có thể thiếu grounding.`,

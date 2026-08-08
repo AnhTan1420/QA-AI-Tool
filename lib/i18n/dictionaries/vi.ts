@@ -280,6 +280,8 @@ const vi = {
     intro: 'Sinh và chạy Playwright automation script trực tiếp từ test case này.',
     environment: {
       heading: 'Cấu hình Test Environment',
+      savedEnvironmentLabel: 'Chọn nhanh từ environment đã lưu',
+      savedEnvironmentPlaceholder: 'Chọn 1 environment đã lưu (tuỳ chọn)…',
       browser: 'Trình duyệt',
       browserOptions: { chromium: 'Chrome (Chromium)', firefox: 'Firefox', edge: 'Edge' },
       browserEdgeNote: 'Playwright không có engine Edge riêng — "Edge" sẽ chạy Chromium với channel msedge.',

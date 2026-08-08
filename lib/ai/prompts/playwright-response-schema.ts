@@ -23,8 +23,8 @@ const PAGE_OBJECT_SCHEMA: GeminiSchema = {
   type: 'OBJECT',
   description: 'Phải khớp pageObjectSchema trong lib/validators/playwright.ts.',
   properties: {
-    class_name: { type: 'STRING', description: 'Copied EXACTLY (char-for-char) from the "class_name" roster line in the prompt - never re-cased or re-derived, e.g. "LoginPage".' },
-    file_name: { type: 'STRING', description: 'Copied EXACTLY (char-for-char) from the "file_name" roster line in the prompt - kebab-case + "-page.ts", e.g. "login-page.ts". Never re-derived or given a different suffix.' },
+    class_name: { type: 'STRING', description: 'PascalCase, copied EXACTLY from the roster in the prompt.' },
+    file_name: { type: 'STRING', description: 'kebab-case + "-page.ts" (e.g. "login-page.ts"), copied EXACTLY from the roster.' },
     page_label: { type: 'STRING' },
     page_url: { type: 'STRING' },
     code: { type: 'STRING', description: 'Nội dung file .page.ts hoàn chỉnh (1 class), dùng \\n cho xuống dòng.' },

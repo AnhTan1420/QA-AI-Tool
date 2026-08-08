@@ -184,6 +184,7 @@ export default function TestCaseDetailPage() {
                 steps: tc.steps,
                 expected_result: tc.expected_result,
               }}
+              projectId={projectId}
             />
           )}
         </div>

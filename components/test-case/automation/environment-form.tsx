@@ -11,6 +11,24 @@ export function EnvironmentForm({ automation }: { automation: ReturnType<typeof 
     <div className="rounded-xl border border-gray-200 bg-white p-6">
       <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-700">{e.heading}</h3>
 
+      {automation.savedEnvironments.length > 0 && (
+        <div className="mb-4">
+          <label className="mb-1 block text-xs font-semibold text-gray-600">{e.savedEnvironmentLabel}</label>
+          <select
+            value={automation.selectedEnvironmentId}
+            onChange={(ev) => automation.applySavedEnvironment(ev.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">{e.savedEnvironmentPlaceholder}</option>
+            {automation.savedEnvironments.map((env) => (
+              <option key={env.id} value={env.id}>
+                {env.name} — {env.target_url}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs font-semibold text-gray-600">{e.browser}</label>
