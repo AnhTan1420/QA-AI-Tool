@@ -28,9 +28,9 @@ QA-AI-Tool/
 │   │   │       │       └── page.tsx
 │   │   │       │
 │   │   │       ├── 📁 test-cases/   # Test Case Library
-│   │   │       │   ├── page.tsx     # List view: search, paginate, bulk actions
+│   │   │       │   ├── page.tsx     # List view: search, paginate, bulk actions, Automation badge column
 │   │   │       │   └── 📁 [caseId]/ # Single test case detail
-│   │   │       │       └── page.tsx # Steps, version history, comments
+│   │   │       │       └── page.tsx # Steps, version history, comments, Automation tab
 │   │   │       │
 │   │   │       └── 📁 team/         # Team Member Management
 │   │   │           └── page.tsx     # Invite, roles, remove members
@@ -47,11 +47,19 @@ QA-AI-Tool/
 │   │   │   ├── 📁 documents/
 │   │   │   │   └── 📁 parse/
 │   │   │   │       └── route.ts     # POST: AI Document Reader (Figma/MD/PDF/Image → DocumentAtoms)
-│   │   │   └── 📁 embed/
-│   │   │       └── route.ts         # POST: Create vector embeddings for RAG
+│   │   │   ├── 📁 embed/
+│   │   │   │   └── route.ts         # POST: Create vector embeddings for RAG
+│   │   │   └── 📁 playwright/
+│   │   │       └── route.ts         # POST: Playwright Codegen Agent (element-map-grounded script generation)
 │   │   │
 │   │   ├── 📁 ai-reviews/
 │   │   │   └── route.ts             # POST: Persist review results to DB
+│   │   │
+│   │   ├── 📁 automation/           # Playwright automation runner endpoints
+│   │   │   ├── 📁 inspect/
+│   │   │   │   └── route.ts         # POST: launch browser, navigate + auth, extract DOM/element map
+│   │   │   └── 📁 run/
+│   │   │       └── route.ts         # POST: execute a generated script, capture screenshot + failure details
 │   │   │
 │   │   ├── 📁 projects/
 │   │   │   ├── route.ts             # GET: list projects | POST: create project
@@ -73,8 +81,13 @@ QA-AI-Tool/
 │   │           ├── route.ts         # GET/PUT/DELETE: single test case
 │   │           ├── 📁 comments/
 │   │           │   └── route.ts     # GET/POST: comments CRUD
-│   │           └── 📁 versions/
-│   │               └── route.ts     # GET: version history (read-only)
+│   │           ├── 📁 versions/
+│   │           │   └── route.ts     # GET: version history (read-only)
+│   │           └── 📁 automation/
+│   │               ├── 📁 scripts/
+│   │               │   └── route.ts # GET: generated Playwright script version history
+│   │               └── 📁 runs/
+│   │                   └── route.ts # GET: automation run history (status, screenshots, failures)
 │   │
 │   ├── layout.tsx                     # Root layout (providers, fonts, metadata)
 │   └── page.tsx                       # Landing / redirect page
@@ -107,7 +120,15 @@ QA-AI-Tool/
 │   │   │   ├── test-case-card.tsx     # Individual generated test case card
 │   │   │   └── shared.ts              # Shared types & constants for workspace
 │   │   ├── version-history.tsx        # Version timeline component
-│   │   └── comments-panel.tsx         # Threaded comments UI
+│   │   ├── comments-panel.tsx         # Threaded comments UI
+│   │   ├── automation-panel.tsx       # Automation tab orchestrator (env config → inspect → generate → run → history)
+│   │   └── 📁 automation/             # Automation tab sub-components
+│   │       ├── use-automation.ts      # Hook: all state + API calls (inspect/generate/run)
+│   │       ├── environment-form.tsx   # Browser/target URL/auth config form
+│   │       ├── element-preview.tsx    # Inspected DOM/element map preview
+│   │       ├── code-viewer.tsx        # Generated code display (syntax highlight + Copy)
+│   │       ├── run-result.tsx         # Run button + latest result (screenshot / failure callout)
+│   │       └── history-lists.tsx      # Past script versions + past run results
 │   │
 │   ├── 📁 test-case-form/             # Create / Edit test case form
 │   │   ├── index.tsx                  # Form orchestrator
@@ -122,7 +143,7 @@ QA-AI-Tool/
 │   │   ├── types.ts                   # List view types
 │   │   ├── create-modal.tsx           # Quick-create test case modal
 │   │   ├── bulk-delete-bar.tsx        # Bulk selection + delete actions
-│   │   ├── test-case-table.tsx        # Paginated table with inline status
+│   │   ├── test-case-table.tsx        # Paginated table with inline status + Automation badge
 │   │   └── pagination-bar.tsx         # Pagination controls
 │   │
 │   └── 📁 tools/
@@ -154,7 +175,16 @@ QA-AI-Tool/
 │   │       ├── generation-agent.ts    # Generation Agent system prompt (+ document atom mapping)
 │   │       ├── review-agent.ts        # Review Agent system prompt (independent evaluation)
 │   │       ├── enhance-agent.ts       # Enhance Agent system prompt (rewrite based on review)
-│   │       └── document-extraction-agent.ts  # AI Document Reader prompt
+│   │       ├── document-extraction-agent.ts  # AI Document Reader prompt
+│   │       ├── playwright-agent.ts    # Playwright Codegen Agent prompt (element-map-grounded)
+│   │       └── playwright-response-schema.ts  # Gemini structured-output schema for codegen
+│   │
+│   ├── 📁 automation/                 # Playwright automation runner (server-side only)
+│   │   ├── browser-runner.ts          # Launch browser, inspect DOM, execute generated script
+│   │   │                              # (architecture decision: Chromium-only on serverless via
+│   │   │                              #  playwright-core + @sparticuz/chromium; full `playwright`
+│   │   │                              #  package for self-hosted Firefox/Edge — see file header)
+│   │   └── screenshot-storage.ts      # Upload run screenshots to Supabase Storage + signed URLs
 │   │
 │   ├── 📁 documents/                  # AI Document Reader helpers
 │   │   ├── text-extractors.ts         # PDF/DOCX → plain text (mammoth, pdf-parse)
@@ -175,7 +205,8 @@ QA-AI-Tool/
 │   │
 │   ├── 📁 validators/                 # Zod schemas (never trust raw AI JSON)
 │   │   ├── test-case.ts               # Test case schema (AI I/O validation)
-│   │   └── document.ts                # DocumentAtom & ParsedDocument schemas
+│   │   ├── document.ts                # DocumentAtom & ParsedDocument schemas
+│   │   └── playwright.ts              # Environment config, element map, codegen output, run request/result
 │   │
 │   ├── 📁 utils/                      # General utilities
 │   │   ├── test-case-excel.ts         # Excel export/import for test cases
@@ -200,6 +231,8 @@ QA-AI-Tool/
 │                                      # - All tables + constraints
 │                                      # - RLS policies
 │                                      # - Trigger: auto-create profile on auth.users insert
+│                                      # - automation_scripts / automation_runs tables + RLS,
+│                                      #   automation-screenshots storage bucket + policies
 │
 ├── proxy.ts                           # Session refresh + auth redirect middleware
 │

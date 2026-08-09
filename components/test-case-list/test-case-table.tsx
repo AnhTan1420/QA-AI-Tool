@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { getPriorityStyle } from '@/lib/test-case-taxonomy';
+import { getPriorityStyle, getAutomationStatusStyle } from '@/lib/test-case-taxonomy';
 import { categoryBadge } from './use-test-case-list';
 import type { TestCaseListState } from './use-test-case-list';
 
@@ -25,16 +25,17 @@ export function TestCaseTable({ list }: { list: TestCaseListState }) {
           <th className="text-left px-6 py-3">{t.testCasesList.colCategory}</th>
           <th className="text-left px-6 py-3">{t.testCasesList.colPriority}</th>
           <th className="text-left px-6 py-3">{t.testCasesList.colStatus}</th>
+          <th className="text-left px-6 py-3">{t.automation.badge.columnHeading}</th>
         </tr>
       </thead>
       <tbody className="divide-y divide-gray-100">
         {list.loading ? (
           <tr>
-            <td colSpan={6} className="px-6 py-8 text-center text-gray-400">{t.testCasesList.loading}</td>
+            <td colSpan={7} className="px-6 py-8 text-center text-gray-400">{t.testCasesList.loading}</td>
           </tr>
         ) : list.paginatedCases.length === 0 ? (
           <tr>
-            <td colSpan={6} className="px-6 py-8 text-center text-gray-400">{t.testCasesList.empty}</td>
+            <td colSpan={7} className="px-6 py-8 text-center text-gray-400">{t.testCasesList.empty}</td>
           </tr>
         ) : (
           list.paginatedCases.map((tc) => (
@@ -71,6 +72,11 @@ export function TestCaseTable({ list }: { list: TestCaseListState }) {
                   <option value="in_review">{t.testCasesList.statusInReview}</option>
                   <option value="approved">{t.testCasesList.statusApproved}</option>
                 </select>
+              </td>
+              <td className="px-6 py-4">
+                <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${getAutomationStatusStyle(tc.automation_status)}`}>
+                  {t.automation.badge.status[tc.automation_status ?? 'not_generated']}
+                </span>
               </td>
             </tr>
           ))

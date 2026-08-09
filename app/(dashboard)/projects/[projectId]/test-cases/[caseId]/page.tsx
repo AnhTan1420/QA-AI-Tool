@@ -8,6 +8,7 @@ import TestCaseForm from '@/components/test-case-form';
 import { getPriorityStyle } from '@/lib/test-case-taxonomy';
 import VersionHistory from '@/components/test-case/version-history';
 import CommentsPanel from '@/components/test-case/comments-panel';
+import AutomationPanel from '@/components/test-case/automation-panel';
 
 type TestCase = {
   id: string;
@@ -29,6 +30,7 @@ export default function TestCaseDetailPage() {
   const [tc, setTc] = useState<TestCase | null>(null);
   const [loading, setLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'history' | 'automation'>('history');
 
   const fetchDetail = async () => {
     setLoading(true);
@@ -146,9 +148,45 @@ export default function TestCaseDetailPage() {
       )}
 
       {!isEditing && (
-        <div className="mt-6 grid gap-6 lg:grid-cols-2">
-          <VersionHistory testCaseId={tc.id} current={tc} />
-          <CommentsPanel testCaseId={tc.id} />
+        <div className="mt-6">
+          <div className="mb-4 flex gap-2 border-b border-gray-200">
+            <button
+              type="button"
+              onClick={() => setActiveTab('history')}
+              className={`px-4 py-2 text-sm font-semibold ${
+                activeTab === 'history' ? 'border-b-2 border-blue-600 text-blue-700' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {t.testCaseDetail.historyTabLabel}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('automation')}
+              className={`px-4 py-2 text-sm font-semibold ${
+                activeTab === 'automation' ? 'border-b-2 border-blue-600 text-blue-700' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {t.automation.tabTitle}
+            </button>
+          </div>
+
+          {activeTab === 'history' ? (
+            <div className="grid gap-6 lg:grid-cols-2">
+              <VersionHistory testCaseId={tc.id} current={tc} />
+              <CommentsPanel testCaseId={tc.id} />
+            </div>
+          ) : (
+            <AutomationPanel
+              testCase={{
+                id: tc.id,
+                title: tc.title,
+                preconditions: tc.preconditions ?? [],
+                steps: tc.steps,
+                expected_result: tc.expected_result,
+              }}
+              projectId={projectId}
+            />
+          )}
         </div>
       )}
     </div>

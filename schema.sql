@@ -475,3 +475,367 @@ end $$;
 -- Xem comment day du o dinh nghia bang test_case_sets phia tren.
 -- ----------------------------------------------------------------------------
 alter table test_case_sets add column if not exists analysis jsonb;
+
+-- ============================================================================
+-- Phase 3 roadmap item: "Automation test with AI" (Playwright Automation Agent).
+-- Xem lib/ai/prompts/playwright-agent.ts, lib/validators/playwright.ts,
+-- lib/automation/browser-runner.ts, app/api/ai/playwright + app/api/automation/*.
+--
+-- automation_scripts: 1 ban ghi = 1 lan "Generate Playwright Code" cho 1 test case.
+--   Giong tinh than test_case_versions - KHONG BAO GIO ghi de, luon insert version
+--   moi (version tang dan) de QA xem lai lich su / diff cac lan generate.
+-- automation_runs: 1 ban ghi = 1 lan "Run Automation Test". Luu status, thoi gian
+--   chay, screenshot (path trong storage bucket automation-screenshots, KHONG luu
+--   public URL vi bucket private), chi tiet loi (neu fail/error), va snapshot code
+--   THUC SU da chay (co the khac ban moi nhat trong automation_scripts neu QA sua tay).
+--
+-- Ca 2 bang deu join qua test_cases -> test_case_sets -> project_members giong het
+-- pattern cua test_case_versions/comments (xem RLS ben duoi) - test_cases van KHONG
+-- co project_id truc tiep, tuan thu dung "Core Principle #4" cua README.
+-- ============================================================================
+
+-- Badge trang thai automation tren the test case (library list) - xem
+-- components/test-case-list/test-case-table.tsx. Cap nhat boi app/api/ai/playwright
+-- (not_generated -> generated) va app/api/automation/run (-> passed | failed).
+alter table test_cases add column if not exists automation_status text not null default 'not_generated'
+  check (automation_status in ('not_generated', 'generated', 'passed', 'failed'));
+
+create table if not exists automation_scripts (
+  id uuid primary key default gen_random_uuid()
+);
+-- ALTER ... ADD COLUMN IF NOT EXISTS instead of relying on CREATE TABLE IF NOT
+-- EXISTS alone: if a table named automation_scripts already exists in your DB
+-- (e.g. a partial run of an earlier version of this migration), CREATE TABLE
+-- IF NOT EXISTS is a silent no-op and any columns missing from that old shape
+-- would otherwise never get added - which is exactly what produces
+-- "column test_case_id does not exist" on the CREATE INDEX/policy statements
+-- below. This block self-heals regardless of what was already there.
+alter table automation_scripts add column if not exists test_case_id uuid references test_cases(id) on delete cascade;
+alter table automation_scripts add column if not exists version int not null default 1;
+alter table automation_scripts add column if not exists code text;
+-- Page Object Model classes (Requirement 1 v2 - lay cam hung tu
+-- ai-agent-playwright-typescript-template's src/pages/ui/*.ts layout). Moi phan tu:
+-- {class_name, file_name, page_label, page_url, code} - xem pageObjectSchema trong
+-- lib/validators/playwright.ts. "code" instantiates chung qua `new <class_name>(page)`.
+-- Duoc bien dich + noi vao CUNG scope voi spec body khi chay inline (xem
+-- lib/automation/browser-runner.ts#compilePageObjectsToJs), va la nguon cho tinh nang
+-- "Export Playwright Project" (Requirement 2 roadmap - moi page object -> 1 file rieng
+-- duoi src/pages/ui/).
+alter table automation_scripts add column if not exists page_objects jsonb default '[]'::jsonb;
+alter table automation_scripts add column if not exists imports_used jsonb default '[]'::jsonb;
+alter table automation_scripts add column if not exists selectors_used jsonb default '[]'::jsonb;
+alter table automation_scripts add column if not exists warnings jsonb default '[]'::jsonb;
+-- environment.public shape only (browser/target_url/auth_mode) - KHONG BAO GIO
+-- chua cookie_token/password, xem toPublicEnvironment() trong lib/validators/playwright.ts.
+alter table automation_scripts add column if not exists environment jsonb;
+-- snapshot cua DOM/element map dung lam grounding context cho lan generate nay (audit trail).
+alter table automation_scripts add column if not exists element_map jsonb;
+alter table automation_scripts add column if not exists model_used text;
+alter table automation_scripts add column if not exists generated_by uuid references profiles(id);
+alter table automation_scripts add column if not exists created_at timestamptz default now();
+-- code was added as nullable above (ADD COLUMN can't add a NOT NULL column to
+-- a table that may already have rows without a default); enforce NOT NULL now
+-- that any pre-existing rows would already have a value or this is a fresh table.
+do $$
+begin
+  if not exists (select 1 from automation_scripts where code is null) then
+    alter table automation_scripts alter column code set not null;
+  end if;
+end $$;
+
+create table if not exists automation_runs (
+  id uuid primary key default gen_random_uuid()
+);
+alter table automation_runs add column if not exists test_case_id uuid references test_cases(id) on delete cascade;
+alter table automation_runs add column if not exists script_id uuid references automation_scripts(id) on delete set null;
+alter table automation_runs add column if not exists status text check (status in ('passed', 'failed', 'error'));
+alter table automation_runs add column if not exists duration_ms int;
+-- PATH trong bucket automation-screenshots (vd '<test_case_id>/<run_id>.png'), khong
+-- phai URL public - bucket la private, UI luon xin signed URL moi khi hien thi.
+alter table automation_runs add column if not exists screenshot_url text;
+alter table automation_runs add column if not exists failure_details jsonb;
+alter table automation_runs add column if not exists code_snapshot text;
+-- Snapshot cua page_objects DUNG khi chay lan nay (cung tinh than voi code_snapshot -
+-- co the khac ban moi nhat trong automation_scripts neu chay ad-hoc code chua luu).
+alter table automation_runs add column if not exists page_objects_snapshot jsonb default '[]'::jsonb;
+alter table automation_runs add column if not exists run_by uuid references profiles(id);
+alter table automation_runs add column if not exists started_at timestamptz default now();
+alter table automation_runs add column if not exists finished_at timestamptz;
+do $$
+begin
+  if not exists (select 1 from automation_runs where status is null) then
+    alter table automation_runs alter column status set not null;
+  end if;
+  if not exists (select 1 from automation_runs where code_snapshot is null) then
+    alter table automation_runs alter column code_snapshot set not null;
+  end if;
+end $$;
+
+create index if not exists idx_automation_scripts_test_case_id on automation_scripts(test_case_id);
+create index if not exists idx_automation_runs_test_case_id on automation_runs(test_case_id);
+
+alter table automation_scripts enable row level security;
+alter table automation_runs enable row level security;
+
+drop policy if exists automation_scripts_member_access on automation_scripts;
+create policy automation_scripts_member_access on automation_scripts for all using (
+  exists (
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
+    join project_members pm on pm.project_id = s.project_id
+    where tc.id = automation_scripts.test_case_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
+    join project_members pm on pm.project_id = s.project_id
+    where tc.id = automation_scripts.test_case_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_runs_member_access on automation_runs;
+create policy automation_runs_member_access on automation_runs for all using (
+  exists (
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
+    join project_members pm on pm.project_id = s.project_id
+    where tc.id = automation_runs.test_case_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
+    join project_members pm on pm.project_id = s.project_id
+    where tc.id = automation_runs.test_case_id and pm.user_id = auth.uid()
+  )
+);
+
+-- ----------------------------------------------------------------------------
+-- Storage: bucket rieng cho screenshot cua automation run, PRIVATE (khong public) -
+-- object name convention: '<test_case_id>/<run_id>.png' (xem lib/automation/screenshot-storage.ts),
+-- de policy duoi day co the tach test_case_id ra tu ten object va doi chieu project_members
+-- (giong het "join qua test_case_sets" cua moi bang khac trong file nay).
+-- ----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('automation-screenshots', 'automation-screenshots', false)
+on conflict (id) do nothing;
+
+create or replace function public.can_access_automation_screenshot(object_name text)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
+    join project_members pm on pm.project_id = s.project_id
+    where tc.id::text = split_part(object_name, '/', 1) and pm.user_id = auth.uid()
+  );
+$$;
+
+drop policy if exists automation_screenshots_select on storage.objects;
+create policy automation_screenshots_select on storage.objects for select using (
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
+);
+
+drop policy if exists automation_screenshots_insert on storage.objects;
+create policy automation_screenshots_insert on storage.objects for insert with check (
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
+);
+
+drop policy if exists automation_screenshots_update on storage.objects;
+create policy automation_screenshots_update on storage.objects for update using (
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
+);
+
+drop policy if exists automation_screenshots_delete on storage.objects;
+create policy automation_screenshots_delete on storage.objects for delete using (
+  bucket_id = 'automation-screenshots' and can_access_automation_screenshot(name)
+);
+
+-- ============================================================================
+-- Phase 4 roadmap item: "Batch Automation" (Import test cases -> run automation
+-- on many/all at once instead of one record at a time). See AUTOMATION_QA_FIXES.md
+-- for the browser-runner.ts hardening this batch layer sits on top of unchanged -
+-- batch execution reuses runGeneratedScript() as-is, one test case per invocation.
+--
+-- Architecture constraint driving this design: deployed on Vercel HOBBY plan.
+--   - maxDuration is hard-capped at 60s regardless of what a route declares.
+--   - Vercel Cron on Hobby only fires once/day - NOT usable as a queue "tick".
+--   - No long-running worker process exists on serverless.
+-- => There is no server-side background runner. The queue is advanced by the
+--    browser tab itself calling /api/automation/batch-run/[id]/process-next
+--    once per item, in a loop, for as long as the tab stays open. A batch is
+--    fully resumable: closing the tab just pauses it at whatever's still
+--    'queued' - reopening and clicking Resume continues from there. This is a
+--    deliberate trade-off for the current hosting tier, not a hidden limitation.
+--
+-- Security: automation_batch_run_items NEVER stores cookie_token / username /
+-- password - same "never persisted" rule as environment_config_schema in
+-- lib/validators/playwright.ts. Credentials (when the chosen environment's
+-- auth_mode isn't 'none') are entered once by the user at batch-start time,
+-- held only in browser memory (React state) for the lifetime of the batch, and
+-- resent with every process-next call. Reopening a paused batch asks for them
+-- again - that's the accepted cost of not persisting secrets.
+-- ============================================================================
+
+-- project_environments: reusable, NON-secret automation target config per
+-- project (browser + target_url + which auth mode to prompt for) - saved so a
+-- QA doesn't retype the target URL for every single test case / every batch.
+-- Deliberately holds NOTHING secret - see header comment above.
+create table if not exists project_environments (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references projects(id) on delete cascade,
+  name text not null,
+  browser text not null default 'chromium' check (browser in ('chromium', 'firefox', 'edge')),
+  target_url text not null,
+  auth_mode text not null default 'none' check (auth_mode in ('none', 'cookie', 'login')),
+  created_by uuid references profiles(id),
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_project_environments_project_id on project_environments(project_id);
+
+alter table project_environments enable row level security;
+
+drop policy if exists project_environments_member_access on project_environments;
+create policy project_environments_member_access on project_environments for all using (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = project_environments.project_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = project_environments.project_id and pm.user_id = auth.uid()
+  )
+);
+
+-- automation_batch_runs: 1 row = 1 "Run Automation on N test cases" batch.
+-- status is derived/updated as items complete (not a live aggregate query) so
+-- the batch list page stays a cheap single-table read.
+create table if not exists automation_batch_runs (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid references projects(id) on delete cascade,
+  environment_id uuid references project_environments(id) on delete set null,
+  -- Denormalized snapshot of the environment's public config at batch-start time
+  -- (browser/target_url/auth_mode) - so a batch's history stays meaningful even
+  -- if the saved environment is later edited or deleted (on delete set null above).
+  environment_snapshot jsonb not null,
+  total_count int not null default 0,
+  queued_count int not null default 0,
+  running_count int not null default 0,
+  passed_count int not null default 0,
+  failed_count int not null default 0,
+  error_count int not null default 0,
+  status text not null default 'queued' check (status in ('queued', 'running', 'paused', 'completed')),
+  created_by uuid references profiles(id),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+create index if not exists idx_automation_batch_runs_project_id on automation_batch_runs(project_id);
+
+-- automation_batch_run_items: 1 row = 1 test case's place in a batch. Deliberately
+-- thin - the actual pass/fail evidence (screenshot, failure_details) is still
+-- written to automation_runs by the exact same runGeneratedScript()+insert path
+-- app/api/automation/run already uses (see app/api/automation/batch-run/[id]/process-next),
+-- linked back here via run_id. This table only tracks QUEUE POSITION/STATUS, not
+-- run results, so there's exactly one source of truth for "what happened".
+create table if not exists automation_batch_run_items (
+  id uuid primary key default gen_random_uuid(),
+  batch_id uuid references automation_batch_runs(id) on delete cascade,
+  test_case_id uuid references test_cases(id) on delete cascade,
+  -- Order test cases were added to the batch in - process-next always picks the
+  -- lowest-position 'queued' item, so results land in a predictable order.
+  position int not null default 0,
+  status text not null default 'queued' check (status in ('queued', 'running', 'passed', 'failed', 'error', 'skipped')),
+  -- Set when this item required a Generate step first (no automation_scripts yet)
+  -- and that step itself failed - distinct from a run failure.
+  generate_error text,
+  run_id uuid references automation_runs(id) on delete set null,
+  started_at timestamptz,
+  finished_at timestamptz
+);
+
+create index if not exists idx_automation_batch_run_items_batch_id on automation_batch_run_items(batch_id);
+create index if not exists idx_automation_batch_run_items_status on automation_batch_run_items(batch_id, status);
+
+alter table automation_batch_runs enable row level security;
+alter table automation_batch_run_items enable row level security;
+
+drop policy if exists automation_batch_runs_member_access on automation_batch_runs;
+create policy automation_batch_runs_member_access on automation_batch_runs for all using (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_batch_runs.project_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_batch_runs.project_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_batch_run_items_member_access on automation_batch_run_items;
+create policy automation_batch_run_items_member_access on automation_batch_run_items for all using (
+  exists (
+    select 1 from automation_batch_runs b
+    join project_members pm on pm.project_id = b.project_id
+    where b.id = automation_batch_run_items.batch_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from automation_batch_runs b
+    join project_members pm on pm.project_id = b.project_id
+    where b.id = automation_batch_run_items.batch_id and pm.user_id = auth.uid()
+  )
+);
+
+-- Atomically claims the next queued item in a batch (FOR UPDATE SKIP LOCKED so
+-- two tabs polling the same batch — or the client tab + a future cron fallback —
+-- never both grab the same test case). SECURITY DEFINER (matching
+-- is_project_member's pattern above) because it needs to lock across rows
+-- regardless of the caller's own RLS visibility ordering; the membership check
+-- is done explicitly up front since SECURITY DEFINER bypasses the table's RLS.
+create or replace function public.claim_next_batch_item(p_batch_id uuid)
+returns automation_batch_run_items
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  claimed automation_batch_run_items;
+begin
+  if not exists (
+    select 1 from automation_batch_runs b
+    join project_members pm on pm.project_id = b.project_id
+    where b.id = p_batch_id and pm.user_id = auth.uid()
+  ) then
+    raise exception 'Không có quyền truy cập batch này.';
+  end if;
+
+  select * into claimed
+  from automation_batch_run_items
+  where batch_id = p_batch_id and status = 'queued'
+  order by position asc
+  for update skip locked
+  limit 1;
+
+  if claimed.id is null then
+    return null;
+  end if;
+
+  update automation_batch_run_items
+  set status = 'running', started_at = now()
+  where id = claimed.id
+  returning * into claimed;
+
+  return claimed;
+end;
+$$;
+
+grant execute on function public.claim_next_batch_item(uuid) to authenticated;

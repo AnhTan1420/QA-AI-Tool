@@ -4,7 +4,7 @@ import { generateWithGroq } from "./groq";
 import { generateWithGeminiVision, type VisionImageInput } from "./vision";
 
 export type { VisionImageInput };
-export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction';
+export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction' | 'playwright_codegen';
 
 function getGeminiModelsForTask(task: AITask): string[] {
   const primaryByTask: Record<AITask, string | undefined> = {
@@ -12,6 +12,9 @@ function getGeminiModelsForTask(task: AITask): string[] {
     review: process.env.AI_MODEL_REVIEW,
     classification: process.env.AI_MODEL_CLASSIFICATION,
     document_extraction: process.env.AI_MODEL_DOCUMENT_EXTRACTION,
+    // Playwright Automation Agent (Phase 3 roadmap item) - dedicated model, falls back
+    // to AI_MODEL_FALLBACK -> Groq like every other task. Never hardcode a model id here.
+    playwright_codegen: process.env.AI_MODEL_PLAYWRIGHT_CODEGEN,
   };
   const primary = primaryByTask[task];
   const fallback = process.env.AI_MODEL_FALLBACK;

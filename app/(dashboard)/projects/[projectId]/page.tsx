@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Sparkles, FileStack, Users, ArrowRight } from 'lucide-react';
+import { Sparkles, FileStack, Users, Settings2, ArrowRight } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getLocale } from '@/lib/i18n/get-locale';
 import { getDictionary } from '@/lib/i18n/dictionaries';
@@ -43,7 +43,7 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
         <p className="text-body mt-2 max-w-2xl">{projectDescription || t.projectDetail.defaultDescription}</p>
       </div>
 
-      <div className={`grid gap-4 ${isAdmin || projectId === 'demo' ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
+      <div className={`grid gap-4 ${isAdmin || projectId === 'demo' ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
         <Link
           href={`/projects/${projectId}/generate`}
           className="group relative overflow-hidden rounded-[var(--radius-card)] bg-brand-600 p-6 text-white shadow-[var(--shadow-soft)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[var(--shadow-glow-brand)]"
@@ -65,6 +65,14 @@ export default async function ProjectPage({ params }: { params: Promise<{ projec
           </span>
           <h2 className="text-h3 mt-4">{t.projectDetail.testCasesTitle}</h2>
           <p className="text-body mt-2 text-sm">{t.projectDetail.testCasesDesc}</p>
+        </Link>
+
+        <Link href={`/projects/${projectId}/automation/environments`} className="surface-card-interactive p-6">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-ink-100 text-ink-700">
+            <Settings2 className="h-5 w-5" strokeWidth={2.25} />
+          </span>
+          <h2 className="text-h3 mt-4">{t.projectDetail.automationTitle}</h2>
+          <p className="text-body mt-2 text-sm">{t.projectDetail.automationDesc}</p>
         </Link>
 
         {(isAdmin || projectId === 'demo') && (
