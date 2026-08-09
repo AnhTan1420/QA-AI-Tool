@@ -537,7 +537,7 @@ WHERE tcs.project_id = 'uuid';
   4. Click **Run Automation Test** to execute it right inside QAJD: on pass, the final-state screenshot is stored; on fail, the failing element is highlighted in the screenshot alongside structured failure details (error message, selector, which step)
   5. Every generation is kept as a version (`automation_scripts`) and every run is kept in history (`automation_runs`), both visible from the same tab — an "Automation" status badge (not generated / generated / passed / failed) also shows on the test case in the library list
 
-See `lib/ai/prompts/playwright-agent.ts`, `lib/automation/browser-runner.ts`, and the **Architecture Decision** comment at the top of that file for why Vercel serverless deployments are Chromium-only (Firefox/Edge require self-hosting with `AUTOMATION_RUNTIME=local`).
+
 
 ---
 
