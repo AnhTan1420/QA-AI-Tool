@@ -383,12 +383,22 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
         const labelEl = document.getElementById(labelledBy);
         if (labelEl?.textContent) return labelEl.textContent.trim();
       }
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        if (el.placeholder) return el.placeholder.trim();
+      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+        // Native <label> - either explicit (label[for] -> id) or implicit (element
+        // physically wrapped inside a <label>, e.g. <label><span>Email</span><input/></label>,
+        // which has no id/for at all) - takes priority over placeholder, matching the
+        // real browser accessible-name computation. Checking placeholder first (as this
+        // used to) reports the placeholder text as the accessible name even when a real
+        // label exists, which then poisons every downstream getByRole('...', { name })
+        // selector the AI generates from this element map.
         if (el.id) {
-          const label = document.querySelector(`label[for="${el.id}"]`);
-          if (label?.textContent) return label.textContent.trim();
+          const explicitLabel = document.querySelector(`label[for="${el.id}"]`);
+          if (explicitLabel?.textContent) return explicitLabel.textContent.trim();
         }
+        const implicitLabel = el.closest('label');
+        if (implicitLabel?.textContent) return implicitLabel.textContent.trim();
+        // No label at all (explicit or implicit) - placeholder is the correct fallback.
+        if ('placeholder' in el && el.placeholder) return el.placeholder.trim();
       }
       return (el.textContent || '').trim().slice(0, 80);
     }
