@@ -858,9 +858,23 @@ export async function runGeneratedScript(script: GeneratedScript, env: Environme
     await injectCookieIfPresent(launched.context, env);
     const page = await launched.context.newPage();
 
+    // ROOT-CAUSE FIX: always land on target_url before the generated test body runs,
+    // for EVERY auth_mode - not just 'login'. Previously this only navigated when
+    // env.login was set; for auth_mode 'none'/'cookie' (the two most common cases) the
+    // page stayed on about:blank and the runner trusted the AI-generated code's first
+    // Page Object goto() method (per the codegen prompt's instruction) to navigate
+    // itself. Nothing server-side ever verified that call actually happened - if the
+    // model ever omitted/mis-wrote it (one soft instruction buried in a long prompt),
+    // literally every locator in the test timed out against a blank page, producing a
+    // systemic "run always fails right after generate" failure with zero indication
+    // navigation was the cause. Navigating here first is a safe no-op even when the
+    // generated code's own goto() also runs (Playwright navigating to the same URL
+    // twice is harmless) - it can only rescue a malformed script, never break a
+    // well-formed one.
+    await page.goto(env.target_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
     const loginWarnings: string[] = [];
     if (env.login) {
-      await page.goto(env.target_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
       // Previously discarded: a silent login failure here used to surface as an
       // unrelated assertion failure several steps later with zero signal why.
       loginWarnings.push(...(await performLoginFlow(page, env.login)));
@@ -895,6 +909,32 @@ export async function runGeneratedScript(script: GeneratedScript, env: Environme
     }
 
     const { expect } = await import('@playwright/test');
+
+    // ROOT-CAUSE FIX #2: the codegen prompt MANDATES wrapping every step in
+    // `await test.step('Step N: ...', async () => { ... })` (see PAGE OBJECT MODEL /
+    // OUTPUT CONTRACT rules in lib/ai/prompts/playwright-agent.ts) - but `test` was never
+    // part of this scope. `new Function('page', 'expect', ...)` only ever declared 2
+    // parameters, so EVERY generated script hit `ReferenceError: test is not defined` on
+    // its very first test.step() call, 100% of the time, regardless of site/selectors/
+    // AI quality - a systemic, deterministic "run always fails" bug independent of (and
+    // more fundamental than) the navigation fix above. A minimal shim is enough here:
+    // real `@playwright/test` step semantics (reporter integration, nested timing) only
+    // matter for the "export as real files, run via `npx playwright test`" path, where
+    // the user's own test runner supplies the real `test` object - this shim only needs
+    // to award the in-app Run button parity for the ONE thing generated code actually
+    // relies on `test` for: invoking the step's callback. As a bonus, tracking the
+    // current step label turns a bare "locator X timed out" failure into "Step 3: Click
+    // Sign in -> locator X timed out", which step the failure happened in previously had
+    // no signal at all.
+    let currentStepLabel: string | undefined;
+    const testStepShim = {
+      step: async (label: unknown, fn: unknown) => {
+        currentStepLabel = typeof label === 'string' ? label : currentStepLabel;
+        if (typeof fn !== 'function') return undefined;
+        return await fn();
+      },
+    };
+
     // Page Object classes are defined FIRST, in the same function scope as the spec
     // body right after - see compilePageObjectsToJs's doc comment for why this is safe
     // and necessary (`new LoginPage(page)` etc. inside compiledBody resolves against
@@ -902,11 +942,11 @@ export async function runGeneratedScript(script: GeneratedScript, env: Environme
     // this is still 100% AI-generated Playwright code running via `new Function`, same
     // as the single-file spec always did - nothing here reaches raw/unsanitized user input.
     // eslint-disable-next-line no-new-func
-    const runTestBody = new Function('page', 'expect', `${compiledPageObjects}\nreturn (${compiledBody})();`);
+    const runTestBody = new Function('page', 'expect', 'test', `${compiledPageObjects}\nreturn (${compiledBody})();`);
 
     try {
       await Promise.race([
-        runTestBody(page, expect),
+        runTestBody(page, expect, testStepShim),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error(`Test vượt quá timeout ${RUN_TIMEOUT_MS}ms.`)), RUN_TIMEOUT_MS),
         ),
@@ -937,7 +977,13 @@ export async function runGeneratedScript(script: GeneratedScript, env: Environme
         duration_ms: Date.now() - startedAt,
         screenshotBuffer,
         failure_details: {
-          error_message: [String(err?.message ?? err), ...loginWarnings].filter(Boolean).join(' | '),
+          error_message: [
+            currentStepLabel ? `[${currentStepLabel}]` : null,
+            String(err?.message ?? err),
+            ...loginWarnings,
+          ]
+            .filter(Boolean)
+            .join(' | '),
           selector,
         },
       };

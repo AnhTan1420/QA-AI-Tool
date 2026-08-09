@@ -130,10 +130,213 @@ suy luận trường hợp biên, và gây khó hiểu cho người đọc code.
 
 ## Còn tồn đọng (backend đã sẵn sàng nhưng UI chưa khai thác — không sửa lượt này)
 
-- `inspection_steps` (đi qua nhiều trang lúc Inspect, vd. login redirect
-  nhiều bước) đã có schema + xử lý đầy đủ ở backend
-  (`lib/validators/playwright.ts#inspectionStepSchema`,
-  `browser-runner.ts#runInspectionStep`) nhưng **không có UI nào** để nhập —
-  nếu muốn dùng, cần thêm 1 form "thêm bước" vào `EnvironmentForm` (danh sách
-  step: label/action/selector/value/url), gợi ý làm ở lượt sau nếu đây là nhu
-  cầu thực tế.
+*(Đã xử lý ở lượt 3 bên dưới — mục này giữ lại để tham chiếu lịch sử.)*
+
+---
+
+## Lượt 3 — bổ sung UI cho Multi-step Inspection
+
+**Files:** `components/test-case/automation/use-automation.ts`,
+`environment-form.tsx`, `lib/i18n/dictionaries/{en,vi}.ts`
+
+Trước đó `inspection_steps` (đi qua nhiều trang lúc Inspect — click, fill,
+press_enter, goto — dùng cho flow login-redirect/modal/wizard nhiều bước) đã
+có đầy đủ ở backend (`lib/validators/playwright.ts#inspectionStepSchema`,
+`browser-runner.ts#runInspectionStep`) nhưng hoàn toàn không có chỗ nào để
+nhập ở giao diện. Đã bổ sung:
+
+- `useAutomation`: state `inspectionSteps` (draft có id local để quản lý
+  list) + `addInspectionStep`/`updateInspectionStep`/`removeInspectionStep`/
+  `moveInspectionStep`, giới hạn tối đa 10 bước khớp với
+  `inspectionStepSchema.max(10)` ở server. `buildInspectionStepsPayload()`
+  lọc bước rỗng và loại field không áp dụng theo từng loại action trước khi
+  gửi lên `/api/automation/inspect`.
+- `EnvironmentForm`: 1 section "Multi-step inspection (optional)" cho phép
+  thêm/sửa/xoá/sắp-xếp-lại từng bước, input động theo `action` (chọn
+  `goto` → hiện ô URL; `fill` → hiện thêm ô value; `click`/`press_enter` →
+  chỉ cần selector).
+- Đồng thời phát hiện thêm 1 bug nhỏ liên quan: response `warnings` của
+  `/api/automation/inspect` (ví dụ "bước X thất bại, element map có thể đã
+  cũ", "element map bị cắt bớt do vượt giới hạn") trước đây bị fetch xong rồi
+  **bỏ luôn**, không có chỗ hiển thị — một lần Inspect nhiều bước bị lỗi 1
+  bước giữa chừng trông y hệt như 1 lần Inspect hoàn toàn thành công, rất dễ
+  gây khó hiểu khi code sinh ra sau đó dùng sai selector. Đã thêm state
+  `inspectWarnings` + khối cảnh báo màu vàng hiển thị ngay dưới nút Inspect.
+- Thêm đầy đủ key i18n tương ứng cho cả `en.ts`/`vi.ts`; `tsc --noEmit` sạch
+  sau khi thêm.
+
+---
+
+## Lượt 4 — Nguyên nhân gốc khiến "Run Automation Test" fail liên tục sau khi Generate code
+
+**Triệu chứng báo cáo:** chạy automation test fail liên tục, nghi ngờ liên
+quan tới bước generate code trước đó.
+
+**Files:** `lib/automation/browser-runner.ts` (runtime fix),
+`app/api/ai/playwright/route.ts` (cảnh báo sớm),
+`lib/ai/prompts/playwright-agent.ts` (siết prompt).
+
+### Nguyên nhân gốc
+
+`runGeneratedScript()` — hàm THỰC SỰ chạy script khi bấm "Run Automation
+Test" — chỉ gọi `page.goto(env.target_url)` khi `env.login` được set
+(`auth_mode = 'login'`):
+
+```ts
+const page = await launched.context.newPage();  // trang mở ra là about:blank
+if (env.login) {
+  await page.goto(env.target_url, ...);          // CHỈ navigate ở nhánh này
+  ...
+}
+```
+
+Với `auth_mode = 'none'` hoặc `'cookie'` — **2 trường hợp phổ biến nhất**
+(app không cần đăng nhập, hoặc đăng nhập bằng cookie/session token) —
+**không có dòng nào điều hướng trang cả**. Runner phó mặc hoàn toàn việc
+`page.goto(target_url)` cho chính code do AI sinh ra, dựa vào đúng 1 dòng
+hướng dẫn "mềm" trong prompt (`playwright-agent.ts`): *"First navigation
+action is `await loginPage.goto()`... never call page.goto directly from the
+spec body"* — và **không có bất kỳ kiểm tra nào ở server xác nhận AI đã làm
+đúng điều này**.
+
+Chỉ cần AI quên thêm method `goto()` vào Page Object đầu tiên, viết sai bên
+trong nó, hoặc quên gọi nó trước tiên trong spec (rất dễ xảy ra vì đây chỉ là
+1 dòng nằm giữa 1 prompt rất dài, và về tinh thần có phần mâu thuẫn với đoạn
+khác trong chính prompt là *"start directly on the first real step"*) →
+**toàn bộ test chạy trên trang trắng `about:blank`** → **mọi lệnh
+click/fill/expect đều timeout** → run fail 100%, đúng kiểu "fail liên tục
+ngay sau generate" được báo cáo. Đối chiếu: `inspectEnvironment()` (dùng lúc
+bấm "Inspect") vốn đã làm ĐÚNG (luôn `page.goto()` trước khi check login) —
+chỉ riêng `runGeneratedScript()` (dùng lúc **Run**) bị thiếu, nên Inspect vẫn
+chạy tốt trong khi Run cứ fail, càng khớp với mô tả "vấn đề nằm ở sau bước
+generate/lúc chạy".
+
+### Đã sửa (3 lớp phòng thủ)
+
+1. **Runtime fix (quan trọng nhất — không phụ thuộc AI nữa):**
+   `runGeneratedScript()` giờ luôn `await page.goto(env.target_url, ...)`
+   ngay sau khi mở trang, với MỌI `auth_mode` — không chỉ `'login'`. Việc gọi
+   thêm lần nữa là vô hại kể cả khi code AI sinh ra cũng tự gọi `goto()` bên
+   trong Page Object của nó (Playwright điều hướng lại cùng 1 URL không gây
+   lỗi) — nghĩa là fix này chỉ có thể "cứu" 1 script bị lỗi, không thể phá
+   1 script đã đúng. Thứ tự gọi `performLoginFlow()` sau đó được giữ nguyên y
+   hệt trước (đã xác nhận `performLoginFlow` giả định trang đã ở đúng
+   `target_url`).
+2. **Cảnh báo sớm ngay lúc Generate:** `app/api/ai/playwright/route.ts` giờ
+   quét toàn bộ `code` + `page_objects[].code` sinh ra, nếu không tìm thấy
+   bất kỳ lệnh `.goto(` nào thì thêm 1 warning rõ ràng vào response (hiển thị
+   ngay dưới nút Generate) — báo trước cho người dùng biết export ra file
+   thật rồi chạy bằng `npx playwright test` (không có "lưới an toàn" của nút
+   Run trong app) sẽ fail ngay từ đầu, thay vì để họ tự khám phá qua nhiều
+   lần Run thất bại.
+3. **Siết lại prompt** (`playwright-agent.ts`): đổi hướng dẫn "mềm" cũ thành
+   yêu cầu **MANDATORY** rõ ràng — Page Object của trang đầu tiên PHẢI có
+   method `goto()` với nội dung chính xác `await this.page.goto('<target_url>')`,
+   và dòng đầu tiên sau khi khởi tạo các Page Object trong spec PHẢI là lệnh
+   gọi `goto()` đó. Đồng thời thêm 1 dòng vào SELF-VERIFICATION CHECKLIST mà
+   AI phải tự kiểm tra trước khi trả kết quả. Việc này quan trọng độc lập với
+   fix #1 vì cùng 1 `code`/`page_objects` còn được dùng làm file thật export
+   ra ngoài chạy bằng `npx playwright test`, nơi không có lưới an toàn của
+   runner trong app.
+
+`npx tsc --noEmit` sạch sau tất cả thay đổi.
+
+---
+
+## Lượt 5 — Bug nghiêm trọng thứ 2 (còn mang tính hệ thống hơn cả Lượt 4): `ReferenceError: test is not defined`
+
+**Yêu cầu:** dò lại toàn bộ flow xem còn sai chỗ nào.
+
+**File:** `lib/automation/browser-runner.ts` (runtime fix chính),
+`lib/ai/prompts/playwright-agent.ts` (đồng bộ lại mô tả RUNTIME CONTRACT cho
+đúng thực tế).
+
+### Nguyên nhân gốc — đã verify bằng thực nghiệm trực tiếp, không chỉ đọc code
+
+Prompt sinh code (`playwright-agent.ts`, mục OUTPUT CONTRACT, dòng 229) **bắt
+buộc** AI bọc MỌI bước test trong:
+```ts
+await test.step('Step N: <action>', async () => { ... });
+```
+
+Nhưng `runGeneratedScript()` thực thi code sinh ra bằng:
+```ts
+const runTestBody = new Function('page', 'expect', compiledBody); // chỉ 2 tham số!
+await runTestBody(page, expect);
+```
+
+`test` **không hề được truyền vào scope này**. Đã verify trực tiếp bằng
+Node.js (không chỉ suy luận từ đọc code):
+
+```
+$ node -e "new Function('page','expect','return (async()=>{ await test.step(\"s\", async()=>1); })();')({}, ()=>{}).catch(e=>console.log('LỖI:', e.message))"
+LỖI: test is not defined
+```
+
+Vì prompt bắt buộc mọi script sinh ra đều gọi `test.step(...)` ngay ở bước
+đầu tiên, **100% các lần Run đều crash ngay lập tức** với
+`ReferenceError: test is not defined` — không phụ thuộc site, selector, hay
+AI có sinh đúng hay không. Đây là bug **mang tính hệ thống và tất định hơn cả
+bug thiếu `page.goto()` ở Lượt 4** (bug đó chỉ xảy ra NẾU AI quên; bug này
+XẢY RA LUÔN vì chính kiến trúc thực thi thiếu mất 1 tham số). Rất có thể đây
+mới là nguyên nhân chính đằng sau "chạy automation test vẫn còn fail liên
+tục" mà bạn báo cáo.
+
+### Đã sửa
+
+Thêm 1 "shim" tối giản cho `test.step` và truyền nó vào làm tham số thứ 3 của
+`new Function`:
+
+```ts
+let currentStepLabel: string | undefined;
+const testStepShim = {
+  step: async (label, fn) => {
+    currentStepLabel = typeof label === 'string' ? label : currentStepLabel;
+    return typeof fn === 'function' ? await fn() : undefined;
+  },
+};
+const runTestBody = new Function('page', 'expect', 'test', ...);
+await runTestBody(page, expect, testStepShim);
+```
+
+Đã verify lại bằng thực nghiệm y hệt kịch bản lỗi ban đầu — chạy thành công,
+không còn `ReferenceError`.
+
+**Lợi ích phụ đi kèm (miễn phí, tận dụng luôn shim):** vì shim đã biết đang ở
+`test.step` nào, `failure_details.error_message` giờ được gắn thêm tiền tố
+`[Step N: <action>]` khi 1 bước fail — trước đây lỗi chỉ hiện dòng lỗi thô
+của Playwright (vd. "locator.click: Timeout 10000ms exceeded"), không rõ nó
+xảy ra ở bước nào trong số các bước của test case, phải tự đoán qua selector.
+
+**Vì sao chỉ cần shim tối giản, không cần replicate đầy đủ `test.step` thật
+của Playwright:** semantics đầy đủ của `test.step` thật (tích hợp reporter,
+nested timing, retry-per-step) chỉ có ý nghĩa khi export ra file thật rồi
+chạy bằng `npx playwright test` — ở đó, test runner CỦA CHÍNH NGƯỜI DÙNG đã
+cấp `test` thật rồi, code không cần thay đổi gì. Shim này chỉ cần phục vụ
+đúng 1 việc code sinh ra thực sự cần `test` để làm trong ngữ cảnh nút Run của
+app: gọi và await callback của bước đó.
+
+**Đối chiếu thêm:** chính RUNTIME CONTRACT trong prompt cũng tự mâu thuẫn —
+nói runner chỉ cấp `page`/`expect` trong khi vẫn bắt buộc dùng `test.step`;
+đã sửa luôn dòng mô tả này cho khớp với thực tế (giờ cấp thêm `test.step`).
+
+`npx tsc --noEmit` sạch sau tất cả thay đổi.
+
+### Đã rà thêm nhưng xác nhận KHÔNG phải bug (loại trừ bằng thực nghiệm)
+
+- **`expect(...).toBeVisible()` và các web-first assertion khác có cần chạy
+  trong context `test()` thật của Playwright Test Runner không?** → Không.
+  Đã kiểm tra trực tiếp trong source `node_modules/playwright/lib/matchers/expect.js`:
+  chỉ `toMatchSnapshot`/`toHaveScreenshot`/`toMatchAriaSnapshot` (không được
+  dùng ở đây) mới bắt buộc có `testInfo`; các assertion còn lại tự fallback
+  về timeout riêng khi không có test context, hoạt động bình thường.
+- **Selector chứa dấu ngoặc đơn trong accessible name** (vd. nút "Learn more
+  (opens new tab)") có thể làm `parseSelectorChain`'s regex (không cho phép
+  ngoặc lồng nhau) throw lỗi — nhưng đã xác nhận hàm này KHÔNG nằm trên
+  đường thực thi chính của code sinh ra (code chạy trực tiếp qua
+  `page.getByRole(...)` thật, không qua parser này); chỉ ảnh hưởng tới (a)
+  bước `inspection_steps` thủ công tham chiếu accessible name có ngoặc, và
+  (b) tính năng "khoanh đỏ phần tử lỗi trong screenshot" — cả 2 đều có
+  try/catch bao ngoài nên tối đa chỉ mất phần tô đỏ, không làm sai kết quả
+  pass/fail. Không sửa ở lượt này do mức ảnh hưởng thấp, ghi nhận để biết.
+

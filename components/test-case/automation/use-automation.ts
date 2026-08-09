@@ -42,6 +42,32 @@ export type RunResult = {
   failure_details: { error_message: string; selector?: string } | null;
 };
 
+export type InspectionStepAction = 'click' | 'fill' | 'press_enter' | 'goto';
+
+// Client-side draft of 1 inspection_steps[] entry (see lib/validators/playwright.ts#inspectionStepSchema).
+// `id` is a local-only key for React lists / edits - never sent to the API.
+export type InspectionStepDraft = {
+  id: string;
+  label: string;
+  action: InspectionStepAction;
+  selector: string; // required for click/fill/press_enter
+  value: string; // required for fill
+  url: string; // required for goto
+};
+
+const MAX_INSPECTION_STEPS = 10; // mirrors inspectionStepSchema's .max(10) on the server
+
+function newStepDraft(): InspectionStepDraft {
+  return {
+    id: Math.random().toString(36).slice(2),
+    label: '',
+    action: 'click',
+    selector: '',
+    value: '',
+    url: '',
+  };
+}
+
 type TestCaseForCodegen = {
   title: string;
   preconditions: string[];
@@ -104,10 +130,54 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   const [crawlEnabled, setCrawlEnabled] = useState(false);
   const [crawlMaxPages, setCrawlMaxPages] = useState(5);
 
+  // Multi-step inspection (Requirement 2 extension): drive the browser through a login
+  // redirect / modal / wizard BEFORE snapshotting, so multi-page flows end up grounded in
+  // the element map instead of the codegen prompt only ever seeing the first page loaded.
+  // Backend (inspectRequestSchema/runInspectionStep) has supported this since the previous
+  // audit pass; this is the UI that was missing to actually drive it.
+  const [inspectionSteps, setInspectionSteps] = useState<InspectionStepDraft[]>([]);
+
+  function addInspectionStep() {
+    setInspectionSteps((steps) => (steps.length >= MAX_INSPECTION_STEPS ? steps : [...steps, newStepDraft()]));
+  }
+  function updateInspectionStep(id: string, patch: Partial<InspectionStepDraft>) {
+    setInspectionSteps((steps) => steps.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }
+  function removeInspectionStep(id: string) {
+    setInspectionSteps((steps) => steps.filter((s) => s.id !== id));
+  }
+  function moveInspectionStep(id: string, direction: -1 | 1) {
+    setInspectionSteps((steps) => {
+      const idx = steps.findIndex((s) => s.id === id);
+      const swapWith = idx + direction;
+      if (idx === -1 || swapWith < 0 || swapWith >= steps.length) return steps;
+      const next = [...steps];
+      [next[idx], next[swapWith]] = [next[swapWith], next[idx]];
+      return next;
+    });
+  }
+
+  /** Drops the local-only `id` and empty optional fields before sending to the API. */
+  function buildInspectionStepsPayload() {
+    return inspectionSteps
+      .filter((s) => s.label.trim())
+      .map((s) => ({
+        label: s.label.trim(),
+        action: s.action,
+        selector: s.selector.trim() || undefined,
+        value: s.action === 'fill' ? s.value : undefined,
+        url: s.action === 'goto' ? s.url.trim() || undefined : undefined,
+      }));
+  }
+
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState('');
   const [elementMap, setElementMap] = useState<InspectedElement[]>([]);
   const [pageTitle, setPageTitle] = useState('');
+  // Non-fatal signals from Inspect (e.g. "step 'Click Sign in' failed, element map may be
+  // stale", "element map truncated at 400 elements") - previously fetched but silently
+  // discarded, so a partially-broken multi-step inspect looked identical to a clean one.
+  const [inspectWarnings, setInspectWarnings] = useState<string[]>([]);
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
@@ -135,12 +205,14 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   async function inspect() {
     setInspecting(true);
     setInspectError('');
+    setInspectWarnings([]);
     try {
       const res = await fetch('/api/automation/inspect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           environment: buildEnvironmentPayload(),
+          inspection_steps: buildInspectionStepsPayload(),
           crawl: crawlEnabled ? { enabled: true, max_pages: crawlMaxPages } : undefined,
         }),
       });
@@ -148,6 +220,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Inspect failed');
       setElementMap(json.data.element_map);
       setPageTitle(json.data.page_title);
+      setInspectWarnings(json.data.warnings ?? []);
     } catch (err) {
       setInspectError(err instanceof Error ? err.message : 'Inspect failed');
     } finally {
@@ -229,8 +302,14 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     setCrawlEnabled,
     crawlMaxPages,
     setCrawlMaxPages,
+    inspectionSteps,
+    addInspectionStep,
+    updateInspectionStep,
+    removeInspectionStep,
+    moveInspectionStep,
     inspecting,
     inspectError,
+    inspectWarnings,
     elementMap,
     pageTitle,
     inspect,

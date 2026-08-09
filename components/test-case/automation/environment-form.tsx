@@ -118,6 +118,111 @@ export function EnvironmentForm({ automation }: { automation: ReturnType<typeof 
       </div>
 
       <div className="mt-4 border-t border-gray-100 pt-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-gray-600">{e.inspectionSteps.heading}</p>
+            <p className="mt-1 text-xs text-gray-400">{e.inspectionSteps.help}</p>
+          </div>
+          <button
+            type="button"
+            onClick={automation.addInspectionStep}
+            disabled={automation.inspectionSteps.length >= 10}
+            className="shrink-0 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            {e.inspectionSteps.addButton}
+          </button>
+        </div>
+
+        {automation.inspectionSteps.length > 0 && (
+          <ol className="mt-3 space-y-3">
+            {automation.inspectionSteps.map((step, idx) => (
+              <li key={step.id} className="rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+                <div className="flex items-start gap-2">
+                  <span className="mt-2 shrink-0 text-xs font-bold text-gray-400">#{idx + 1}</span>
+                  <div className="grid flex-1 gap-2 sm:grid-cols-2">
+                    <input
+                      type="text"
+                      value={step.label}
+                      onChange={(ev) => automation.updateInspectionStep(step.id, { label: ev.target.value })}
+                      placeholder={e.inspectionSteps.labelPlaceholder}
+                      className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <select
+                      value={step.action}
+                      onChange={(ev) => automation.updateInspectionStep(step.id, { action: ev.target.value as any })}
+                      className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="click">{e.inspectionSteps.actionOptions.click}</option>
+                      <option value="fill">{e.inspectionSteps.actionOptions.fill}</option>
+                      <option value="press_enter">{e.inspectionSteps.actionOptions.press_enter}</option>
+                      <option value="goto">{e.inspectionSteps.actionOptions.goto}</option>
+                    </select>
+
+                    {step.action === 'goto' ? (
+                      <input
+                        type="url"
+                        value={step.url}
+                        onChange={(ev) => automation.updateInspectionStep(step.id, { url: ev.target.value })}
+                        placeholder={e.inspectionSteps.urlPlaceholder}
+                        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 sm:col-span-2"
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        value={step.selector}
+                        onChange={(ev) => automation.updateInspectionStep(step.id, { selector: ev.target.value })}
+                        placeholder={e.inspectionSteps.selectorPlaceholder}
+                        className={`w-full rounded-lg border border-gray-300 px-2.5 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                          step.action === 'fill' ? '' : 'sm:col-span-2'
+                        }`}
+                      />
+                    )}
+                    {step.action === 'fill' && (
+                      <input
+                        type="text"
+                        value={step.value}
+                        onChange={(ev) => automation.updateInspectionStep(step.id, { value: ev.target.value })}
+                        placeholder={e.inspectionSteps.valuePlaceholder}
+                        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => automation.moveInspectionStep(step.id, -1)}
+                      disabled={idx === 0}
+                      title={e.inspectionSteps.moveUp}
+                      className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => automation.moveInspectionStep(step.id, 1)}
+                      disabled={idx === automation.inspectionSteps.length - 1}
+                      title={e.inspectionSteps.moveDown}
+                      className="rounded border border-gray-300 px-1.5 py-0.5 text-xs text-gray-500 hover:bg-gray-100 disabled:opacity-30"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => automation.removeInspectionStep(step.id)}
+                      title={e.inspectionSteps.removeButton}
+                      className="rounded border border-red-200 px-1.5 py-0.5 text-xs text-red-500 hover:bg-red-50"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+
+      <div className="mt-4 border-t border-gray-100 pt-4">
         <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
           <input
             type="checkbox"
@@ -157,6 +262,16 @@ export function EnvironmentForm({ automation }: { automation: ReturnType<typeof 
         )}
       </div>
       {automation.inspectError && <p className="mt-2 text-xs font-semibold text-red-600">{automation.inspectError}</p>}
+      {automation.inspectWarnings.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+          <p className="mb-1 text-xs font-bold text-amber-800">{e.inspectWarningsHeading}</p>
+          <ul className="list-disc list-inside space-y-0.5 text-xs text-amber-700">
+            {automation.inspectWarnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

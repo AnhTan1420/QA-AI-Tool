@@ -79,6 +79,22 @@ export async function POST(req: Request) {
         rosterWarnings.push(`Thiếu Page Object dự kiến "${name}" (đã tính từ element map) trong kết quả AI trả về.`);
       }
     }
+
+    // 3c) Defense-in-depth NAVIGATION check: the prompt instructs the model to make the
+    // spec's FIRST action a Page Object goto() method that internally calls
+    // `this.page.goto(target_url)` - but nothing here enforced it actually happened. The
+    // in-app Run button no longer depends on this (lib/automation/browser-runner.ts's
+    // runGeneratedScript now always navigates itself before the test body runs, as a
+    // safety net), but the SAME code/page_objects are also meant to be exported as real
+    // files and run via `npx playwright test` in the user's own suite, where that safety
+    // net doesn't exist - so still flag it here rather than silently trusting the model.
+    const allGeneratedSource = [parsed.data.code, ...parsed.data.page_objects.map((po) => po.code)].join('\n');
+    if (!/\.goto\s*\(/.test(allGeneratedSource)) {
+      rosterWarnings.push(
+        'Không tìm thấy lệnh page.goto(...) nào trong code sinh ra - nếu export ra file thật và chạy bằng `npx playwright test`, test có thể fail ngay từ đầu vì trang chưa được điều hướng tới target URL. (Nút Run trong app vẫn hoạt động bình thường vì runner tự động điều hướng trước khi chạy.)',
+      );
+    }
+
     if (rosterWarnings.length > 0) {
       parsed.data.warnings = [...parsed.data.warnings, ...rosterWarnings];
     }
