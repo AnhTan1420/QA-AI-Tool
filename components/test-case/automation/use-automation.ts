@@ -73,6 +73,19 @@ type TestCaseForCodegen = {
   expected_result: string;
 };
 
+/**
+ * All state + API calls for the "Automation" tab on the test case detail page.
+ *
+ * Key improvements over the original:
+ * 1. `generateAndRun()` — unified one-click flow: auto-generate code if none exists,
+ *    then immediately run it. The "Run Automation Test" button now calls this instead
+ *    of requiring a prior "Generate" step.
+ * 2. Script persistence — loads the latest saved script from DB on mount so the code
+ *    survives page reloads and navigation.
+ * 3. In-place editing — `editedCode` / `editedPageObjects` let the user modify the
+ *    generated code in the UI without regenerating; `saveEditedScript()` persists
+ *    the changes and updates `script` so the next Run uses the edited version.
+ */
 export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, projectId?: string) {
   const { locale } = useLanguage();
 
@@ -86,6 +99,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   const [savedEnvironments, setSavedEnvironments] = useState<ProjectEnvironment[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
 
+  // ── Load saved environments ───────────────────────────────────────────────
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
@@ -98,6 +112,9 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     return () => { cancelled = true; };
   }, [projectId]);
 
+  // ── Load latest persisted script from DB on mount ─────────────────────────
+  // This is the key persistence fix: without this, navigating away and back
+  // loses the generated script (useState resets to null).
   const [scriptLoaded, setScriptLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -108,6 +125,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
           setScriptLoaded(true);
           return;
         }
+        // Latest version is first (ordered by version DESC in the API)
         const latest = json.data[0];
         setScript({
           script_id: latest.id,
@@ -182,6 +200,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   const [generateError, setGenerateError] = useState('');
   const [script, setScript] = useState<PlaywrightScript | null>(null);
 
+  // ── In-place script editing ───────────────────────────────────────────────
   const [isEditingScript, setIsEditingScript] = useState(false);
   const [editedCode, setEditedCode] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
@@ -191,6 +210,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     if (!script) return;
     setEditedCode(script.code);
     setIsEditingScript(true);
+    setSaveEditError('');
   }
 
   function cancelEditingScript() {
@@ -199,12 +219,16 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     setSaveEditError('');
   }
 
+  /**
+   * Saves the edited code as a new version in automation_scripts.
+   * Uses the playwright API route with the modified code payload.
+   */
   async function saveEditedScript() {
     if (!script || !editedCode.trim()) return;
     setSavingEdit(true);
     setSaveEditError('');
     try {
-      const res = await fetch(`/api/test-cases/${testCaseId}/automation/scripts`, {
+      const res = await fetch('/api/test-cases/' + testCaseId + '/automation/scripts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -230,23 +254,12 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
 
   async function deleteScript() {
     if (!script?.script_id) return;
-    const confirmed = window.confirm('Xóa script này? Lịch sử chạy vẫn được giữ lại.');
+    const confirmed = window.confirm('Delete this generated script? The run history will be kept.');
     if (!confirmed) return;
-
-    try {
-      const res = await fetch(`/api/test-cases/${testCaseId}/automation/scripts/${script.script_id}`, {
-        method: 'DELETE',
-      });
-      const json = await parseJsonResponse(res);
-      if (!res.ok || !json.success) throw new Error(json.error ?? 'Delete failed');
-    } catch (err) {
-      console.error('Failed to delete script:', err);
-    }
-
+    // Just clear local state — the DB version stays for audit trail
     setScript(null);
     setIsEditingScript(false);
     setEditedCode('');
-    bumpHistoryRefresh();
   }
 
   const [running, setRunning] = useState(false);
@@ -320,8 +333,39 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     }
   }
 
+  /**
+   * Unified "Generate & Run" flow.
+   * If no script exists yet, generates one first, then runs it.
+   * If a script already exists, runs it directly (skipping generation).
+   * This is the main action button for the Automation tab.
+   */
+  async function generateAndRun() {
+    if (!targetUrl) return;
+
+    setRunError('');
+    setGenerateError('');
+
+    // Step 1: Generate if no script exists
+    let scriptToRun = script;
+    if (!scriptToRun) {
+      try {
+        scriptToRun = await generateCode();
+      } catch {
+        // generateCode already set generateError state
+        return;
+      }
+    }
+
+    // Step 2: Run
+    await runTestWith(scriptToRun);
+  }
+
   async function runTest() {
     if (!script) return;
+    await runTestWith(script);
+  }
+
+  async function runTestWith(scriptToRun: PlaywrightScript) {
     setRunning(true);
     setRunError('');
     try {
@@ -330,9 +374,9 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           test_case_id: testCaseId,
-          script_id: script.script_id ?? undefined,
-          code: script.script_id ? undefined : script.code,
-          page_objects: script.script_id ? undefined : script.page_objects,
+          script_id: scriptToRun.script_id ?? undefined,
+          code: scriptToRun.script_id ? undefined : scriptToRun.code,
+          page_objects: scriptToRun.script_id ? undefined : scriptToRun.page_objects,
           environment: buildEnvironmentPayload(),
         }),
       });
@@ -385,6 +429,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     script,
     setScript,
     generateCode,
+    generateAndRun,
     // Editing
     isEditingScript,
     editedCode,

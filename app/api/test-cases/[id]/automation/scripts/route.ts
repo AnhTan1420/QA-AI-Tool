@@ -8,13 +8,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
+  // Only return the single active script (no version history)
   const { data, error } = await supabase
     .from('automation_scripts')
     .select('id, version, code, page_objects, imports_used, selectors_used, warnings, created_at, profiles(full_name)')
     .eq('test_case_id', testCaseId)
     .is('deleted_at', null)
     .order('version', { ascending: false })
-    .limit(10);
+    .limit(1);
 
   if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
 
@@ -23,7 +24,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
 /**
  * POST /api/test-cases/[id]/automation/scripts
- * Saves a manually-edited Playwright script as a new version.
+ * Upsert: update existing script OR insert new one. No versioning.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: testCaseId } = await params;
@@ -33,28 +34,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
   const body = await req.json();
-  const { code, page_objects, imports_used, selectors_used, warnings } = body;
+  const { code, page_objects, imports_used, selectors_used, warnings, script_id } = body;
 
   if (!code || typeof code !== 'string') {
     return NextResponse.json({ success: false, error: 'Missing code' }, { status: 400 });
   }
 
-  const { data: existing } = await supabase
-    .from('automation_scripts')
-    .select('version')
-    .eq('test_case_id', testCaseId)
-    .is('deleted_at', null)
-    .order('version', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // If script_id provided, update existing; otherwise insert new
+  if (script_id) {
+    const { data: updated, error: updateError } = await supabase
+      .from('automation_scripts')
+      .update({
+        code,
+        page_objects: page_objects ?? [],
+        imports_used: imports_used ?? [],
+        selectors_used: selectors_used ?? [],
+        warnings: warnings ?? [],
+        generated_by: user.id,
+      })
+      .eq('id', script_id)
+      .eq('test_case_id', testCaseId)
+      .select('id, version')
+      .single();
 
-  const nextVersion = (existing?.version ?? 0) + 1;
+    if (updateError || !updated) {
+      return NextResponse.json({ success: false, error: updateError?.message ?? 'Update failed' }, { status: 500 });
+    }
 
+    return NextResponse.json({ success: true, data: { id: updated.id, version: updated.version } });
+  }
+
+  // Insert new (first time)
   const { data: saved, error: saveError } = await supabase
     .from('automation_scripts')
     .insert({
       test_case_id: testCaseId,
-      version: nextVersion,
+      version: 1,
       code,
       page_objects: page_objects ?? [],
       imports_used: imports_used ?? [],
@@ -62,7 +77,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       warnings: warnings ?? [],
       generated_by: user.id,
     })
-    .select('id')
+    .select('id, version')
     .single();
 
   if (saveError || !saved) {
@@ -75,5 +90,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .eq('id', testCaseId)
     .eq('automation_status', 'not_generated');
 
-  return NextResponse.json({ success: true, data: { id: saved.id, version: nextVersion } });
+  return NextResponse.json({ success: true, data: { id: saved.id, version: saved.version } });
 }
