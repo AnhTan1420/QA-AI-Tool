@@ -30,17 +30,6 @@ type RunEntry = {
   profiles: { full_name: string | null } | null;
 };
 
-/**
- * Read-only history of past generated script versions + past run results for this test
- * case (see requirement 6: "view/edit source after a run").
- *
- * `refreshKey` lets the parent (AutomationPanel) force a re-fetch right after a new
- * script is generated or a new run finishes, WITHOUT this component needing to know
- * anything about useAutomation's internals - bump a counter and this effect re-runs.
- * Before this, the list only ever fetched once on mount, so a freshly generated script
- * or a freshly finished run was invisible here until the whole page was reloaded, even
- * though it was already saved correctly in the DB.
- */
 export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: string; refreshKey?: number }) {
   const { t } = useLanguage();
   const h = t.automation.history;
@@ -48,10 +37,8 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
   const [scripts, setScripts] = useState<ScriptEntry[]>([]);
   const [runs, setRuns] = useState<RunEntry[]>([]);
   const [expandedScriptId, setExpandedScriptId] = useState<string | null>(null);
-  // Only the VERY FIRST load blanks the panel - a refresh triggered by refreshKey (new
-  // script/run just completed) keeps showing the current list while the new data comes
-  // in, instead of flickering to nothing and back on every Generate/Run.
   const [initialLoading, setInitialLoading] = useState(true);
+  const [zoomImage, setZoomImage] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,9 +53,7 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
       setInitialLoading(false);
     }
     load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [testCaseId, refreshKey]);
 
   if (initialLoading) return null;
@@ -100,7 +85,7 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
                       {(s.page_objects ?? []).map((po) => (
                         <div key={po.file_name}>
                           <p className="mb-1 font-mono text-[11px] text-gray-400">{po.file_name}</p>
-                          <pre className="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
+                          <pre className="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100 whitespace-pre-wrap break-words">
                             {po.code}
                           </pre>
                         </div>
@@ -109,7 +94,7 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
                         {(s.page_objects ?? []).length > 0 && (
                           <p className="mb-1 font-mono text-[11px] text-gray-400">{t.automation.code.specTabLabel}</p>
                         )}
-                        <pre className="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100">
+                        <pre className="max-h-64 overflow-auto rounded-lg bg-slate-900 p-3 text-xs text-slate-100 whitespace-pre-wrap break-words">
                           {s.code}
                         </pre>
                       </div>
@@ -125,21 +110,81 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
       {runs.length > 0 && (
         <div className="rounded-xl border border-gray-200 bg-white p-6">
           <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-700">{h.runsHeading}</h3>
-          <ol className="space-y-2">
+          <ol className="space-y-3">
             {runs.map((run) => (
-              <li key={run.id} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50/60 p-3 text-xs">
-                <span
-                  className={`rounded-full px-2 py-0.5 font-bold ${
-                    run.status === 'passed' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                  }`}
-                >
-                  {t.automation.run.status[run.status]}
-                </span>
-                <span className="text-gray-500">{t.automation.run.durationLabel(run.duration_ms)}</span>
-                <span className="ml-auto text-gray-400">{new Date(run.started_at).toLocaleString()}</span>
+              <li key={run.id} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3 text-xs space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span
+                    className={`rounded-full px-2 py-0.5 font-bold ${
+                      run.status === 'passed' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                    }`}
+                  >
+                    {t.automation.run.status[run.status]}
+                  </span>
+                  <span className="text-gray-500">{t.automation.run.durationLabel(run.duration_ms)}</span>
+                  <span className="ml-auto text-gray-400">{new Date(run.started_at).toLocaleString()}</span>
+                </div>
+
+                {run.screenshot_url && (
+                  <div className="flex items-start gap-2">
+                    <img
+                      src={run.screenshot_url}
+                      alt={`Run ${run.id}`}
+                      className="h-20 w-auto rounded border border-gray-200 object-contain cursor-zoom-in hover:opacity-80 transition"
+                      onClick={() => setZoomImage(run.screenshot_url)}
+                    />
+                    <a
+                      href={run.screenshot_url}
+                      download={`run-${run.id}-screenshot.png`}
+                      className="rounded border border-gray-300 px-2 py-1 text-[10px] font-semibold text-gray-600 hover:bg-gray-100"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      ↓ Download
+                    </a>
+                  </div>
+                )}
+
+                {run.failure_details && (
+                  <div className="rounded bg-red-50 border border-red-100 p-2 text-red-700">
+                    <p className="font-semibold">{run.failure_details.error_message}</p>
+                    {run.failure_details.selector && (
+                      <p className="mt-0.5 text-[10px] opacity-80">Selector: {run.failure_details.selector}</p>
+                    )}
+                  </div>
+                )}
               </li>
             ))}
           </ol>
+        </div>
+      )}
+
+      {/* Zoom Modal */}
+      {zoomImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          onClick={() => setZoomImage(null)}
+        >
+          <div className="relative max-w-full max-h-full">
+            <img
+              src={zoomImage}
+              alt="Zoomed screenshot"
+              className="max-w-full max-h-[90vh] rounded-lg shadow-2xl object-contain"
+            />
+            <a
+              href={zoomImage}
+              download="screenshot.png"
+              className="absolute top-2 right-2 rounded bg-white/90 px-3 py-1.5 text-xs font-bold text-gray-800 shadow hover:bg-white"
+              onClick={(e) => e.stopPropagation()}
+            >
+              ↓ Download
+            </a>
+            <button
+              onClick={() => setZoomImage(null)}
+              className="absolute top-2 left-2 rounded bg-white/90 px-3 py-1.5 text-xs font-bold text-gray-800 shadow hover:bg-white"
+            >
+              ✕ Close
+            </button>
+          </div>
         </div>
       )}
     </div>

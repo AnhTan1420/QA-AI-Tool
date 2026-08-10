@@ -5,6 +5,7 @@ import { buildPlaywrightCodegenPrompt, groupElementMapByPage } from '@/lib/ai/pr
 import { buildPlaywrightResponseSchema } from '@/lib/ai/prompts/playwright-response-schema';
 import { playwrightCodegenRequestSchema, playwrightScriptSchema } from '@/lib/validators/playwright';
 import { createClient } from '@/lib/supabase/server';
+import { uploadScriptToR2, isR2Configured } from '@/lib/automation/r2-storage';
 
 // Chạy browser (inspect/run) diễn ra ở /api/automation/*, không phải ở đây -
 // route này CHỈ gọi LLM để sinh code, giữ đúng nguyên tắc mỗi route 1 trách nhiệm.
@@ -142,13 +143,27 @@ export async function POST(req: Request) {
         console.error('[ai/playwright] Lỗi lưu automation_scripts:', saveError.message);
       } else {
         savedScriptId = saved.id;
-        // Badge trạng thái ở library list (test-cases table) - "generated" trừ khi
-        // đã có kết quả pass/fail trước đó (không hạ cấp trạng thái khi generate lại).
+
+        // Optional: mirror the script text to Cloudflare R2 for durable, portable
+        // storage alongside screenshots (see CLOUDFLARE_R2_SETUP.md). This is
+        // best-effort and never blocks the response - automation_scripts.code in
+        // Postgres remains the source of truth the app reads from.
+        if (isR2Configured()) {
+          uploadScriptToR2(testCaseId, saved.id, parsed.data.code).catch((err) => {
+            console.warn('[ai/playwright] R2 script mirror failed (non-fatal):', err);
+          });
+        }
+
+        // Badge trạng thái ở library list (test-cases table). Mỗi lần generate/
+        // regenerate MOI đều set lại về "generated" - kể cả khi trước đó đã có
+        // pass/fail - vì code vừa sinh ra CHƯA được chạy lại, nên badge "passed"/
+        // "failed" cũ không còn phản ánh đúng code hiện tại (fix Section 6 audit:
+        // trước đây filter .eq('automation_status', 'not_generated') khiến badge
+        // bị kẹt ở "passed"/"failed" cũ dù code đã đổi hoàn toàn).
         await supabase
           .from('test_cases')
           .update({ automation_status: 'generated' })
-          .eq('id', testCaseId)
-          .eq('automation_status', 'not_generated');
+          .eq('id', testCaseId);
       }
     }
 

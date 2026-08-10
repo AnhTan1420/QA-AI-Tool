@@ -1,25 +1,79 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-/**
- * Lịch sử các bản Playwright script đã sinh cho 1 test case (bảng automation_scripts),
- * mới nhất lên đầu - cùng tinh thần với /api/test-cases/[id]/versions. Mỗi lần "Generate
- * Playwright Code" tạo 1 version mới (xem app/api/ai/playwright/route.ts), KHÔNG ghi đè.
- * RLS (automation_scripts_member_access) đã giới hạn chỉ thành viên project mới đọc được.
- */
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id: testCaseId } = await params;
+
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
 
   const { data, error } = await supabase
     .from('automation_scripts')
-    .select('id, version, page_objects, code, imports_used, selectors_used, warnings, environment, model_used, created_at, profiles(full_name)')
-    .eq('test_case_id', id)
-    .order('version', { ascending: false });
+    .select('id, version, code, page_objects, imports_used, selectors_used, warnings, created_at, profiles(full_name)')
+    .eq('test_case_id', testCaseId)
+    .is('deleted_at', null)
+    .order('version', { ascending: false })
+    .limit(10);
 
-  if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+
+  return NextResponse.json({ success: true, data: data ?? [] });
+}
+
+/**
+ * POST /api/test-cases/[id]/automation/scripts
+ * Saves a manually-edited Playwright script as a new version.
+ */
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id: testCaseId } = await params;
+
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+
+  const body = await req.json();
+  const { code, page_objects, imports_used, selectors_used, warnings } = body;
+
+  if (!code || typeof code !== 'string') {
+    return NextResponse.json({ success: false, error: 'Missing code' }, { status: 400 });
   }
 
-  return NextResponse.json({ success: true, data });
+  const { data: existing } = await supabase
+    .from('automation_scripts')
+    .select('version')
+    .eq('test_case_id', testCaseId)
+    .is('deleted_at', null)
+    .order('version', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const nextVersion = (existing?.version ?? 0) + 1;
+
+  const { data: saved, error: saveError } = await supabase
+    .from('automation_scripts')
+    .insert({
+      test_case_id: testCaseId,
+      version: nextVersion,
+      code,
+      page_objects: page_objects ?? [],
+      imports_used: imports_used ?? [],
+      selectors_used: selectors_used ?? [],
+      warnings: warnings ?? [],
+      generated_by: user.id,
+    })
+    .select('id')
+    .single();
+
+  if (saveError || !saved) {
+    return NextResponse.json({ success: false, error: saveError?.message ?? 'Save failed' }, { status: 500 });
+  }
+
+  await supabase
+    .from('test_cases')
+    .update({ automation_status: 'generated' })
+    .eq('id', testCaseId)
+    .eq('automation_status', 'not_generated');
+
+  return NextResponse.json({ success: true, data: { id: saved.id, version: nextVersion } });
 }

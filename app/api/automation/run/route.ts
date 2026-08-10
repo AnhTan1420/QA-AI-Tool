@@ -4,6 +4,7 @@ import { runRequestSchema, type PageObject } from '@/lib/validators/playwright';
 import { runGeneratedScript } from '@/lib/automation/browser-runner';
 import { uploadRunScreenshot } from '@/lib/automation/screenshot-storage';
 import { createClient } from '@/lib/supabase/server';
+import { checkRunRateLimit } from '@/lib/automation/rate-limit';
 
 export const maxDuration = 120;
 export const runtime = 'nodejs';
@@ -27,6 +28,20 @@ export async function POST(req: Request) {
     } = await supabase.auth.getUser();
     if (!user) {
       return NextResponse.json({ success: false, error: 'Bạn cần đăng nhập.' }, { status: 401 });
+    }
+
+    // Basic per-user cooldown - each run holds a real headless browser for up to
+    // 45s (see AUDIT_REPORT.md item H). Best-effort, in-memory, non-global - see
+    // lib/automation/rate-limit.ts doc comment for exact scope/limitations.
+    const rateLimit = checkRunRateLimit(user.id);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Vui lòng đợi ${Math.ceil(rateLimit.retryAfterMs / 1000)}s trước khi chạy automation tiếp theo (tránh chạy quá nhiều browser cùng lúc).`,
+        },
+        { status: 429 },
+      );
     }
 
     // Resolve the code to run: an explicit ad-hoc `code` (+ `page_objects`) payload, or
