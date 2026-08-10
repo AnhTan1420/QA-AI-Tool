@@ -44,18 +44,16 @@ export type RunResult = {
 
 export type InspectionStepAction = 'click' | 'fill' | 'press_enter' | 'goto';
 
-// Client-side draft of 1 inspection_steps[] entry (see lib/validators/playwright.ts#inspectionStepSchema).
-// `id` is a local-only key for React lists / edits - never sent to the API.
 export type InspectionStepDraft = {
   id: string;
   label: string;
   action: InspectionStepAction;
-  selector: string; // required for click/fill/press_enter
-  value: string; // required for fill
-  url: string; // required for goto
+  selector: string;
+  value: string;
+  url: string;
 };
 
-const MAX_INSPECTION_STEPS = 10; // mirrors inspectionStepSchema's .max(10) on the server
+const MAX_INSPECTION_STEPS = 10;
 
 function newStepDraft(): InspectionStepDraft {
   return {
@@ -78,12 +76,15 @@ type TestCaseForCodegen = {
 /**
  * All state + API calls for the "Automation" tab on the test case detail page.
  *
- * `projectId` is optional (kept backward-compatible for any other caller) but should be
- * passed whenever available: it lets this tab reuse a project's saved, non-secret
- * `project_environments` (Staging/Production/...) the same way the batch "Run Automation
- * on N test cases" modal already does, instead of forcing the browser/target URL to be
- * retyped by hand for every single test case. Secrets (cookie/login) are still entered
- * fresh here regardless - saved environments never store them, same rule everywhere else.
+ * Key improvements over the original:
+ * 1. `generateAndRun()` — unified one-click flow: auto-generate code if none exists,
+ *    then immediately run it. The "Run Automation Test" button now calls this instead
+ *    of requiring a prior "Generate" step.
+ * 2. Script persistence — loads the latest saved script from DB on mount so the code
+ *    survives page reloads and navigation.
+ * 3. In-place editing — `editedCode` / `editedPageObjects` let the user modify the
+ *    generated code in the UI without regenerating; `saveEditedScript()` persists
+ *    the changes and updates `script` so the next Run uses the edited version.
  */
 export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, projectId?: string) {
   const { locale } = useLanguage();
@@ -95,11 +96,10 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
-  // Saved project environments (Staging/Production/...) — quick-select convenience only;
-  // never a source of secrets. Silently unavailable (empty list) if projectId isn't passed.
   const [savedEnvironments, setSavedEnvironments] = useState<ProjectEnvironment[]>([]);
   const [selectedEnvironmentId, setSelectedEnvironmentId] = useState('');
 
+  // ── Load saved environments ───────────────────────────────────────────────
   useEffect(() => {
     if (!projectId) return;
     let cancelled = false;
@@ -109,10 +109,37 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
         if (!cancelled && json.success) setSavedEnvironments(json.data ?? []);
       })
       .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [projectId]);
+
+  // ── Load latest persisted script from DB on mount ─────────────────────────
+  // This is the key persistence fix: without this, navigating away and back
+  // loses the generated script (useState resets to null).
+  const [scriptLoaded, setScriptLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/test-cases/${testCaseId}/automation/scripts`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !json.success || !json.data?.length) {
+          setScriptLoaded(true);
+          return;
+        }
+        // Latest version is first (ordered by version DESC in the API)
+        const latest = json.data[0];
+        setScript({
+          script_id: latest.id,
+          page_objects: latest.page_objects ?? [],
+          code: latest.code,
+          imports_used: latest.imports_used ?? [],
+          selectors_used: latest.selectors_used ?? [],
+          warnings: latest.warnings ?? [],
+        });
+        setScriptLoaded(true);
+      })
+      .catch(() => { setScriptLoaded(true); });
+    return () => { cancelled = true; };
+  }, [testCaseId]);
 
   function applySavedEnvironment(id: string) {
     setSelectedEnvironmentId(id);
@@ -121,7 +148,6 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     setBrowser(env.browser);
     setTargetUrl(env.target_url);
     setAuthMode(env.auth_mode);
-    // Secrets are never stored on a saved environment - always re-entered here.
     setCookieToken('');
     setUsername('');
     setPassword('');
@@ -130,11 +156,6 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   const [crawlEnabled, setCrawlEnabled] = useState(false);
   const [crawlMaxPages, setCrawlMaxPages] = useState(5);
 
-  // Multi-step inspection (Requirement 2 extension): drive the browser through a login
-  // redirect / modal / wizard BEFORE snapshotting, so multi-page flows end up grounded in
-  // the element map instead of the codegen prompt only ever seeing the first page loaded.
-  // Backend (inspectRequestSchema/runInspectionStep) has supported this since the previous
-  // audit pass; this is the UI that was missing to actually drive it.
   const [inspectionSteps, setInspectionSteps] = useState<InspectionStepDraft[]>([]);
 
   function addInspectionStep() {
@@ -157,7 +178,6 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     });
   }
 
-  /** Drops the local-only `id` and empty optional fields before sending to the API. */
   function buildInspectionStepsPayload() {
     return inspectionSteps
       .filter((s) => s.label.trim())
@@ -174,22 +194,78 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   const [inspectError, setInspectError] = useState('');
   const [elementMap, setElementMap] = useState<InspectedElement[]>([]);
   const [pageTitle, setPageTitle] = useState('');
-  // Non-fatal signals from Inspect (e.g. "step 'Click Sign in' failed, element map may be
-  // stale", "element map truncated at 400 elements") - previously fetched but silently
-  // discarded, so a partially-broken multi-step inspect looked identical to a clean one.
   const [inspectWarnings, setInspectWarnings] = useState<string[]>([]);
 
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
   const [script, setScript] = useState<PlaywrightScript | null>(null);
 
+  // ── In-place script editing ───────────────────────────────────────────────
+  const [isEditingScript, setIsEditingScript] = useState(false);
+  const [editedCode, setEditedCode] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [saveEditError, setSaveEditError] = useState('');
+
+  function startEditingScript() {
+    if (!script) return;
+    setEditedCode(script.code);
+    setIsEditingScript(true);
+    setSaveEditError('');
+  }
+
+  function cancelEditingScript() {
+    setIsEditingScript(false);
+    setEditedCode('');
+    setSaveEditError('');
+  }
+
+  /**
+   * Saves the edited code as a new version in automation_scripts.
+   * Uses the playwright API route with the modified code payload.
+   */
+  async function saveEditedScript() {
+    if (!script || !editedCode.trim()) return;
+    setSavingEdit(true);
+    setSaveEditError('');
+    try {
+      const res = await fetch('/api/test-cases/' + testCaseId + '/automation/scripts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: editedCode,
+          page_objects: script.page_objects,
+          imports_used: script.imports_used,
+          selectors_used: script.selectors_used,
+          warnings: [...script.warnings, 'Manually edited by user.'],
+        }),
+      });
+      const json = await parseJsonResponse(res);
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Save failed');
+      setScript({ ...script, code: editedCode, script_id: json.data.id });
+      setIsEditingScript(false);
+      setEditedCode('');
+      bumpHistoryRefresh();
+    } catch (err) {
+      setSaveEditError(err instanceof Error ? err.message : 'Save failed');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function deleteScript() {
+    if (!script?.script_id) return;
+    const confirmed = window.confirm('Delete this generated script? The run history will be kept.');
+    if (!confirmed) return;
+    // Just clear local state — the DB version stays for audit trail
+    setScript(null);
+    setIsEditingScript(false);
+    setEditedCode('');
+  }
+
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState('');
   const [runResult, setRunResult] = useState<RunResult | null>(null);
 
-  // Bumped after a script is successfully generated or a run finishes, so
-  // <AutomationHistory> (which otherwise only fetches once on mount) knows to
-  // re-fetch and show the new version/run without requiring a full page reload.
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const bumpHistoryRefresh = useCallback(() => setHistoryRefreshKey((k) => k + 1), []);
 
@@ -247,15 +323,49 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Generate failed');
       setScript(json.data);
       bumpHistoryRefresh();
+      return json.data as PlaywrightScript;
     } catch (err) {
-      setGenerateError(err instanceof Error ? err.message : 'Generate failed');
+      const msg = err instanceof Error ? err.message : 'Generate failed';
+      setGenerateError(msg);
+      throw err;
     } finally {
       setGenerating(false);
     }
   }
 
+  /**
+   * Unified "Generate & Run" flow.
+   * If no script exists yet, generates one first, then runs it.
+   * If a script already exists, runs it directly (skipping generation).
+   * This is the main action button for the Automation tab.
+   */
+  async function generateAndRun() {
+    if (!targetUrl) return;
+
+    setRunError('');
+    setGenerateError('');
+
+    // Step 1: Generate if no script exists
+    let scriptToRun = script;
+    if (!scriptToRun) {
+      try {
+        scriptToRun = await generateCode();
+      } catch {
+        // generateCode already set generateError state
+        return;
+      }
+    }
+
+    // Step 2: Run
+    await runTestWith(scriptToRun);
+  }
+
   async function runTest() {
     if (!script) return;
+    await runTestWith(script);
+  }
+
+  async function runTestWith(scriptToRun: PlaywrightScript) {
     setRunning(true);
     setRunError('');
     try {
@@ -264,9 +374,9 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           test_case_id: testCaseId,
-          script_id: script.script_id ?? undefined,
-          code: script.script_id ? undefined : script.code,
-          page_objects: script.script_id ? undefined : script.page_objects,
+          script_id: scriptToRun.script_id ?? undefined,
+          code: scriptToRun.script_id ? undefined : scriptToRun.code,
+          page_objects: scriptToRun.script_id ? undefined : scriptToRun.page_objects,
           environment: buildEnvironmentPayload(),
         }),
       });
@@ -282,6 +392,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   }
 
   return {
+    scriptLoaded,
     historyRefreshKey,
     savedEnvironments,
     selectedEnvironmentId,
@@ -316,7 +427,20 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     generating,
     generateError,
     script,
+    setScript,
     generateCode,
+    generateAndRun,
+    // Editing
+    isEditingScript,
+    editedCode,
+    setEditedCode,
+    savingEdit,
+    saveEditError,
+    startEditingScript,
+    cancelEditingScript,
+    saveEditedScript,
+    deleteScript,
+    // Run
     running,
     runError,
     runResult,

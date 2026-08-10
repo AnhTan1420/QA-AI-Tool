@@ -246,41 +246,133 @@ async function firstVisibleMatch(page: any, selectors: string[]) {
   return null;
 }
 
+/**
+ * BUG FIX (Section 5 — "login credentials fail to authenticate when testing
+ * custom URLs like qa-ai-tool-jordan.vercel.app"):
+ *
+ * Root causes identified and fixed:
+ *  1. Next.js/Supabase-Auth apps hydrate their login form CLIENT-SIDE after the
+ *     initial HTML loads. The old code only waited for 'domcontentloaded' before
+ *     the goto() upstream of this function, then immediately searched for fields -
+ *     on a fast server response but slow client hydration, the form literally
+ *     doesn't exist in the DOM yet, so firstVisibleMatch() finds nothing and the
+ *     whole login silently degrades to a "field not found" warning.
+ *  2. `input[type="email"]` was NOT the first priority even though it's the most
+ *     common + most reliable selector for modern auth stacks (Supabase Auth UI,
+ *     NextAuth, Clerk all default to type="email"). It's now first.
+ *  3. No retry/settle wait after fill() before submit - some frameworks debounce
+ *     validation on the input and the submit button stays disabled for ~200-500ms
+ *     after fill() (React controlled-input re-render lag). Added a short
+ *     `waitForTimeout` is explicitly AVOIDED per project conventions (banned
+ *     pattern) - instead we wait for the submit button to become enabled.
+ *  4. Submit button detection didn't cover generic `button` elements whose only
+ *     signal is text content containing "sign in"/"login"/"log in" without an
+ *     exact match requirement - tightened AND broadened via case-insensitive
+ *     substring checks below.
+ *  5. After submit, only waited for 'domcontentloaded' - for an SPA/Next.js app
+ *     the URL may change via client-side routing without a full navigation
+ *     event, so we now race waitForURL (any change) against a short
+ *     networkidle wait, whichever resolves first, so we don't return before the
+ *     redirect completes.
+ */
 async function performLoginFlow(page: any, login: { username: string; password: string }): Promise<string[]> {
   const warnings: string[] = [];
+  const startUrl = page.url();
+
+  // Give client-hydrated forms (Next.js, React, Supabase Auth UI, Clerk, etc.)
+  // a real chance to mount before searching for fields. This does NOT use the
+  // banned fixed-delay pattern in isolation - it's bounded by a real Playwright
+  // wait condition (network settling) with a capped timeout, then we still
+  // proceed with best-effort even if it times out (a slow site shouldn't hard-fail).
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+
   const usernameField = await firstVisibleMatch(page, [
     'input[type="email"]',
     'input[autocomplete="username"]',
-    'input[name*="user" i]',
+    'input[autocomplete="email"]',
     'input[name*="email" i]',
-    'input[id*="user" i]',
+    'input[name*="user" i]',
     'input[id*="email" i]',
+    'input[id*="user" i]',
+    'input[placeholder*="email" i]',
+    'input[placeholder*="username" i]',
   ]);
-  const passwordField = await firstVisibleMatch(page, ['input[type="password"]']);
+  const passwordField = await firstVisibleMatch(page, [
+    'input[type="password"]',
+    'input[autocomplete="current-password"]',
+  ]);
 
   if (!usernameField || !passwordField) {
     warnings.push(
-      'Không tự động tìm được form đăng nhập (username/password field) trên target_url - element map có thể phản ánh trang login thay vì trang đích. Hãy kiểm tra lại target_url, hoặc dùng cookie/session token thay vì login.',
+      'Không tự động tìm được form đăng nhập (username/password field) trên target_url sau khi đợi trang tải xong (bao gồm cả các form được render bằng JS/React) - element map có thể phản ánh trang login thay vì trang đích. Hãy kiểm tra lại target_url, hoặc dùng cookie/session token thay vì login (khuyến nghị cho Next.js/Supabase Auth, OAuth, hoặc form đăng nhập tùy chỉnh).',
     );
     return warnings;
   }
 
+  // fill() already waits for the element to be actionable (visible + enabled +
+  // stable) - no manual wait needed before this.
   await usernameField.fill(login.username);
   await passwordField.fill(login.password);
+
+  // Give controlled-input validation (React/Vue re-render on every keystroke)
+  // a moment to settle so a "disabled until valid" submit button has a chance
+  // to become clickable - bounded wait, not a blind sleep.
+  await page
+    .waitForFunction(
+      () => {
+        const btn = document.querySelector('button[type="submit"], input[type="submit"]') as HTMLButtonElement | null;
+        return !btn || !btn.disabled;
+      },
+      { timeout: 3000 },
+    )
+    .catch(() => {});
 
   const submitButton = await firstVisibleMatch(page, [
     'button[type="submit"]',
     'input[type="submit"]',
     'button:has-text("Log in")',
+    'button:has-text("Log In")',
     'button:has-text("Sign in")',
+    'button:has-text("Sign In")',
+    'button:has-text("Continue")',
     'button:has-text("Đăng nhập")',
   ]);
+
   if (submitButton) {
-    await submitButton.click();
+    await submitButton.click({ timeout: 10000 }).catch(async () => {
+      // Button matched but click was intercepted/blocked (e.g. overlay) -
+      // fall back to submitting via Enter on the password field instead of
+      // silently failing.
+      await passwordField.press('Enter').catch(() => {});
+    });
   } else {
     await passwordField.press('Enter');
   }
+
+  // Wait for EITHER a URL change (SPA client-side routing or full navigation)
+  // OR the network settling, whichever happens first - covers both classic
+  // server-redirect logins and client-side-routed logins (Next.js/Supabase).
+  await Promise.race([
+    page.waitForURL((url: URL) => url.toString() !== startUrl, { timeout: 15000 }).catch(() => {}),
+    page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {}),
+  ]);
   await page.waitForLoadState('domcontentloaded').catch(() => {});
+
+  // Post-login sanity check: if we're still on what looks like a login page
+  // (password field still visible), the login most likely failed (wrong
+  // creds, unhandled 2FA/CAPTCHA) - surface this instead of silently
+  // continuing with a still-unauthenticated session.
+  const stillHasPasswordField = await page
+    .locator('input[type="password"]')
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (stillHasPasswordField && page.url() === startUrl) {
+    warnings.push(
+      'Sau khi submit form đăng nhập, trang vẫn hiển thị lại field password và URL không đổi - đăng nhập có thể đã thất bại (sai thông tin, cần xác thực 2 lớp, hoặc CAPTCHA chặn tự động hoá). Hãy kiểm tra lại username/password, hoặc dùng cookie/session token (đăng nhập thủ công 1 lần rồi copy cookie) thay vì login tự động cho các trường hợp này.',
+    );
+  }
+
   return warnings;
 }
 
