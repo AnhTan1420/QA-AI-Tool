@@ -266,7 +266,7 @@ const vi = {
       deleteFailed: 'Không thể xoá test case',
     },
   },
-  automation: {
+ automation: {
     tabTitle: 'Automation',
     badge: {
       columnHeading: 'Automation',

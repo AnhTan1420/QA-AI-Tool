@@ -12,6 +12,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     .from('automation_scripts')
     .select('id, version, code, page_objects, imports_used, selectors_used, warnings, created_at, profiles(full_name)')
     .eq('test_case_id', testCaseId)
+    .is('deleted_at', null)
     .order('version', { ascending: false })
     .limit(10);
 
@@ -23,7 +24,6 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 /**
  * POST /api/test-cases/[id]/automation/scripts
  * Saves a manually-edited Playwright script as a new version.
- * Called from useAutomation.saveEditedScript().
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: testCaseId } = await params;
@@ -39,11 +39,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: false, error: 'Missing code' }, { status: 400 });
   }
 
-  // Get next version number
   const { data: existing } = await supabase
     .from('automation_scripts')
     .select('version')
     .eq('test_case_id', testCaseId)
+    .is('deleted_at', null)
     .order('version', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -69,7 +69,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: false, error: saveError?.message ?? 'Save failed' }, { status: 500 });
   }
 
-  // Update automation status badge if still 'not_generated'
   await supabase
     .from('test_cases')
     .update({ automation_status: 'generated' })

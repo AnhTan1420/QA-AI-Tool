@@ -20,15 +20,6 @@ function highlight(code: string): string {
 
 type ActiveTab = 'spec' | `page:${number}`;
 
-/**
- * Codegen output viewer with:
- * - Tab-based POM viewer (page objects + spec)
- * - In-place code editing (textarea, Save/Cancel)
- * - Copy to clipboard
- * - Download as .ts file
- * - Delete script (clears local state only, keeps DB history)
- * - Generate/Regenerate button
- */
 export function CodeViewer({ automation }: { automation: ReturnType<typeof useAutomation> }) {
   const { t } = useLanguage();
   const c = t.automation.code;
@@ -96,7 +87,7 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
                 onClick={automation.deleteScript}
                 className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
               >
-                ✕ Clear
+                ✕ Delete
               </button>
             </>
           )}
@@ -143,7 +134,6 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
         <p className="text-sm italic text-gray-400">{c.empty}</p>
       ) : (
         <>
-          {/* File tabs */}
           {!automation.isEditingScript && (
             <div className="mb-3 flex flex-wrap gap-1.5 border-b border-gray-100 pb-3">
               {pageObjects.map((po, i) => {
@@ -182,7 +172,6 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
             <p className="mb-1 font-mono text-[11px] text-gray-400">{activeFileName}</p>
           )}
 
-          {/* Code view / edit */}
           {automation.isEditingScript ? (
             <div>
               <p className="mb-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
@@ -192,11 +181,11 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
                 value={automation.editedCode}
                 onChange={(e) => automation.setEditedCode(e.target.value)}
                 spellCheck={false}
-                className="w-full h-96 rounded-lg bg-slate-900 p-4 font-mono text-xs leading-relaxed text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y"
+                className="w-full h-96 rounded-lg bg-slate-900 p-4 font-mono text-xs leading-relaxed text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y whitespace-pre-wrap break-words"
               />
             </div>
           ) : (
-            <pre className="max-h-96 overflow-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">
+            <pre className="max-h-96 overflow-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
               <code dangerouslySetInnerHTML={{ __html: highlight(activeCode ?? '') }} />
             </pre>
           )}
