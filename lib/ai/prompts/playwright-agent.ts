@@ -153,7 +153,8 @@ export function buildPlaywrightCodegenPrompt(input: PlaywrightCodegenPromptInput
 GROUNDING RULE (MANDATORY — INSTANT REJECTION IF VIOLATED)
 ══════════════════════════════════════════════════════════════════
 • Every locator you write MUST be copied VERBATIM from the "selector" value of one matching element in the ELEMENT MAP below. You do not re-derive, re-format, or "improve" it — the selector strings below were already computed deterministically server-side from the real, live DOM (see extractElementMap in lib/automation/browser-runner.ts), specifically so identity never depends on you restating it correctly. Copy, don't recompose.
-• Each element's "selector" was chosen by the inspector using this EXACT priority, so you will only ever see one of these four literal shapes per element — there is no ambiguity to resolve, only a value to copy: (1) \`getByTestId('...')\` when a \`data-testid\`/\`data-test-id\`/\`data-test\` attribute exists, (2) \`locator('#id')\` when a stable \`id\` attribute exists, (3) \`getByRole('role', { name: '...' })\` when an accessible name (aria-label, associated \`<label>\`, placeholder, or visible text) exists, (4) \`locator('tag')\` as the last resort when none of the above apply — treat any (4) selector as inherently fragile (it may match multiple elements) and say so in "warnings" if you must use one.
+• EXCEPTION TO VERBATIM RULE: If a selector uses \`getByRole\` and the \`name\` property is extremely long, contains concatenated text, or seems fragile (e.g. \`getByRole('link', { name: 'Xử lý dữ liệuJSON Formatter / ValidatorFormat, validate và đọc JSON nhanh.' })\`), YOU MUST OPTIMIZE IT using a Regular Expression that captures only the core, unique part of the label (e.g. \`getByRole('link', { name: /JSON Formatter/i })\`). Do NOT emit blindly long, literal string names for \`getByRole\` that will cause Timeouts due to whitespace or text rendering quirks in the DOM. Always prefer robust, regex-based name matching for long accessible names.
+• Each element's "selector" was chosen by the inspector using this EXACT priority, so you will only ever see one of these four literal shapes per element — there is no ambiguity to resolve, only a value to copy (or optimize via Regex for \`getByRole name\`): (1) \`getByTestId('...')\` when a \`data-testid\`/\`data-test-id\`/\`data-test\` attribute exists, (2) \`locator('#id')\` when a stable \`id\` attribute exists, (3) \`getByRole('role', { name: '...' })\` when an accessible name (aria-label, associated \`<label>\`, placeholder, or visible text) exists, (4) \`locator('tag')\` as the last resort when none of the above apply — treat any (4) selector as inherently fragile (it may match multiple elements) and say so in "warnings" if you must use one.
 • Never fabricate a \`data-testid\`, \`id\`, role, or accessible name that is not printed in the map. A selector you cannot find verbatim in the map does not exist for the purposes of this task.
 • If a step in the test case has NO matching element in the map, do NOT hallucinate one — instead add a clear entry to "warnings" (e.g. "Step 4 references a 'Remember me' checkbox not found in the inspected element map — selector omitted, needs manual fix") and still emit a best-effort \`// TODO:\` comment at that point in the spec rather than silently skipping the step. A skipped, un-flagged step is a worse failure than an honest gap.
 • The ELEMENT MAP below is split into "--- Page: ... ---" sections whenever inspection walked through more than one page/state (e.g. clicking "Sign in" navigated to a login provider). Sections are in the order they were captured. A selector from a LATER section's page object only becomes usable in the spec AFTER the action that reaches that page has already been performed — never call a later page's method before the navigation/action that produces that page has executed.
@@ -219,6 +220,7 @@ OUTPUT CONTRACT
      - Starts with \`import type { Page } from '@playwright/test';\`
      - Exactly one \`export class <class_name> { ... }\`.
      - Valid, compilable TypeScript. No markdown fences inside the string.
+     - REMEMBER: DO NOT INCLUDE ANY HTML MARKUP (like \`<span class="...">\`) IN YOUR TYPESCRIPT CODE! Clean your output strings.
 
 2. "code" — the complete, standalone, copy-paste-ready \`@playwright/test\` spec TypeScript file:
    • Starts with \`import { test, expect } from '@playwright/test';\` followed by one \`import { <class_name> } from './<file_name without the trailing ".ts">';\` line per page object actually used (relative sibling path — the real export places page objects and their spec in the same directory, see PAGE OBJECT MODEL RULE above).
@@ -230,13 +232,13 @@ OUTPUT CONTRACT
    • Inside each \`test.step\` block: call a Page Object method (never a raw locator) for the action, then immediately assert its result if that step has an "Expected" outcome — either an \`expect...\`-named Page Object method, or (only if no such method makes sense) a direct \`await expect(...)\` using Playwright's web-first assertions (\`toBeVisible\`, \`toHaveText\`, \`toHaveURL\`, \`toBeEnabled\`, etc.) — never a bare \`assert\`/\`if\` check, never a plain \`.textContent()\` read compared manually.
    • The final expected result becomes the LAST assertion in the LAST \`test.step\` block.
    • ABSOLUTELY NO \`page.pause()\`, NO \`page.waitForTimeout(...)\`, NO \`waitForLoadState('networkidle')\` — see ZERO-FLAKE EXECUTION RULE above; there is no "unavoidable" exception. If a real synchronization need exists that a DOM assertion can't express, use \`await page.waitForResponse(...)\`/\`await page.waitForURL(...)\` scoped to a specific, real pattern — never a fixed delay.
-   • Valid, compilable TypeScript. No markdown fences inside the string.
+   • Valid, compilable TypeScript. No markdown fences inside the string. REMEMBER: NO HTML OR CSS CLASSES MIXED INTO TYPESCRIPT.
    • RUNTIME CONTRACT: this output is executed two ways downstream — (a) as real files via \`npx playwright test\` in the user's own suite (each page_objects[] entry saved as its own file, "code" saved as the sibling spec — see PAGE OBJECT MODEL RULE), and (b) inline in-app, where the runner strips import/export syntax from each page_objects[] entry, transpiles TS→JS, and defines all the resulting classes in the SAME scope as the spec's \`test(...)\` callback body before running it, alongside a minimal \`test.step()\`-only shim so that specific call works identically to the real thing (see lib/automation/browser-runner.ts#runGeneratedScript). For (b) to behave IDENTICALLY to (a): never rely on a type-only construct to change runtime behavior, never call any \`test.*\` member other than \`test.step\`, and never reference anything from an import other than the type-only \`Page\` import and the sibling page-object imports described above — no other npm package, no Node built-in, nothing beyond what \`page\`/\`expect\`/\`test.step\` already provide.
    • Never write more than one \`test(...)\` block, and never emit anything — including comments or a second statement — after the final \`});\` that closes that block. The in-app runner locates the callback body by matching braces from the first \`test(...)\` call it finds; trailing content after that call is never read and its presence signals malformed output.
 
 3. "imports_used" — every named import actually used from '@playwright/test' across ALL files (spec + page objects combined), e.g. ["test", "expect"].
 
-4. "selectors_used" — the exact locator strings/expressions you emitted inside the Page Object methods (e.g. ["getByTestId('email-input')", "getByRole('button', { name: 'Sign in' })"]), in the order they appear.
+4. "selectors_used" — the exact locator strings/expressions you emitted inside the Page Object methods (e.g. ["getByTestId('email-input')", "getByRole('button', { name: /Sign in/i })"]), in the order they appear.
 
 5. "warnings" — string array, empty if none. Use for: steps with no grounded selector, ambiguous element matches (>1 candidate in the map, i.e. a \`getByRole\`/\`getByText\` selector that could plausibly match more than one element), possibly-truncated element map coverage, a \`locator(tag)\` (tier-4 CSS) selector used because no test-id/id/accessible-name existed, or any assumption you had to make about an unstated input value. An empty array is a claim of full confidence — only emit it when every step is fully grounded and unambiguous.
 
@@ -248,7 +250,9 @@ Code, identifiers, and Playwright API calls are always in English (this is sourc
 ══════════════════════════════════════════════════════════════════
 SELF-VERIFICATION CHECKLIST (run this BEFORE writing the final JSON — fix any failing item first)
 ══════════════════════════════════════════════════════════════════
-□ Every locator string appearing anywhere in page_objects[].code is copied character-for-character from a "selector=" value in the ELEMENT MAP above — none re-typed, re-cased, or "cleaned up".
+□ Every locator string appearing anywhere in page_objects[].code is copied from a "selector=" value in the ELEMENT MAP above.
+□ IF a selector is a \`getByRole\` with a very long or concatenated name (e.g. "Xử lý dữ liệuJSON Formatter..."), I HAVE OPTIMIZED IT to use a Regex (e.g. \`/JSON Formatter/i\`) to prevent Timeout failures caused by whitespace/DOM rendering quirks.
+□ I HAVE VERIFIED that no syntax-highlighting HTML/CSS tags (e.g. \`<span class="text-emerald-300">\`) have been accidentally generated in my output TypeScript code.
 □ page_objects[] has exactly one entry per roster line, with class_name/file_name copied exactly — no extra, missing, or renamed entries.
 □ No locator call (\`page.locator\`, \`page.getByRole\`, etc.) appears anywhere in the spec's \`code\` field — only inside page_objects[].code methods.
 □ Every test case step above has exactly one corresponding \`test.step(...)\` block in the spec, in the same order, with no step merged, skipped, or duplicated.
@@ -266,9 +270,9 @@ OUTPUT FORMAT — STRICT JSON OBJECT, NOTHING ELSE
 ══════════════════════════════════════════════════════════════════
 {
   "page_objects": [
-    { "class_name": "string", "file_name": "string", "page_label": "string", "page_url": "string", "code": "string (full page object .ts file contents, use \\n for newlines)" }
+    { "class_name": "string", "file_name": "string", "page_label": "string", "page_url": "string", "code": "string (full page object .ts file contents, use \n for newlines)" }
   ],
-  "code": "string (full .spec.ts file contents, use \\n for newlines)",
+  "code": "string (full .spec.ts file contents, use \n for newlines)",
   "imports_used": ["string"],
   "selectors_used": ["string"],
   "warnings": ["string"]
