@@ -25,6 +25,8 @@ export type PageObject = {
   code: string;
 };
 
+export type ScriptStatus = 'pending_review' | 'approved';
+
 export type PlaywrightScript = {
   script_id: string | null;
   page_objects: PageObject[];
@@ -32,6 +34,14 @@ export type PlaywrightScript = {
   imports_used: string[];
   selectors_used: string[];
   warnings: string[];
+  /**
+   * "Review Gate" state machine: a freshly generated/saved script always
+   * starts 'pending_review'. It becomes 'approved' via either "Approve & Run"
+   * or by saving an edit ("Edit / Tweak" self-approves). Run is blocked - both
+   * in the UI and server-side (see app/api/automation/run/route.ts) - while
+   * status is 'pending_review'.
+   */
+  status: ScriptStatus;
 };
 
 export type RunResult = {
@@ -76,15 +86,26 @@ type TestCaseForCodegen = {
 /**
  * All state + API calls for the "Automation" tab on the test case detail page.
  *
- * Key improvements over the original:
- * 1. `generateAndRun()` — unified one-click flow: auto-generate code if none exists,
- *    then immediately run it. The "Run Automation Test" button now calls this instead
- *    of requiring a prior "Generate" step.
- * 2. Script persistence — loads the latest saved script from DB on mount so the code
- *    survives page reloads and navigation.
- * 3. In-place editing — `editedCode` / `editedPageObjects` let the user modify the
- *    generated code in the UI without regenerating; `saveEditedScript()` persists
- *    the changes and updates `script` so the next Run uses the edited version.
+ * Key fixes/improvements in this pass:
+ * 1. `deleteScript()` now actually calls DELETE /automation/scripts/[scriptId]
+ *    (soft delete) instead of only clearing local React state — previously a
+ *    "deleted" script would silently reappear after a page reload because the
+ *    DB row was never touched.
+ * 2. Removed the unused `generateAndRun()` combined flow — Generate and Run
+ *    are already two separate, deliberate buttons in the UI (CodeViewer /
+ *    RunResultPanel), this function was dead code left over from an earlier
+ *    design.
+ * 3. Script persistence — loads the single active (non-deleted) script from
+ *    DB on mount so the code survives page reloads and navigation.
+ * 4. In-place editing — `editedCode` lets the user modify the generated code
+ *    in the UI without regenerating; `saveEditedScript()` persists the change
+ *    (update-in-place, no new version) and updates `script` so the next Run
+ *    uses the edited version.
+ * 5. "Review Gate" state machine (see PlaywrightScript.status): a
+ *    generated/saved script can't be run until it's reviewed —
+ *    `approveScript()` / `approveAndRun()` approve without changing code,
+ *    `saveEditedScript()` approves by editing. `runTest()` refuses to run a
+ *    'pending_review' script (the server enforces this too).
  */
 export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, projectId?: string) {
   const { locale } = useLanguage();
@@ -134,6 +155,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
           imports_used: latest.imports_used ?? [],
           selectors_used: latest.selectors_used ?? [],
           warnings: latest.warnings ?? [],
+          status: latest.status === 'approved' ? 'approved' : 'pending_review',
         });
         setScriptLoaded(true);
       })
@@ -220,8 +242,9 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   }
 
   /**
-   * Saves the edited code as a new version in automation_scripts.
-   * Uses the playwright API route with the modified code payload.
+   * Saves the edited code by updating the current script in place (this
+   * branch is single-active-script, no version history — see the POST
+   * handler in app/api/test-cases/[id]/automation/scripts/route.ts).
    */
   async function saveEditedScript() {
     if (!script || !editedCode.trim()) return;
@@ -232,6 +255,14 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          // FIX: this was missing, so every save hit the API's "insert new"
+          // branch (hardcoded version: 1) instead of updating the existing
+          // row in place — silently orphaning the original script row every
+          // time (never soft-deleted, just abandoned) and leaving multiple
+          // undeleted version:1 rows for the same test case, which made
+          // "which script shows after reload" a coin flip (ORDER BY version
+          // DESC ties on identical version numbers).
+          script_id: script.script_id ?? undefined,
           code: editedCode,
           page_objects: script.page_objects,
           imports_used: script.imports_used,
@@ -241,7 +272,9 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
       });
       const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Save failed');
-      setScript({ ...script, code: editedCode, script_id: json.data.id });
+      // Saving an edit self-approves (see POST .../scripts doc comment) — the
+      // "Edit / Tweak" branch of the Review Gate always lands on 'approved'.
+      setScript({ ...script, code: editedCode, script_id: json.data.id, status: 'approved' });
       setIsEditingScript(false);
       setEditedCode('');
       bumpHistoryRefresh();
@@ -252,14 +285,40 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     }
   }
 
+  const [deletingScript, setDeletingScript] = useState(false);
+  const [deleteScriptError, setDeleteScriptError] = useState('');
+
+  /**
+   * Deletes the current script via DELETE /automation/scripts/[scriptId] (soft
+   * delete — sets deleted_at, see that route). FIX: this previously only
+   * cleared local React state and never called the API at all, so after a
+   * page reload the GET route (which already filters deleted_at is null)
+   * would just re-fetch the "deleted" script from DB and it would reappear.
+   * Run history is unaffected by the delete either way — automation_runs
+   * keeps its own code_snapshot/page_objects_snapshot per run.
+   */
   async function deleteScript() {
     if (!script?.script_id) return;
     const confirmed = window.confirm('Delete this generated script? The run history will be kept.');
     if (!confirmed) return;
-    // Just clear local state — the DB version stays for audit trail
-    setScript(null);
-    setIsEditingScript(false);
-    setEditedCode('');
+
+    setDeletingScript(true);
+    setDeleteScriptError('');
+    try {
+      const res = await fetch(`/api/test-cases/${testCaseId}/automation/scripts/${script.script_id}`, {
+        method: 'DELETE',
+      });
+      const json = await parseJsonResponse(res);
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Delete failed');
+      setScript(null);
+      setIsEditingScript(false);
+      setEditedCode('');
+      bumpHistoryRefresh();
+    } catch (err) {
+      setDeleteScriptError(err instanceof Error ? err.message : 'Delete failed');
+    } finally {
+      setDeletingScript(false);
+    }
   }
 
   const [running, setRunning] = useState(false);
@@ -268,6 +327,39 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
 
   const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
   const bumpHistoryRefresh = useCallback(() => setHistoryRefreshKey((k) => k + 1), []);
+
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState('');
+
+  /**
+   * "Approve & Run" branch of the Review Gate: marks the current script
+   * 'approved' WITHOUT changing its code (contrast with saveEditedScript(),
+   * which approves BY changing the code). Returns true on success so callers
+   * (approveAndRun) know it's safe to proceed to runTest().
+   */
+  async function approveScript(): Promise<boolean> {
+    if (!script?.script_id) return false;
+    if (script.status === 'approved') return true;
+    setApproving(true);
+    setApproveError('');
+    try {
+      const res = await fetch(`/api/test-cases/${testCaseId}/automation/scripts/${script.script_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve' }),
+      });
+      const json = await parseJsonResponse(res);
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Approve failed');
+      setScript((current) => (current ? { ...current, status: 'approved' } : current));
+      bumpHistoryRefresh();
+      return true;
+    } catch (err) {
+      setApproveError(err instanceof Error ? err.message : 'Approve failed');
+      return false;
+    } finally {
+      setApproving(false);
+    }
+  }
 
   function buildEnvironmentPayload() {
     return {
@@ -321,9 +413,15 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
       });
       const json = await parseJsonResponse(res);
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Generate failed');
-      setScript(json.data);
+      // A fresh generation always starts 'pending_review' (Review Gate) — the API
+      // already returns status: 'pending_review', but default it defensively here too.
+      const generated: PlaywrightScript = {
+        ...json.data,
+        status: json.data.status === 'approved' ? 'approved' : 'pending_review',
+      };
+      setScript(generated);
       bumpHistoryRefresh();
-      return json.data as PlaywrightScript;
+      return generated;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Generate failed';
       setGenerateError(msg);
@@ -334,35 +432,32 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   }
 
   /**
-   * Unified "Generate & Run" flow.
-   * If no script exists yet, generates one first, then runs it.
-   * If a script already exists, runs it directly (skipping generation).
-   * This is the main action button for the Automation tab.
+   * Runs the currently loaded/edited script. Generate and Run are already two
+   * separate deliberate actions in this UI (RunResultPanel only calls this,
+   * never auto-generates) — the button that calls this stays disabled while
+   * `script` is null (see RunResultPanel's `canRun`). Also enforces the
+   * Review Gate client-side (the server enforces it too, see
+   * app/api/automation/run/route.ts): refuses to run a 'pending_review'
+   * script — see approveAndRun() for the "Approve & Run" one-click path.
    */
-  async function generateAndRun() {
-    if (!targetUrl) return;
-
-    setRunError('');
-    setGenerateError('');
-
-    // Step 1: Generate if no script exists
-    let scriptToRun = script;
-    if (!scriptToRun) {
-      try {
-        scriptToRun = await generateCode();
-      } catch {
-        // generateCode already set generateError state
-        return;
-      }
-    }
-
-    // Step 2: Run
-    await runTestWith(scriptToRun);
+  async function runTest() {
+    if (!script || script.status !== 'approved') return;
+    await runTestWith(script);
   }
 
-  async function runTest() {
+  /**
+   * "Approve & Run" — the other half of the Review Gate's two exits from
+   * 'pending_review' (the other being "Edit / Tweak" → saveEditedScript()).
+   * Approves the script as-is, then runs it, in one click.
+   */
+  async function approveAndRun() {
     if (!script) return;
-    await runTestWith(script);
+    const approved = script.status === 'approved' ? true : await approveScript();
+    if (!approved) return;
+    // approveScript() already flipped `script.status` in state via setScript,
+    // but that update may not have flushed into this closure's `script` yet —
+    // build the post-approval object explicitly rather than relying on it.
+    await runTestWith({ ...script, status: 'approved' });
   }
 
   async function runTestWith(scriptToRun: PlaywrightScript) {
@@ -429,7 +524,6 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     script,
     setScript,
     generateCode,
-    generateAndRun,
     // Editing
     isEditingScript,
     editedCode,
@@ -440,6 +534,13 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     cancelEditingScript,
     saveEditedScript,
     deleteScript,
+    deletingScript,
+    deleteScriptError,
+    // Review Gate
+    approveScript,
+    approving,
+    approveError,
+    approveAndRun,
     // Run
     running,
     runError,

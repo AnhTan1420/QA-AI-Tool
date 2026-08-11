@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Code2, Copy, Check, Download, Pencil, Trash2, RotateCcw, Sparkles, Loader2 } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/language-context';
 import type { useAutomation } from './use-automation';
 
@@ -55,39 +56,47 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6">
+    <div className="surface-card p-6">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-sm font-bold uppercase tracking-wider text-gray-700">{c.heading}</h3>
+        <div className="flex items-center gap-2.5">
+          <span className="panel-icon">
+            <Code2 className="h-4 w-4" strokeWidth={2.25} />
+          </span>
+          <h3 className="text-h3">{c.heading}</h3>
+          {automation.script && !automation.isEditingScript && (
+            <span className={automation.script.status === 'approved' ? 'badge-success' : 'badge-warning'}>
+              {automation.script.status === 'approved' ? 'Approved' : 'Pending review'}
+            </span>
+          )}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {automation.script && !automation.isEditingScript && (
             <>
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-              >
+              <button type="button" onClick={handleCopy} className="btn-secondary btn-sm">
+                {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 {copied ? c.copied : c.copyButton}
               </button>
-              <button
-                type="button"
-                onClick={handleDownload}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
-              >
-                ↓ Download
+              <button type="button" onClick={handleDownload} className="btn-secondary btn-sm">
+                <Download className="h-3.5 w-3.5" />
+                Download
               </button>
               <button
                 type="button"
                 onClick={automation.startEditingScript}
-                className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50"
+                title="Edit / Tweak — saving approves this version"
+                className="btn-secondary btn-sm"
               >
-                ✎ Edit
+                <Pencil className="h-3.5 w-3.5" />
+                Edit
               </button>
               <button
                 type="button"
                 onClick={automation.deleteScript}
-                className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                disabled={automation.deletingScript}
+                className="btn-secondary btn-sm !text-danger-600 hover:!border-danger-200 hover:!bg-danger-50"
               >
-                ✕ Delete
+                {automation.deletingScript ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                {automation.deletingScript ? 'Deleting...' : 'Delete'}
               </button>
             </>
           )}
@@ -97,15 +106,16 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
                 type="button"
                 onClick={automation.saveEditedScript}
                 disabled={automation.savingEdit}
-                className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                className="btn-primary btn-sm"
               >
-                {automation.savingEdit ? 'Saving...' : '✓ Save'}
+                {automation.savingEdit ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                {automation.savingEdit ? 'Saving...' : 'Save'}
               </button>
               <button
                 type="button"
                 onClick={automation.cancelEditingScript}
                 disabled={automation.savingEdit}
-                className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                className="btn-ghost btn-sm"
               >
                 Cancel
               </button>
@@ -115,27 +125,31 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
               type="button"
               onClick={automation.generateCode}
               disabled={automation.generating || automation.elementMap.length === 0}
-              className="rounded-lg bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+              className="btn-primary btn-sm"
             >
-              {automation.generating ? c.generating : automation.script ? '↺ Regenerate' : c.generateButton}
+              {automation.generating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : automation.script ? (
+                <RotateCcw className="h-3.5 w-3.5" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {automation.generating ? c.generating : automation.script ? 'Regenerate' : c.generateButton}
             </button>
           )}
         </div>
       </div>
 
-      {automation.generateError && (
-        <p className="mb-3 text-xs font-semibold text-red-600">{automation.generateError}</p>
-      )}
-      {automation.saveEditError && (
-        <p className="mb-3 text-xs font-semibold text-red-600">{automation.saveEditError}</p>
-      )}
+      {automation.generateError && <p className="alert-danger mb-3 !p-3">{automation.generateError}</p>}
+      {automation.saveEditError && <p className="alert-danger mb-3 !p-3">{automation.saveEditError}</p>}
+      {automation.deleteScriptError && <p className="alert-danger mb-3 !p-3">{automation.deleteScriptError}</p>}
 
       {!automation.script ? (
-        <p className="text-sm italic text-gray-400">{c.empty}</p>
+        <p className="text-caption italic">{c.empty}</p>
       ) : (
         <>
           {!automation.isEditingScript && (
-            <div className="mb-3 flex flex-wrap gap-1.5 border-b border-gray-100 pb-3">
+            <div className="mb-3 flex flex-wrap gap-1.5 border-b border-ink-100 pb-3">
               {pageObjects.map((po, i) => {
                 const tab: ActiveTab = `page:${i}`;
                 const isActive = activeTab === tab;
@@ -145,8 +159,8 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
                     type="button"
                     onClick={() => setActiveTab(tab)}
                     title={po.page_label || po.file_name}
-                    className={`rounded-md px-2.5 py-1 text-xs font-mono ${
-                      isActive ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    className={`rounded-md px-2.5 py-1 text-xs font-mono transition-colors ${
+                      isActive ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-600 hover:bg-ink-200'
                     }`}
                   >
                     {po.file_name}
@@ -156,8 +170,8 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
               <button
                 type="button"
                 onClick={() => setActiveTab('spec')}
-                className={`rounded-md px-2.5 py-1 text-xs font-mono ${
-                  activeTab === 'spec' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                className={`rounded-md px-2.5 py-1 text-xs font-mono transition-colors ${
+                  activeTab === 'spec' ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-600 hover:bg-ink-200'
                 }`}
               >
                 {c.specTabLabel}
@@ -166,34 +180,34 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
           )}
 
           {!automation.isEditingScript && activePageObject?.page_label && (
-            <p className="mb-2 text-xs text-gray-400">{c.pageObjectForLabel(activePageObject.page_label)}</p>
+            <p className="mb-2 text-caption">{c.pageObjectForLabel(activePageObject.page_label)}</p>
           )}
           {!automation.isEditingScript && activeFileName && (
-            <p className="mb-1 font-mono text-[11px] text-gray-400">{activeFileName}</p>
+            <p className="mb-1 font-mono text-[11px] text-ink-400">{activeFileName}</p>
           )}
 
           {automation.isEditingScript ? (
             <div>
-              <p className="mb-2 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                ✎ Editing spec.ts — changes saved as a new version. Page Object files cannot be edited here individually.
+              <p className="alert-info mb-2 !border-warning-200 !bg-warning-50 !p-3 !text-warning-600">
+                Editing spec.ts — saving updates this script in place and approves it (Review Gate). Page Object files cannot be edited here individually.
               </p>
               <textarea
                 value={automation.editedCode}
                 onChange={(e) => automation.setEditedCode(e.target.value)}
                 spellCheck={false}
-                className="w-full h-96 rounded-lg bg-slate-900 p-4 font-mono text-xs leading-relaxed text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-y whitespace-pre-wrap break-words"
+                className="h-96 w-full resize-y whitespace-pre-wrap break-words rounded-[var(--radius-control)] bg-ink-900 p-4 font-mono text-xs leading-relaxed text-slate-100 outline-none focus:ring-4 focus:ring-brand-200"
               />
             </div>
           ) : (
-            <pre className="max-h-96 overflow-auto rounded-lg bg-slate-900 p-4 text-xs leading-relaxed text-slate-100 whitespace-pre-wrap break-words">
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-control)] bg-ink-900 p-4 text-xs leading-relaxed text-slate-100">
               <code dangerouslySetInnerHTML={{ __html: highlight(activeCode ?? '') }} />
             </pre>
           )}
 
           {!automation.isEditingScript && automation.script.warnings.length > 0 && (
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <p className="mb-1 text-xs font-bold text-amber-800">{c.warningsHeading}</p>
-              <ul className="list-disc list-inside space-y-0.5 text-xs text-amber-700">
+            <div className="mt-3 rounded-[var(--radius-control)] border border-warning-600/20 bg-warning-50 p-3">
+              <p className="mb-1 text-xs font-bold text-warning-600">{c.warningsHeading}</p>
+              <ul className="list-disc list-inside space-y-0.5 text-xs text-warning-600/90">
                 {automation.script.warnings.map((w, i) => (
                   <li key={i}>{w}</li>
                 ))}

@@ -164,6 +164,16 @@ export const playwrightScriptSchema = z.object({
 });
 export type PlaywrightScript = z.infer<typeof playwrightScriptSchema>;
 
+// ── "Review Gate" state machine (script review status) ─────────────────────
+// A generated/saved script always starts 'pending_review'. It becomes
+// 'approved' via either an explicit approve action ("Approve & Run") or by
+// saving an edit ("Edit / Tweak" - reviewing + fixing counts as approving).
+// Run is gated on status === 'approved', both client-side (RunResultPanel)
+// and server-side (app/api/automation/run) so it can't be bypassed by
+// calling the run API directly.
+export const automationScriptStatusSchema = z.enum(['pending_review', 'approved']);
+export type AutomationScriptStatus = z.infer<typeof automationScriptStatusSchema>;
+
 // ── /api/ai/playwright request (codegen) ────────────────────────────────────
 export const playwrightCodegenRequestSchema = z.object({
   test_case: z.object({

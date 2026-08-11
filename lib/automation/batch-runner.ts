@@ -65,11 +65,15 @@ export async function processClaimedBatchItem(
 
   // Reuse the latest saved script if this test case already has one (from a
   // prior single-case Generate, or a prior batch run) — skips Inspect+Generate
-  // entirely, which is both faster and cheaper.
+  // entirely, which is both faster and cheaper. Filters out soft-deleted rows
+  // (deleted_at) for the same reason the single-case routes do (see
+  // app/api/test-cases/[id]/automation/scripts/route.ts) — otherwise a batch
+  // could "reuse" a script the user had already deleted.
   const { data: existingScript } = await supabase
     .from('automation_scripts')
     .select('id, code, page_objects')
     .eq('test_case_id', item.test_case_id)
+    .is('deleted_at', null)
     .order('version', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -167,6 +171,7 @@ export async function processClaimedBatchItem(
         .from('automation_scripts')
         .select('version')
         .eq('test_case_id', item.test_case_id)
+        .is('deleted_at', null)
         .order('version', { ascending: false })
         .limit(1)
         .maybeSingle();

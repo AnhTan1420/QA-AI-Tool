@@ -22,6 +22,8 @@ export const runtime = 'nodejs';
  * 2) User bấm "Generate Playwright Code" -> route này
  * 3) Kết quả (đã Zod-validate) được lưu thành 1 bản ghi automation_scripts (version mới)
  *    gắn với test_case_id - KHÔNG bao giờ ghi đè bản cũ, cùng tinh thần với test_case_versions.
+ *    Bản ghi mới luôn ở status='pending_review' ("Review Gate") - nút Run trong UI sẽ
+ *    không chạy được cho tới khi user "Approve & Run" hoặc "Edit / Tweak" (tự động approve).
  */
 export async function POST(req: Request) {
   try {
@@ -115,6 +117,10 @@ export async function POST(req: Request) {
         .from('automation_scripts')
         .select('version')
         .eq('test_case_id', testCaseId)
+        // Excludes soft-deleted rows (deleted_at) so the version number stays
+        // consistent with app/api/test-cases/[id]/automation/scripts/route.ts,
+        // which also filters deleted_at when computing the next version.
+        .is('deleted_at', null)
         .order('version', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -169,7 +175,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      data: { ...parsed.data, script_id: savedScriptId },
+      data: { ...parsed.data, script_id: savedScriptId, status: 'pending_review' },
     });
   } catch (error: unknown) {
     console.error('❌ Lỗi API Playwright Codegen:', error);

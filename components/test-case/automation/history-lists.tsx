@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { History, CircleCheck, CircleX, ZoomIn, Download, X } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/language-context';
 
 type RunEntry = {
@@ -39,21 +40,25 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
   if (runs.length === 0) return null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6">
-      <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-gray-700">{h.runsHeading}</h3>
+    <div className="surface-card p-6">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="panel-icon">
+          <History className="h-4 w-4" strokeWidth={2.25} />
+        </span>
+        <h3 className="text-h3">{h.runsHeading}</h3>
+        <span className="badge-neutral">{runs.length}</span>
+      </div>
+
       <ol className="space-y-3">
         {runs.map((run) => (
-          <li key={run.id} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3 text-xs space-y-2">
-            <div className="flex items-center gap-3 flex-wrap">
-              <span
-                className={`rounded-full px-2 py-0.5 font-bold ${
-                  run.status === 'passed' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                }`}
-              >
+          <li key={run.id} className="space-y-2 rounded-[var(--radius-control)] border border-ink-100 bg-ink-50/60 p-3 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className={run.status === 'passed' ? 'badge-success' : 'badge-danger'}>
+                {run.status === 'passed' ? <CircleCheck className="h-3.5 w-3.5" /> : <CircleX className="h-3.5 w-3.5" />}
                 {t.automation.run.status[run.status]}
               </span>
-              <span className="text-gray-500">{t.automation.run.durationLabel(run.duration_ms)}</span>
-              <span className="ml-auto text-gray-400">{new Date(run.started_at).toLocaleString()}</span>
+              <span className="text-caption">{t.automation.run.durationLabel(run.duration_ms)}</span>
+              <span className="ml-auto text-caption">{new Date(run.started_at).toLocaleString()}</span>
             </div>
 
             {run.screenshot_url && (
@@ -61,22 +66,26 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
                 <img
                   src={run.screenshot_url}
                   alt={`Run ${run.id}`}
-                  className="h-20 w-auto rounded border border-gray-200 object-contain cursor-zoom-in hover:opacity-80 transition"
+                  className="h-20 w-auto cursor-zoom-in rounded-[var(--radius-control)] border border-ink-200 object-contain transition hover:opacity-80"
                   onClick={() => setZoomImage(run.screenshot_url)}
                 />
+                <button type="button" onClick={() => setZoomImage(run.screenshot_url)} title="Zoom" className="icon-btn h-8 w-8">
+                  <ZoomIn className="h-3.5 w-3.5" />
+                </button>
                 <a
                   href={run.screenshot_url}
                   download={`run-${run.id}-screenshot.png`}
-                  className="rounded border border-gray-300 px-2 py-1 text-[10px] font-semibold text-gray-600 hover:bg-gray-100"
+                  title="Download"
+                  className="icon-btn h-8 w-8"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  ↓ Download
+                  <Download className="h-3.5 w-3.5" />
                 </a>
               </div>
             )}
 
             {run.failure_details && (
-              <div className="rounded bg-red-50 border border-red-100 p-2 text-red-700">
+              <div className="rounded-[var(--radius-control)] border border-danger-600/20 bg-danger-50 p-2 text-danger-600">
                 <p className="font-semibold">{run.failure_details.error_message}</p>
                 {run.failure_details.selector && (
                   <p className="mt-0.5 text-[10px] opacity-80">Selector: {run.failure_details.selector}</p>
@@ -90,28 +99,27 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
       {/* Zoom Modal */}
       {zoomImage && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/80 p-4 backdrop-blur-sm"
           onClick={() => setZoomImage(null)}
         >
-          <div className="relative max-w-full max-h-full">
+          <div className="relative max-h-full max-w-full">
             <img
               src={zoomImage}
               alt="Zoomed screenshot"
-              className="max-w-full max-h-[90vh] rounded-lg shadow-2xl object-contain"
+              className="max-h-[90vh] max-w-full rounded-[var(--radius-card)] object-contain shadow-[var(--shadow-soft-lg)]"
             />
             <a
               href={zoomImage}
               download="screenshot.png"
-              className="absolute top-2 right-2 rounded bg-white/90 px-3 py-1.5 text-xs font-bold text-gray-800 shadow hover:bg-white"
+              className="btn-secondary btn-sm absolute right-3 top-3"
               onClick={(e) => e.stopPropagation()}
             >
-              ↓ Download
+              <Download className="h-3.5 w-3.5" />
+              Download
             </a>
-            <button
-              onClick={() => setZoomImage(null)}
-              className="absolute top-2 left-2 rounded bg-white/90 px-3 py-1.5 text-xs font-bold text-gray-800 shadow hover:bg-white"
-            >
-              ✕ Close
+            <button onClick={() => setZoomImage(null)} className="btn-secondary btn-sm absolute left-3 top-3">
+              <X className="h-3.5 w-3.5" />
+              Close
             </button>
           </div>
         </div>

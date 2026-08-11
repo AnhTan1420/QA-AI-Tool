@@ -533,6 +533,29 @@ alter table automation_scripts add column if not exists element_map jsonb;
 alter table automation_scripts add column if not exists model_used text;
 alter table automation_scripts add column if not exists generated_by uuid references profiles(id);
 alter table automation_scripts add column if not exists created_at timestamptz default now();
+-- CRITICAL FIX: soft-delete column referenced everywhere (GET .../scripts,
+-- DELETE .../scripts/[scriptId]) but never actually added by any prior
+-- migration - every read/delete of automation_scripts was failing at the DB
+-- level with "column automation_scripts.deleted_at does not exist" until this
+-- line existed. NULL = active/visible; set = soft-deleted (see DELETE handler
+-- in app/api/test-cases/[id]/automation/scripts/[scriptId]/route.ts). Kept as
+-- a soft delete (not a hard DELETE) so automation_runs.script_id references
+-- and each run's code_snapshot/page_objects_snapshot audit trail stay intact.
+alter table automation_scripts add column if not exists deleted_at timestamptz;
+-- "Review Gate" state machine (Architectural Pattern): a freshly generated
+-- script always lands 'pending_review' - it must be explicitly reviewed,
+-- either "Approve & Run" (PATCH .../scripts/[scriptId], approve as-is) or
+-- "Edit / Tweak" (POST .../scripts, self-approves on save) - before the Run
+-- button will execute it. Enforced both client-side (RunResultPanel /
+-- useAutomation.runTest) and server-side (app/api/automation/run/route.ts),
+-- so it can't be bypassed by calling the run API directly. Batch Automation
+-- (lib/automation/batch-runner.ts) deliberately runs through a different,
+-- lower-level code path (runGeneratedScript directly, not this HTTP route) -
+-- it stays unattended by design and is unaffected by this gate.
+alter table automation_scripts add column if not exists status text not null default 'pending_review'
+  check (status in ('pending_review', 'approved'));
+alter table automation_scripts add column if not exists approved_by uuid references profiles(id);
+alter table automation_scripts add column if not exists approved_at timestamptz;
 -- code was added as nullable above (ADD COLUMN can't add a NOT NULL column to
 -- a table that may already have rows without a default); enforce NOT NULL now
 -- that any pre-existing rows would already have a value or this is a fresh table.

@@ -56,12 +56,26 @@ export async function POST(req: Request) {
     if (!codeToRun && scriptId) {
       const { data: script, error: scriptError } = await supabase
         .from('automation_scripts')
-        .select('id, code, page_objects, test_case_id')
+        .select('id, code, page_objects, test_case_id, status')
         .eq('id', scriptId)
+        .is('deleted_at', null)
         .maybeSingle();
 
       if (scriptError || !script || script.test_case_id !== input.test_case_id) {
         return NextResponse.json({ success: false, error: 'Không tìm thấy script để chạy.' }, { status: 404 });
+      }
+      // "Review Gate" state machine (defense-in-depth, not just a UI-level
+      // disabled button): a script fresh out of AI generation/edit-save
+      // starts 'pending_review' and must be explicitly reviewed - "Approve &
+      // Run" (PATCH .../scripts/[scriptId]) or "Edit / Tweak" (POST
+      // .../scripts, which self-approves on save) - before it's allowed to
+      // execute here. Batch Automation calls a different, lower-level code
+      // path (runGeneratedScript directly) and is unaffected by this gate.
+      if (script.status !== 'approved') {
+        return NextResponse.json(
+          { success: false, error: 'Script này đang chờ review (pending_review). Hãy Approve hoặc Edit & Save trước khi Run.' },
+          { status: 409 },
+        );
       }
       codeToRun = script.code;
       pageObjectsToRun = (script.page_objects as PageObject[] | null) ?? [];

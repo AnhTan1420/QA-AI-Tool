@@ -19,12 +19,12 @@ type TestCaseForAutomation = {
 /**
  * Automation tab on the test case detail page.
  *
- * Workflow (simplified from the original 3-step to 2-step):
+ * Workflow:
  *  1. Configure environment + (optionally) Inspect to build element map
- *  2. Click "Run Automation Test" — auto-generates code if none exists, then runs
- *
- * The CodeViewer section still provides the "Generate Playwright Code" button
- * separately if the user wants code-first control without running immediately.
+ *  2. Click "Generate Playwright Code" (CodeViewer)
+ *  3. Review / edit the code in place if needed (CodeViewer's Edit button)
+ *  4. Click "Run Test" (RunResultPanel) — executes the current script; stays
+ *     disabled until a script exists, never generates code on its own.
  */
 export default function AutomationPanel({
   testCase,
@@ -48,15 +48,15 @@ export default function AutomationPanel({
   if (!automation.scriptLoaded) {
     return (
       <div className="space-y-4 animate-pulse">
-        <div className="h-40 rounded-xl bg-gray-100" />
-        <div className="h-32 rounded-xl bg-gray-100" />
+        <div className="h-40 rounded-[var(--radius-card)] bg-ink-100" />
+        <div className="h-32 rounded-[var(--radius-card)] bg-ink-100" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-gray-500">{t.automation.intro}</p>
+      <p className="text-body">{t.automation.intro}</p>
 
       {/* Step 1: Configure environment */}
       <EnvironmentForm automation={automation} />
@@ -67,10 +67,10 @@ export default function AutomationPanel({
       {/* Step 2a: Generated code viewer / editor */}
       <CodeViewer automation={automation} />
 
-      {/* Step 2b: Unified Generate & Run button + result */}
+      {/* Step 2b: Run + result */}
       <RunResultPanel automation={automation} />
 
-      {/* History (scripts + runs) */}
+      {/* Run history (with screenshots) */}
       <AutomationHistory testCaseId={testCase.id} refreshKey={automation.historyRefreshKey} />
     </div>
   );

@@ -134,6 +134,21 @@ select {
   .btn-danger {
     @apply inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)] px-4 py-2.5 text-sm font-semibold transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 bg-danger-600 text-white hover:bg-red-700 focus-visible:ring-red-300;
   }
+  .btn-success {
+    @apply inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)] px-4 py-2.5 text-sm font-semibold transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 bg-success-600 text-white hover:bg-emerald-700 focus-visible:ring-emerald-300;
+  }
+  .btn-warning {
+    @apply inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)] px-4 py-2.5 text-sm font-semibold transition-all duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 bg-warning-600 text-white hover:bg-amber-700 focus-visible:ring-amber-300;
+  }
+  /* Compose with a variant, e.g. className="btn-secondary btn-sm" - for compact
+     toolbar actions (copy/download/edit/zoom) where the full .btn padding/type
+     scale would be too heavy relative to the surrounding content density. */
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs rounded-[0.625rem];
+  }
+  .icon-btn {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-control)] text-ink-500 transition-colors duration-150 hover:bg-ink-100 hover:text-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300 disabled:cursor-not-allowed disabled:opacity-40;
+  }
 
   /* ---- Forms ---- */
   .field-label {
@@ -152,6 +167,11 @@ select {
   .badge-warning { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold bg-warning-50 text-warning-600; }
   .badge-danger { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold bg-danger-50 text-danger-600; }
   .badge-neutral { @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold bg-ink-100 text-ink-600; }
+
+  /* ---- Panel header icon chip (heading icon inside a surface-card) ---- */
+  .panel-icon {
+    @apply flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600;
+  }
 
   /* ---- Alerts ---- */
   .alert-danger {
