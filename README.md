@@ -1,432 +1,667 @@
 Built by **Jordan Le** (Le Van Anh Tan)
-# QA-AI-Tool — System Documentation & Architecture Overview
+# QAJD — AI Test Case Generator & QA Toolkit
 
-<project_context>
-**Project Name:** QA-AI-Tool
-**Repository Description:** An AI-powered QA test case management platform that generates, reviews, and automates test cases using multiple LLM providers and Playwright browser automation.
-**Target Audience:** Software Engineers, QA Engineers, Product Managers, and AI Assistant Models (Claude/LLMs).
-**Purpose:** This document provides a complete high-level and detailed technical overview of the project to enable fast onboarding, seamless AI-assisted development, and clear cross-functional alignment.
-</project_context>
+> An internal QA platform that leverages AI to generate test cases with an independent Senior QA Review Agent for coverage scoring, a project-based test case library, an AI-grounded Playwright automation agent (single-case and batch), and a client-side QA Utility Toolkit.
 
----
-
-## 1. Executive Summary (For Non-Technical Stakeholders & Newcomers)
-<executive_summary>
-
-### 🎯 What Problem Does This Project Solve?
-
-Writing and maintaining QA test cases is time-consuming, inconsistent, and difficult to scale across large projects. QA engineers spend hours manually authoring test steps, reviewing coverage gaps, and running repetitive browser tests. This platform automates the entire test case lifecycle — from AI-generated creation to automated Playwright execution — so QA teams can focus on judgment rather than grunt work.
-
-### 💡 Core Functionality & Real-World Analogy
-
-* **The Analogy:** Think of this system as a **smart QA factory floor** — requirements and documents go in one end, fully written test cases and automated browser scripts come out the other, with AI supervisors reviewing quality at every station.
-* **What it does:** It takes **requirement documents, Figma designs, or plain text descriptions** → processes them through **multi-LLM AI agents** → delivers **structured test cases, Playwright automation scripts, AI review feedback, coverage reports, and traceability matrices**.
-
-### 🔑 Key Benefits
-
-- **Efficiency:** Generates complete test case suites from documents in seconds instead of hours of manual writing.
-- **Reliability:** AI review agents catch missing edge cases and inconsistent step definitions before they reach production.
-- **Scalability:** Batch automation runs Playwright scripts across hundreds of test cases in parallel with rate-limited queuing.
-- **Traceability:** Built-in coverage and traceability matrix maps every requirement to its test cases automatically.
-- **Team Collaboration:** Multi-project, multi-member workspaces with role-based access and comment threads on every test case.
-
-</executive_summary>
+[![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4)](https://tailwindcss.com/)
+[![Supabase](https://img.shields.io/badge/Supabase-PostgreSQL-3ECF8E)](https://supabase.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ---
 
-## 2. End-to-End System Workflow
-<system_workflow>
+## Table of Contents
 
-### 🔄 High-Level Data & Process Flow
+- [System Overview](#system-overview)
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [System Architecture](#system-architecture)
+- [Database Schema](#database-schema)
+- [AI Generation Flow](#ai-generation-flow)
+- [Automation Flow (Single Test Case)](#automation-flow-single-test-case)
+- [Batch Automation Flow](#batch-automation-flow)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Environment Variables](#environment-variables)
+- [Usage Guide](#usage-guide)
+- [API Endpoints](#api-endpoints)
+- [Core Principles](#core-principles)
+- [Roadmap](#roadmap)
+- [License](#license)
+
+---
+
+## System Overview
 
 ```mermaid
-graph TD
-    A[QA Engineer / User] -->|Login via Supabase Auth| B[Next.js App - Dashboard]
-    B -->|Upload docs / Figma URL / Text| C[Document Extraction Layer]
-    C -->|Parsed content| D[AI Generation Agent - Gemini / Groq / Anthropic]
-    D -->|Structured test cases JSON| E[Supabase PostgreSQL]
-    E -->|Test case data| F[Test Case Management UI]
-    F -->|Generate Playwright script| G[Playwright AI Agent]
-    G -->|Script stored| E
-    F -->|Trigger run| H[Browser Runner - Playwright]
-    H -->|Screenshots & results| I[Cloudflare R2 Storage]
-    H -->|Run metadata| E
-    F -->|Request AI review| J[Review Agent - LLM]
-    J -->|Review feedback| E
-    F -->|Export| K[Excel / CSV Download]
+flowchart TD
+    subgraph Setup["1. Setup & Auth"]
+        A1[Sign up / Login] --> A2[Create Project]
+        A2 --> A3[Invite Team Members]
+    end
+
+    subgraph Input["2. Input"]
+        B1[Requirement Description] --> C1
+        B2[AI Document Reader<br/>Figma / MD / PDF / Image] --> C1
+        B3[Old Test Cases .xlsx] --> C1
+    end
+
+    subgraph Generate["3. AI Generation"]
+        C1[Generation Agent<br/>Gemini / Groq] --> C2[Zod Validation]
+        C2 --> C3[Document Coverage Check]
+    end
+
+    subgraph Review["4. Review & Enhance (Optional)"]
+        C3 --> D1{Review?}
+        D1 -->|Yes| D2[Review Agent<br/>Independent scoring]
+        D2 --> D3[Enhance Agent<br/>Rewrite based on review]
+        D3 --> E1
+        D1 -->|No| E1
+    end
+
+    subgraph Save["5. Persist"]
+        E1[Save to Library] --> E2[Test Case Library]
+    end
+
+    subgraph Manage["6. Manage & Export"]
+        E2 --> F1[Browse / Search / Paginate]
+        E2 --> F2[Version History]
+        E2 --> F3[Comments]
+        E2 --> F4[Export .xlsx]
+    end
+
+    subgraph Automate["7. Playwright Automation"]
+        E2 --> H1[Single case: Automation tab<br/>Inspect → Generate → Run]
+        E2 --> H2[Batch: select N cases<br/>Run Automation modal]
+        H2 --> H3[process-next loop<br/>driven by open browser tab]
+        H1 --> H4[(R2 / Supabase Storage<br/>screenshots + scripts)]
+        H3 --> H4
+    end
+
+    subgraph Toolkit["8. QA Utility Toolkit"]
+        G1[JSON Formatter]
+        G2[Base64 / UUID / Regex]
+        G3[Hash / Timestamp]
+        G4[Fake File / NRIC / Lorem]
+    end
+
+    Setup --> Input
+    Input --> Generate
+    Generate --> Review
+    Review --> Save
+    Save --> Manage
+    Manage -.-> Automate
+    Manage -.-> Toolkit
 ```
 
-### 📍 Step-by-Step Execution Journey
+**QAJD** is a comprehensive QA toolkit designed to accelerate test case creation using AI while maintaining quality through an independent review mechanism, and to turn approved test cases directly into runnable browser automation. The platform supports:
 
-1. **Initiation:** The workflow starts when a QA engineer logs into the dashboard and creates or opens a **Project**. Inside the project they navigate to the **Generate** workspace.
-
-2. **Document Ingestion:** The user uploads a PDF, Excel/DOCX spec, or provides a Figma URL. The `document-extraction-agent` in `lib/ai/prompts/` extracts structured requirement text via `lib/documents/text-extractors.ts` and `lib/documents/figma-client.ts`.
-
-3. **AI Test Generation:** The extracted requirements are passed to the `generation-agent` (`lib/ai/prompts/generation-agent.ts`) which calls Google Gemini, Groq, or the configured provider (`lib/ai/provider.ts`). It returns a structured JSON payload validated against `lib/ai/prompts/generation-response-schema.ts` containing test case titles, steps, preconditions, test data, and expected results.
-
-4. **Persistence:** Generated test cases are written to Supabase PostgreSQL via the `/api/ai/generate` route and associated with the project. Versioning is handled automatically (`app/api/test-cases/[id]/versions/route.ts`).
-
-5. **Review & Editing:** QA engineers refine test cases through the form editor (`components/test-case-form/`), request AI review feedback via `app/api/ai-reviews/route.ts` (powered by `lib/ai/prompts/review-agent.ts`), and collaborate through comment threads (`app/api/test-cases/[id]/comments/route.ts`).
-
-6. **Automation:** For each test case, the engineer can generate a Playwright script via `/api/ai/playwright` (using `lib/ai/prompts/playwright-agent.ts`). Scripts are stored in Supabase. Running them triggers `lib/automation/browser-runner.ts`, which executes Playwright headlessly, captures screenshots, and stores them in Cloudflare R2 (`lib/automation/r2-storage.ts`).
-
-7. **Batch Automation:** Multiple test cases can be queued via `app/api/automation/batch-run` with sequential processing via `process-next` polling and rate limiting (`lib/automation/rate-limit.ts`).
-
-8. **Final Delivery:** Results, screenshots, and run metadata are surfaced in the Test Case detail panel and the Batch Progress Panel. Test cases can be exported to Excel (`lib/utils/test-case-excel.ts`) and reviewed in the Traceability Matrix.
-
-</system_workflow>
+- **AI-Powered Test Case Generation**: Input a requirement description and let the Generation Agent (Gemini/Groq) produce structured test cases.
+- **Independent QA Review**: A separate Senior QA Review Agent evaluates coverage without shared context, then can enhance the set based on its own findings.
+- **Test Case Library**: Organize test cases by project with version history, comments, and traceability.
+- **Playwright Automation Agent**: Generate, run, and maintain real `@playwright/test` scripts grounded in a server-inspected DOM/element map — one test case at a time from its Automation tab, or in **batch** across many selected test cases at once.
+- **Reusable Project Environments**: Save non-secret automation targets (browser + target URL + auth mode) per project so they don't need to be retyped for every run.
+- **QA Utility Toolkit**: Client-side tools — JSON formatting, Base64, UUID generation, Regex testing, Hashing, Timestamp conversion, Fake File generation, SG NRIC/FIN generation & validation, and Lorem Ipsum generation.
+- **Team Collaboration**: Invite team members with role-based access (`qa`, `admin`).
 
 ---
 
-## 3. Technical Architecture & Tech Stack (For Domain Experts & AI)
-<technical_architecture>
+## Quick Start
 
-### 🛠️ Technology Stack & Core Dependencies
+```bash
+# 1. Clone & install
+git clone https://github.com/AnhTan1420/QA-AI-Tool.git
+cd QA-AI-Tool
+npm install
 
-| Category | Technology / Framework | Purpose |
-| :--- | :--- | :--- |
-| **Language / Runtime** | `TypeScript / Node.js 18+` | Core language for all frontend and backend code |
-| **Framework** | `Next.js 14+ (App Router)` | Full-stack React framework — pages, layouts, and API routes |
-| **UI** | `React 18 + Tailwind CSS` | Component rendering and utility-first styling |
-| **Database** | `Supabase (PostgreSQL + Auth + RLS)` | Relational data persistence, authentication, and row-level security |
-| **File Storage** | `Cloudflare R2` | Screenshot and file artifact storage (S3-compatible) |
-| **AI — Primary** | `Google Gemini` | Test case generation, document extraction, Playwright script generation |
-| **AI — Secondary** | `Groq` | Fast LLM inference for generation and enhancement tasks |
-| **AI — Tertiary** | `Anthropic Claude` | Review, enhancement, and embedding tasks |
-| **Browser Automation** | `Playwright` | Headless browser execution of generated test scripts |
-| **Testing** | `Vitest` | Unit tests for lib utilities and automation helpers |
-| **Deployment** | `Vercel` | Serverless deployment with edge functions |
-| **i18n** | `Custom i18n Context` | English and Vietnamese localisation |
-| **Document Parsing** | `Custom extractors (xlsx, pdf, docx)` | Requirement ingestion from uploaded files |
+# 2. Configure environment
+cp .env.example .env.local
+# Edit .env.local with your Supabase, AI provider, and (optional) R2 keys
 
-### 🏗️ Module Decomposition
+# 3. Initialize database
+# Open Supabase SQL Editor → run schema.sql
 
-- **`app/(auth)/`**: Handles user login and registration via Supabase Auth (email/password). Pages: `login`, `register`.
-
-- **`app/(dashboard)/`**: Protected dashboard routes gated by Supabase session. Contains sub-routes for `dashboard`, `projects`, `tools`, and the core project workspace.
-
-- **`app/api/`**: All Next.js Route Handlers (server-side API endpoints), organized into:
-  - `ai/` — generation, enhancement, Playwright script creation, document parsing, embeddings
-  - `automation/` — single run, batch run with `process-next` queue, inspection, screenshot retrieval
-  - `test-cases/` — full CRUD, versioning, comments, automation scripts/runs, bulk operations, export
-  - `projects/` — project CRUD, member management, environment management
-  - `ai-reviews/` — AI-powered review of a test case's content
-  - `test-case-sets/` — grouping test cases into logical sets
-
-- **`components/test-case/`**: Test case detail view — tabs for steps, history, comments, AI review, Playwright automation (code viewer, run results, element preview, history list).
-
-- **`components/test-case-form/`**: Controlled form for creating/editing test cases — steps editor, preconditions editor, test data editor with rich structured inputs.
-
-- **`components/test-case-list/`**: Paginated, filterable table of test cases with bulk-select, bulk-delete bar, and create modal.
-
-- **`components/test-case/generate-workspace/`**: Multi-panel generation wizard — document reader, wizard panel, generating modal, results panel, review panel, traceability matrix, test case cards.
-
-- **`components/automation/`**: Batch automation UI — `RunAutomationModal`, `BatchProgressPanel`, `use-batch-automation` hook, `use-environments` hook.
-
-- **`components/team/`**: Team management UI — member list, member row, invite form, team stats.
-
-- **`components/tools/tool-runner/`**: Developer utility tools — UUID, Base64, Hash Generator, Timestamp, JSON Formatter, Regex Tester, Lorem Ipsum, NRIC, Fake File Generator.
-
-- **`lib/ai/`**: AI provider abstraction layer:
-  - `provider.ts` — selects active AI provider
-  - `gemini.ts`, `groq.ts` — provider clients
-  - `vision.ts` — vision/image analysis
-  - `parse.ts` — response parsing helpers
-  - `prompts/` — all agent prompt definitions and response schemas
-
-- **`lib/automation/`**: Core automation engine:
-  - `browser-runner.ts` — Playwright execution logic
-  - `batch-runner.ts` — sequential batch queue manager
-  - `rate-limit.ts` — request throttling (prevents API overload)
-  - `r2-storage.ts` — Cloudflare R2 screenshot upload/download
-  - `screenshot-storage.ts` — screenshot persistence facade
-
-- **`lib/documents/`**: Document ingestion layer:
-  - `text-extractors.ts` — extracts text from PDF, DOCX, XLSX, CSV uploads
-  - `figma-client.ts` — fetches and parses Figma designs via the Figma REST API
-  - `coverage.ts` — computes requirement-to-test-case coverage metrics
-
-- **`lib/supabase/`**: Database client factory — `client.ts` (browser), `server.ts` (server-side RSC/Route Handler), `admin.ts` (service-role bypass for admin operations).
-
-- **`lib/utils/`**: Shared utilities — Excel export (`test-case-excel.ts`), smart XLSX parsing (`smart-xlsx-parser.ts`), file download helpers, base64 conversion, NRIC generation, fake file payloads, lorem ipsum.
-
-- **`lib/validators/`**: Zod or custom validators for test cases (`test-case.ts`), Playwright scripts (`playwright.ts`), and document uploads (`document.ts`).
-
-- **`lib/test-case-similarity.ts`**: Detects duplicate or near-duplicate test cases using embedding-based comparison.
-
-- **`lib/test-case-diff.ts`**: Computes structured diffs between test case versions for the version history viewer.
-
-- **`lib/i18n/`**: Locale loading, context provider, and dictionaries for `en` and `vi`.
-
-- **`__tests__/`**: Vitest unit tests for R2 storage, screenshot storage, rate limiting, and Playwright validators.
-
-</technical_architecture>
-
----
-
-## 4. Repository Directory Structure
-<directory_structure>
-
-```text
-/
-├── app/                          # Next.js App Router
-│   ├── (auth)/                   # Public auth routes
-│   │   ├── login/page.tsx
-│   │   └── register/page.tsx
-│   ├── (dashboard)/              # Protected dashboard routes
-│   │   ├── layout.tsx            # Dashboard shell with nav
-│   │   ├── dashboard/page.tsx    # Main dashboard overview
-│   │   ├── tools/                # Developer utility tools
-│   │   │   ├── page.tsx          # Tools grid index
-│   │   │   └── [toolSlug]/page.tsx
-│   │   └── projects/             # Multi-project workspace
-│   │       ├── page.tsx          # Project list
-│   │       └── [projectId]/
-│   │           ├── page.tsx      # Project overview
-│   │           ├── test-cases/   # Test case list + detail
-│   │           ├── generate/     # AI generation workspace
-│   │           ├── team/         # Team management
-│   │           └── automation/environments/
-│   ├── api/                      # Server-side Route Handlers
-│   │   ├── ai/                   # AI endpoints (generate, enhance, playwright, embed, documents/parse)
-│   │   ├── ai-reviews/           # AI review endpoint
-│   │   ├── automation/           # Run, batch-run, inspect, screenshot
-│   │   ├── projects/             # Project CRUD + members + environments
-│   │   ├── test-cases/           # Test case CRUD + versions + comments + automation + export + bulk
-│   │   └── test-case-sets/       # Test case set management
-│   ├── globals.css               # Global Tailwind styles
-│   ├── layout.tsx                # Root layout (fonts, providers)
-│   └── page.tsx                  # Root redirect to dashboard
-│
-├── components/                   # React UI components
-│   ├── auth/                     # SignOutButton
-│   ├── automation/               # Batch automation UI (modal, progress panel, hooks)
-│   ├── layout/                   # NavLink, LanguageToggle
-│   ├── team/                     # MemberList, InviteForm, TeamStats
-│   ├── test-case/                # Detail view panels (automation, comments, version history)
-│   │   ├── automation/           # Code viewer, run result, element preview, history
-│   │   └── generate-workspace/   # Generation wizard panels, traceability, test case card
-│   ├── test-case-form/           # Steps, preconditions, test data editors + shared types
-│   ├── test-case-list/           # Table, pagination, bulk-delete, create modal
-│   └── tools/tool-runner/        # UUID, Base64, Hash, Timestamp, JSON, Regex, Lorem, NRIC tools
-│
-├── lib/                          # Core business logic and integrations
-│   ├── ai/                       # LLM provider clients + prompt agents + schemas
-│   │   └── prompts/              # generation-agent, review-agent, playwright-agent, enhance-agent, etc.
-│   ├── api/client.ts             # Typed fetch wrapper for internal API calls
-│   ├── automation/               # Browser runner, batch runner, rate limiter, R2/screenshot storage
-│   ├── documents/                # Text extractors, Figma client, coverage calculator
-│   ├── i18n/                     # Locale config, context, en/vi dictionaries
-│   ├── supabase/                 # client.ts, server.ts, admin.ts
-│   ├── utils/                    # Excel export, file helpers, NRIC, fake files, lorem ipsum
-│   ├── validators/               # test-case, playwright, document validators
-│   ├── test-case-diff.ts         # Version diff computation
-│   └── test-case-similarity.ts   # Embedding-based duplicate detection
-│
-├── __tests__/                    # Vitest unit tests
-│   ├── lib/r2-storage.test.ts
-│   ├── lib/screenshot-storage.test.ts
-│   ├── lib/rate-limit.test.ts
-│   └── lib/playwright-validators.test.ts
-│
-├── schema.sql                    # Supabase PostgreSQL schema definitions
-├── proxy.ts                      # Dev proxy configuration
-├── vercel.json                   # Vercel deployment configuration
-├── next.config.ts                # Next.js configuration
-├── tailwind.config.ts            # Tailwind CSS configuration
-├── tsconfig.json                 # TypeScript configuration
-├── vitest.config.ts              # Vitest test runner configuration
-├── eslint.config.mjs             # ESLint rules
-├── postcss.config.js             # PostCSS (Tailwind processing)
-├── package.json                  # NPM dependencies and scripts
-├── CLOUDFLARE_R2_SETUP.md        # Guide for configuring Cloudflare R2 storage
-├── IMPLEMENTATION_PLAN.md        # Development implementation notes
-├── PROJECT_STRUCTURE.md          # Extended structure reference
-└── README.md                     # This file
+# 4. Run dev server
+npm run dev
+# Open http://localhost:3000 → Register → Create Project → Generate
 ```
 
-</directory_structure>
+---
+
+## Features
+
+| Feature | Description |
+|---------|-------------|
+| AI Test Case Generation | Generate test cases from natural language requirements using Gemini or Groq |
+| Senior QA Review & Enhance | An independent AI agent scores coverage, flags gaps/comments, and can auto-enhance the set based on its own review |
+| Test Case Library | Browse, search, paginate, bulk-delete, and manage test cases per project |
+| Version History | Every edit to a test case is tracked and viewable from the case detail page |
+| Comments | Threaded comments on individual test cases |
+| Old-Cases Import (Excel) | Upload an existing `.xlsx` test suite to review it, or feed it to the Generation Agent as reference |
+| RAG Support | Vector embeddings for semantic search and retrieval (DB + `/api/ai/embed` ready, not yet wired into the UI) |
+| QA Utilities | JSON formatter, Base64, UUID, Regex tester, Hash generator (SHA-1/256), Timestamp converter, Fake File generator, SG NRIC/FIN generator & validator, Lorem Ipsum generator |
+| Team Management | Role-based project access (`qa` / `admin`) with email invitation |
+| Playwright Automation Agent | Generate, run, and maintain Playwright TypeScript automation scripts from any test case — grounded in a real, server-inspected DOM/element map, with screenshot capture and an annotated failure callout on the "Automation" tab |
+| Batch Automation | Select any number of test cases from the library and run automation on all of them against a saved environment, with a resumable progress panel (queued/running/passed/failed/error/skipped per item) |
+| Project Environments | Save reusable, non-secret automation targets (name, browser, target URL, auth mode) per project — reused by both single-case and batch runs |
+| Screenshot & Script Storage | Run screenshots and generated scripts upload to Cloudflare R2 when configured, with automatic fallback to Supabase Storage; signed URLs are always re-derived fresh (never cached expired) |
+| Bilingual UI | Full Vietnamese/English UI toggle (`components/layout/language-toggle.tsx`) |
+| OAuth & Email Auth | Supabase Auth with Google OAuth and email/password |
 
 ---
 
-## 5. Getting Started & Execution Guide
-<setup_instructions>
+## Tech Stack
 
-### 📋 Prerequisites
-
-- `Node.js >= 18.x` and `npm` or `pnpm`
-- `Git`
-- A **Supabase** project (free tier works) — for database and auth
-- A **Cloudflare R2** bucket — for screenshot/file storage (see `CLOUDFLARE_R2_SETUP.md`)
-- At least one **AI provider** API key: Google Gemini, Groq, or Anthropic
-
-### 🚀 Quick Start Commands
-
-1. **Clone the Repository:**
-   ```bash
-   git clone https://github.com/AnhTan1420/QA-AI-Tool.git
-   cd QA-AI-Tool
-   ```
-
-2. **Install Dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Environment Configuration:**
-   ```bash
-   cp .env.example .env.local
-   # Fill in the following required variables:
-   ```
-
-   | Variable | Description |
-   | :--- | :--- |
-   | `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
-   | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon/public key |
-   | `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key (server-side admin) |
-   | `GEMINI_API_KEY` | Google Gemini API key |
-   | `GROQ_API_KEY` | Groq API key |
-   | `ANTHROPIC_API_KEY` | Anthropic Claude API key |
-   | `R2_ACCOUNT_ID` | Cloudflare account ID |
-   | `R2_ACCESS_KEY_ID` | Cloudflare R2 access key |
-   | `R2_SECRET_ACCESS_KEY` | Cloudflare R2 secret key |
-   | `R2_BUCKET_NAME` | Cloudflare R2 bucket name |
-   | `R2_PUBLIC_URL` | Public URL for R2 bucket |
-   | `FIGMA_ACCESS_TOKEN` | Figma personal access token (optional) |
-
-4. **Set Up the Database:**
-   - In your Supabase dashboard, open the SQL editor.
-   - Run the full contents of `schema.sql` to create all tables, RLS policies, and indexes.
-
-5. **Run Locally:**
-   ```bash
-   npm run dev
-   # App available at http://localhost:3000
-   ```
-
-6. **Run Test Suites:**
-   ```bash
-   npm test
-   # Runs Vitest unit tests under __tests__/
-   ```
-
-7. **Build for Production:**
-   ```bash
-   npm run build
-   npm start
-   ```
-
-### 🤖 Cloudflare R2 Configuration
-
-Refer to `CLOUDFLARE_R2_SETUP.md` for step-by-step instructions on creating the R2 bucket, setting CORS, generating access credentials, and linking the public URL.
-
-</setup_instructions>
+```
+Frontend:     Next.js 16 + React 19 + TypeScript + Tailwind CSS 4
+Backend:      Next.js API Routes + Server Components
+Database:     Supabase PostgreSQL + pgvector
+Auth:         Supabase Auth (Email/Password + Google OAuth)
+AI/LLM:       Google Gemini (@google/genai) + Groq (groq-sdk), with automatic fallback
+Automation:   Playwright (playwright-core + @sparticuz/chromium on serverless, full `playwright` when self-hosted)
+Storage:      Cloudflare R2 (S3-compatible, via @aws-sdk/client-s3) for screenshots/scripts, Supabase Storage as fallback
+Validation:   Zod (all AI I/O and automation config)
+Testing:      Vitest
+Deployment:   Vercel (Hobby-tier compatible) / Self-hosted
+```
 
 ---
 
-## 6. Key API Reference
-<api_reference>
+## Project Structure
 
-### AI Endpoints (`/api/ai/`)
+> For the complete file-by-file breakdown, see [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md).
 
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/ai/generate` | Generate test cases from text/document input using the generation agent |
-| `POST` | `/api/ai/enhance` | Enhance an existing test case using the enhance agent |
-| `POST` | `/api/ai/playwright` | Generate a Playwright automation script for a test case |
-| `POST` | `/api/ai/embed` | Generate embeddings for similarity comparison |
-| `POST` | `/api/ai/documents/parse` | Parse and extract structured text from uploaded documents |
+```
+QA-AI-Tool/
+├── app/
+│   ├── (auth)/                    # Login & Register pages
+│   ├── (dashboard)/
+│   │   ├── dashboard/             # Project & test case stats overview
+│   │   ├── projects/              # Project list + create
+│   │   │   └── [projectId]/
+│   │   │       ├── generate/      # AI generation wizard
+│   │   │       ├── test-cases/    # Test case library (list + detail, incl. Automation tab, batch run trigger)
+│   │   │       ├── automation/
+│   │   │       │   └── environments/  # Manage saved project automation environments
+│   │   │       └── team/          # Member management
+│   │   └── tools/                 # QA Utility Toolkit
+│   ├── api/
+│   │   ├── ai/
+│   │   │   ├── generate/          # Generation Agent
+│   │   │   ├── enhance/           # Review / Enhance Agent
+│   │   │   ├── documents/parse/   # AI Document Reader
+│   │   │   ├── embed/             # RAG embeddings
+│   │   │   └── playwright/        # Playwright Codegen Agent
+│   │   ├── ai-reviews/            # Persist review results
+│   │   ├── projects/              # Project CRUD + members + environments
+│   │   ├── test-case-sets/        # Requirement + set creation
+│   │   ├── automation/            # Inspect, single run, batch-run + process-next, run screenshot
+│   │   └── test-cases/            # Test case CRUD + comments + versions + automation scripts/runs
+│   ├── layout.tsx
+│   └── page.tsx
+├── components/
+│   ├── auth/                      # Sign-out button
+│   ├── automation/                # Batch run modal, progress panel, environments management hooks/UI
+│   ├── layout/                    # Nav links, language toggle
+│   ├── team/                      # Team management (hook + UI)
+│   ├── test-case/                 # Generation wizard, version history, comments, single-case Automation tab
+│   ├── test-case-form/            # Create/edit test case form
+│   ├── test-case-list/            # Library list view (hook + table + pagination + batch-run trigger)
+│   └── tools/                     # QA Utility Toolkit (9 tools)
+├── lib/
+│   ├── ai/                        # LLM providers, prompts, parsing
+│   ├── automation/                # Browser runner (inspect + run), batch runner, R2/Supabase storage, rate limiter
+│   ├── documents/                 # AI Document Reader helpers
+│   ├── api/                       # Shared fetch helper
+│   ├── i18n/                      # Vietnamese / English dictionaries
+│   ├── validators/                # Zod schemas (test-case, document, playwright/automation)
+│   ├── utils/                     # Excel, fake files, NRIC, lorem ipsum
+│   ├── supabase/                  # Browser / Server / Admin clients
+│   └── test-case-taxonomy.ts      # Category/priority labels
+├── public/
+├── schema.sql                     # Full DB schema + RLS + triggers (incl. batch automation tables)
+├── proxy.ts                       # Session refresh + auth redirect
+├── next.config.ts
+├── tailwind.config.ts
+├── tsconfig.json
+└── package.json
+```
 
-### Test Case Endpoints (`/api/test-cases/`)
-
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET/POST` | `/api/test-cases` | List all test cases / Create a new test case |
-| `GET/PUT/DELETE` | `/api/test-cases/[id]` | Read, update, or delete a specific test case |
-| `GET` | `/api/test-cases/[id]/versions` | Retrieve full version history for a test case |
-| `GET/POST` | `/api/test-cases/[id]/comments` | List or add comments on a test case |
-| `GET/POST` | `/api/test-cases/[id]/automation/scripts` | List or create Playwright scripts for a test case |
-| `GET/PUT/DELETE` | `/api/test-cases/[id]/automation/scripts/[scriptId]` | Manage a specific script |
-| `GET` | `/api/test-cases/[id]/automation/runs` | List execution runs for a test case |
-| `GET` | `/api/test-cases/export` | Export test cases to Excel |
-| `POST` | `/api/test-cases/bulk` | Bulk create or delete test cases |
-
-### Automation Endpoints (`/api/automation/`)
-
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/automation/run` | Execute a single Playwright script run |
-| `POST` | `/api/automation/batch-run` | Start a batch automation job |
-| `POST` | `/api/automation/batch-run/[id]/process-next` | Advance the batch queue to the next test case |
-| `GET` | `/api/automation/inspect` | Inspect browser DOM elements at a URL |
-| `GET` | `/api/automation/runs/[runId]/screenshot` | Retrieve screenshot from R2 for a run |
-
-### Project & Team Endpoints
-
-| Method | Route | Description |
-| :--- | :--- | :--- |
-| `GET/POST` | `/api/projects` | List or create projects |
-| `GET/PUT/DELETE` | `/api/projects/[projectId]` | Manage a specific project |
-| `GET/POST` | `/api/projects/[projectId]/members` | List or invite team members |
-| `GET/POST` | `/api/projects/[projectId]/environments` | List or create automation environments |
-| `POST` | `/api/ai-reviews` | Request an AI review of a test case |
-
-</api_reference>
-
----
-
-## 7. Database Schema Overview
-<database_schema>
-
-The Supabase PostgreSQL schema (defined in `schema.sql`) contains the following primary tables:
-
-- **`profiles`** — User profile data linked to Supabase Auth `auth.users`.
-- **`projects`** — Top-level containers for test case work. Each project belongs to a creator with optional team membership.
-- **`project_members`** — Junction table for project membership with role-based access.
-- **`test_case_sets`** — Logical groupings of test cases within a project (e.g., "Regression Suite", "Smoke Tests").
-- **`test_cases`** — Core entity. Stores title, description, steps (JSONB), preconditions, test data, expected results, priority, status, and metadata.
-- **`test_case_versions`** — Append-only version snapshots of test cases for full history tracking.
-- **`test_case_comments`** — Threaded comments on individual test cases.
-- **`automation_scripts`** — Playwright scripts associated with a test case (code, language, status).
-- **`automation_runs`** — Execution records for automation runs — status, logs, screenshot URL, duration.
-- **`automation_environments`** — Named environments (e.g., Staging, Production) with base URLs and auth configs per project.
-- **`batch_runs`** — Batch job metadata: which test cases to run, current progress, status.
-
-All tables implement Supabase **Row Level Security (RLS)** policies to ensure users can only access data within their authorized projects.
-
-</database_schema>
+> **Convention**: Any screen with non-trivial state lives as `components/<feature>/` with a `use-<feature>.ts` hook holding state + API calls, and small presentational `*.tsx` files. The route's `page.tsx` stays a thin orchestrator.
 
 ---
 
-## 8. Guidelines for AI Assistants (Claude / GPT Context)
-<ai_guidelines>
+## System Architecture
 
-When analyzing, generating code, or modifying files in this repository, follow these rules:
+### Architecture Layers
 
-1. **Framework Conventions:** This is a **Next.js App Router** project. All pages are React Server Components by default. Use `"use client"` only for components that require interactivity, browser APIs, or React hooks. API endpoints are Route Handlers (`route.ts`), not the Pages Router's `pages/api/`.
+| Layer | Components | Responsibility |
+|-------|-----------|--------------|
+| **Client** | Browser, React Components | UI rendering, form input, client-side tools, batch-run polling loop |
+| **App Router** | `(auth)`, `(dashboard)`, `api/*` | Routing, SSR, API handlers |
+| **AI Services** | Generation, Review, Enhance, Embed, Playwright Codegen | LLM orchestration with fallback |
+| **Automation Runner** | `lib/automation/*` | Headless-browser inspection & script execution, batch item processing, rate limiting |
+| **Data Layer** | Supabase PostgreSQL, Auth, Vector Store | Persistence, RLS, embeddings |
+| **Storage** | Cloudflare R2 (primary), Supabase Storage (fallback) | Screenshots & generated scripts, signed URLs |
+| **External** | Google OAuth, Gemini API, Groq API, Figma API | Third-party integrations |
 
-2. **Database Access Pattern:** Always use the appropriate Supabase client for the context:
-   - Server Components / Route Handlers → `lib/supabase/server.ts` (cookie-based session)
-   - Client Components → `lib/supabase/client.ts`
-   - Admin operations (RLS bypass) → `lib/supabase/admin.ts` (service role, server-only)
+---
 
-3. **AI Provider Abstraction:** Never call Gemini, Groq, or Anthropic SDKs directly from route handlers. Route all LLM calls through `lib/ai/provider.ts` and the prompt modules in `lib/ai/prompts/`. Validate responses against the corresponding response schema (e.g., `generation-response-schema.ts`, `playwright-response-schema.ts`).
+## Database Schema
 
-4. **Automation Safety:** `lib/automation/browser-runner.ts` runs Playwright in a server environment. Always validate Playwright scripts via `lib/validators/playwright.ts` before execution. Respect the rate limiter (`lib/automation/rate-limit.ts`) for batch jobs.
+### Entity Relationships
 
-5. **Architectural Consistency:** Business logic belongs in `lib/`. Components in `components/` must only contain UI logic and call into `lib/` or API routes via `lib/api/client.ts`. Do not embed SQL, LLM calls, or file I/O directly inside React components.
+```
+auth.users (1:1) ──► profiles (1:N) ──► projects (1:N) ──► test_case_sets (1:N) ──► test_cases
+                                            │                │                            │
+                                            ▼                ▼                            ▼
+                                    project_members   project_environments        test_case_versions
+                                            │                │                            │
+                                            ▼                ▼                            ▼
+                                     requirements   automation_batch_runs        test_case_embeddings
+                                                            │                            │
+                                                            ▼                            ▼
+                                                automation_batch_run_items   requirement_traceability
 
-6. **Type Safety:** All new code must be fully typed TypeScript. Shared types between components and API routes belong in the nearest `types.ts` file within the relevant module folder (e.g., `components/test-case-list/types.ts`, `components/test-case-form/types.ts`).
+test_cases (1:N) ──► automation_scripts (versions)
+test_cases (1:N) ──► automation_runs (pass/fail history, screenshot_url)
+```
 
-7. **i18n:** All user-facing strings must be added to both `lib/i18n/dictionaries/en.ts` and `lib/i18n/dictionaries/vi.ts`. Use the `useLanguage()` context hook (from `lib/i18n/language-context.tsx`) to access translated strings in client components.
+### Key Design Decisions
 
-8. **Testing:** New utility functions in `lib/` should have corresponding unit tests in `__tests__/lib/`. Use Vitest. Mock Supabase and external API calls — do not make real network requests in tests.
+- **`test_cases` has no direct `project_id`** — always join through `test_case_sets.project_id`. This enforces proper requirement grouping.
+- **`profiles` auto-created via trigger** on `auth.users` insert — no manual step needed.
+- **RLS policies** are the primary defense layer — API validates with Zod, but RLS prevents unauthorized access at the DB level.
+- **`test_case_embeddings`** uses `pgvector` with `ivfflat` index for semantic search.
+- **`project_environments` never stores secrets** — only name, browser, target URL, and which auth mode (`none`/`cookie`/`login`) to prompt for. Cookie tokens and login credentials are supplied fresh at run time and never persisted.
+- **`automation_batch_runs` / `automation_batch_run_items`** track a batch as a resumable queue (`queued` → `running` → `passed`/`failed`/`error`/`skipped`), advanced one item per request — see [Batch Automation Flow](#batch-automation-flow).
 
-9. **Storage:** All file uploads and screenshots go through `lib/automation/r2-storage.ts`. Do not use local filesystem storage — the deployment target is Vercel serverless, which has no persistent disk.
+---
 
-10. **Documentation Sync:** When adding new API routes, update section 6 (Key API Reference) of this document. When adding new modules, update sections 3 and 4.
+## AI Generation Flow
 
-</ai_guidelines>
+### Flow Description
+
+1. **User Input** — Enter a requirement description in the generation wizard (optionally attach an old `.xlsx` test suite as reference)
+2. **AI Document Reader (optional)** — Attach a Figma design (via link + Personal Access Token), a Markdown/logic-document/FS (`.md`/`.txt`/`.pdf`/`.docx`), or an ERD/diagram image; `/api/ai/documents/parse` atomizes it into `DocumentAtom`s (see `lib/validators/document.ts`)
+3. **Generation Agent** — `/api/ai/generate` calls AI (Gemini, falling back to Groq) with the requirement, any RAG old cases, and any attached document atoms, and returns structured test cases. The Generation Agent is required to map every document atom into a test case's `source_requirement_ids` (PHASE 0.5 of the prompt); the API cross-checks this server-side and returns a `document_coverage` score alongside the test cases
+4. **Zod Validation** — All AI output is parsed and validated against `lib/validators/test-case.ts` before it reaches the client
+5. **Review (on demand)** — From the "Review & Enhance" tab, the user runs the independent Review Agent (`/api/ai/enhance`, `mode: "review"`) against the generated set (or an imported `.xlsx` set); it receives only the requirement + test cases, never the generation prompt or conversation history, and returns a coverage score, requirement gaps, and per-case comments
+6. **Enhance (on demand)** — The user can then run `mode: "enhance"` to have the AI rewrite the set based on its own review
+7. **Save to Library** — Validated test cases (and the review, if one was run) are stored via `/api/test-case-sets` + `/api/test-cases/bulk`, linked to a `test_case_set`
+
+---
+
+## Automation Flow (Single Test Case)
+
+1. Open a test case detail → **Automation** tab
+2. Configure the environment (browser, target URL, optional cookie/session token or login credentials) — or pick a saved **Project Environment**
+3. **Inspect** — `/api/automation/inspect` launches a real headless browser server-side, navigates + authenticates, and extracts a DOM/element map (role, accessible name, `data-testid`/id, tag)
+4. **Generate** — `/api/ai/playwright` (Playwright Codegen Agent) produces a complete `@playwright/test` TypeScript file grounded in that element map — never a hallucinated selector — saved as a new `automation_scripts` version
+5. **Run** — `/api/automation/run` executes the script; on pass, the final-state screenshot is stored, on fail the failing element is highlighted alongside structured failure details (error message, selector, step). Runs are rate-limited per user (`lib/automation/rate-limit.ts`) since each one holds a real browser instance
+6. Screenshots and scripts upload to **Cloudflare R2** when configured, falling back to **Supabase Storage** otherwise (`lib/automation/screenshot-storage.ts`, `lib/automation/r2-storage.ts`); the `/api/automation/runs/[runId]/screenshot` route always re-derives a fresh signed URL rather than trusting a cached one
+7. Every generation is kept as a version (`automation_scripts`) and every run is kept in history (`automation_runs`), both visible from the same tab — an "Automation" status badge also shows on the test case in the library list
+
+---
+
+## Batch Automation Flow
+
+Runs automation across many selected test cases at once, without a dedicated server-side worker (see the architecture note below):
+
+1. From the **Test Cases** library, select any number of test cases and click **Run Automation** → choose (or create) a saved **Project Environment**
+2. `/api/automation/batch-run` (`POST`) enqueues the batch: it inserts one `automation_batch_runs` row plus one `automation_batch_run_items` row per selected test case, then returns immediately — it does **not** run anything itself
+3. The open browser tab drives the queue by repeatedly calling `/api/automation/batch-run/[id]/process-next`, which claims and processes **exactly one** queued item per call via `lib/automation/batch-runner.ts`:
+   - reuses the test case's latest saved `automation_scripts` version if one exists, otherwise Inspects the environment and Generates a script first
+   - always Runs the script and persists the result to `automation_runs`, exactly like the single-case flow
+4. The **Batch Progress Panel** (`components/automation/batch-progress-panel.tsx`) shows live per-item status (`queued` / `running` / `passed` / `failed` / `error` / `skipped`) as the tab keeps polling
+5. **Fully resumable**: closing the tab simply pauses the batch at whatever is still `queued` — reopening it and clicking Resume continues from there. This is a deliberate design constraint for the Vercel Hobby tier (hard 60s `maxDuration`, no background worker, and Cron limited to once/day — see the "Batch Automation" header comment in `schema.sql`), not a bug
+6. Credentials (cookie token or login) are entered once at batch start, held only in browser memory for the batch's lifetime, and resent with every `process-next` call — never written to `automation_batch_run_items` or `automation_batch_runs`
+
+---
+
+## Prerequisites
+
+- **Node.js** 20+ (recommended: use `nvm` or `fnm`)
+- **Supabase Project** (free tier sufficient for testing)
+  - Enable `vector` extension
+  - Enable `pgcrypto` extension
+- **API Keys**:
+  - **Google Gemini API Key** (required)
+  - **Groq API Key** (recommended, used as fallback when Gemini rate-limits)
+- **Cloudflare R2** (optional) — for persistent screenshot/script storage; without it, the app falls back to Supabase Storage automatically
+
+---
+
+## Installation
+
+### 1. Clone & Install
+
+```bash
+git clone https://github.com/AnhTan1420/QA-AI-Tool.git
+cd QA-AI-Tool
+npm install
+```
+
+### 2. Environment Setup
+
+```bash
+cp .env.example .env.local
+```
+
+Edit `.env.local` with your actual values (see Environment Variables).
+
+### 3. Database Initialization
+
+1. Open your Supabase project SQL Editor
+2. Run the entire contents of `schema.sql`
+3. This automatically:
+   - Enables `vector` and `pgcrypto` extensions
+   - Creates all tables with proper constraints, including `project_environments`, `automation_scripts`, `automation_runs`, `automation_batch_runs`, and `automation_batch_run_items`
+   - Sets up RLS policies
+   - Creates trigger to auto-generate `profiles` on new user registration
+   - Creates the `automation-screenshots` storage bucket + policies (used when R2 is not configured)
+
+### 4. (Optional) Configure Cloudflare R2
+
+See [CLOUDFLARE_R2_SETUP.md](CLOUDFLARE_R2_SETUP.md) for creating the bucket, API token, and (optional) public domain. If the `R2_*` variables aren't set, screenshots and scripts automatically fall back to Supabase Storage — no code changes needed.
+
+### 5. Run Development Server
+
+```bash
+npm run dev
+```
+
+Open http://localhost:3000 and click **Register** to create your first account.
+
+---
+
+## AI Model
+
+https://ai.google.dev/gemini-api/docs/models
+
+## Environment Variables
+
+```bash
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+
+# AI Providers
+GOOGLE_GEMINI_API_KEY=your-gemini-api-key
+GROQ_API_KEY=your-groq-api-key
+
+# Model Configuration — read from env per task, never hardcoded (lib/ai/provider.ts)
+AI_MODEL_GENERATION=gemini-3.6-flash
+AI_MODEL_REVIEW=gemini-3.5-flash-lite
+AI_MODEL_CLASSIFICATION=gemini-3.5-flash-lite
+AI_MODEL_DOCUMENT_EXTRACTION=gemini-3.6-flash    # AI Document Reader (text + vision atomization) — must support multimodal input
+AI_MODEL_FALLBACK=gemini-3.5-flash-lite    # used if a task-specific model isn't set
+AI_MODEL_EMBEDDING=gemini-embedding-001     # used by /api/ai/embed (RAG, not yet wired into UI)
+GROQ_MODEL_PRIMARY=llama-3.1-70b-versatile
+GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
+
+# AI Document Reader (optional) — server-side fallback Figma token used when the
+# user doesn't paste their own Personal Access Token in the generation wizard.
+FIGMA_ACCESS_TOKEN=your-figma-personal-access-token
+
+# Playwright Automation Agent (single case + batch) — see lib/automation/browser-runner.ts
+AI_MODEL_PLAYWRIGHT_CODEGEN=gemini-3.6-flash
+AUTOMATION_RUNTIME=serverless   # 'serverless' (Chromium only, default on Vercel) or 'local' (all 3 engines — self-hosted only)
+
+# Cloudflare R2 (optional) — persistent storage for automation screenshots + scripts.
+# If any of these are unset, storage falls back to Supabase Storage automatically.
+# See CLOUDFLARE_R2_SETUP.md for full setup instructions.
+R2_ACCOUNT_ID=your-cloudflare-account-id
+R2_ACCESS_KEY_ID=your-r2-access-key-id
+R2_SECRET_ACCESS_KEY=your-r2-secret-access-key
+R2_BUCKET_NAME=qa-automation-assets
+# R2_PUBLIC_URL=https://pub-abc123.r2.dev   # optional: public bucket domain, skips signed-URL generation
+```
+
+> Every task (`generation` / `review` / `classification`) tries its own Gemini model first, then `AI_MODEL_FALLBACK`, then Groq's `GROQ_MODEL_PRIMARY` → `GROQ_MODEL_FALLBACK` — see `lib/ai/provider.ts`.
+
+> **Security Note**: `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS. Only use it in server-side system operations (e.g., looking up users by email for invitations). Never expose it to the client.
+
+---
+
+## Usage Guide
+
+### 1. Authentication
+
+- Navigate to `/login` or `/register`
+- Sign up with email/password or Google OAuth
+- On first registration, a `profile` is auto-created via database trigger
+
+### 2. Create a Project
+
+1. Go to **Dashboard** → **Projects**
+2. Click **Create Project**
+3. Enter project name and description
+4. You are automatically set as the project owner
+
+### 3. Invite Team Members
+
+1. Open a project → **Team** tab (admins only)
+2. Enter member email and select role:
+   - `qa` — Can generate and view test cases
+   - `admin` — Full project management (invite/remove members, change roles)
+3. Click **Invite**
+
+### 4. Generate Test Cases with AI
+
+1. Inside a project, go to **Generate**
+2. Enter requirement description (e.g. *"User should be able to reset password via email link"*), pick categories, and optionally upload an old `.xlsx` test suite as reference
+3. (Optional) In the **AI Document Reader** step, attach a Figma design (paste the file link + a Figma Personal Access Token), or upload a Markdown/logic-document/Functional Spec (`.md`/`.txt`/`.pdf`/`.docx`) or an ERD/diagram image (`.png`/`.jpg`) — each is atomized into testable elements the Generation Agent must map into the resulting test cases
+4. Click **Generate** — the Generation Agent returns a validated set of test cases, shown in the **Test Cases Generated** tab; if any documents were attached, a **document mapping coverage** banner shows the resulting % and lists any unmapped elements
+5. Switch to the **Review & Enhance** tab to run the independent Review Agent (coverage score, requirement gaps, per-case comments), then optionally **Enhance with AI** to have it rewrite the set based on its own review
+6. Click **Save to Library** to persist the set (and review, if run)
+
+### 5. Browse Test Case Library
+
+1. Go to **Test Cases** inside a project
+2. Search, paginate, bulk-select and bulk-delete, or change a case's status inline
+3. Click any test case to see:
+   - Title, steps, expected result, priority and status
+   - **Version History** — every past edit
+   - **Comments** — threaded discussion on that case
+
+### 6. Automate a Single Test Case
+
+1. Open a test case detail → **Automation** tab
+2. Configure the test environment (browser, target URL, optional cookie/session token or login credentials), or pick a saved **Project Environment**, then click **Inspect target page**
+3. Click **Generate Playwright Code** — grounded in the inspected element map, shown with syntax highlighting and a **Copy** button for your external suite
+4. Click **Run Automation Test** to execute it inside QAJD — pass stores a final-state screenshot, fail highlights the failing element with structured failure details
+5. Every generation is versioned (`automation_scripts`) and every run kept in history (`automation_runs`), both visible from the same tab; an "Automation" status badge also shows on the test case in the library list
+
+### 7. Run Batch Automation
+
+1. Go to **Test Cases** inside a project, select the test cases to automate (checkboxes), and click **Run Automation**
+2. Pick a saved **Project Environment** (or create one under **Automation → Environments**) and, if it requires auth, enter the cookie token or login credentials for this run
+3. Keep the tab open — the **Batch Progress Panel** shows each item moving through `queued` → `running` → `passed`/`failed`/`error`/`skipped` as it works through the queue one test case at a time
+4. If you close the tab mid-run, the batch simply pauses; reopen it and click **Resume** to continue from where it left off
+
+### 8. Use QA Utility Toolkit
+
+1. Go to **Tools** in the sidebar
+2. Available utilities:
+   - **JSON Formatter** — Pretty-print and validate JSON
+   - **Base64** — Encode/decode strings
+   - **UUID Generator** — Generate v4 UUIDs in bulk
+   - **Regex Tester** — Test patterns with live matching
+   - **Hash Generator** — SHA-1, SHA-256
+   - **Timestamp Converter** — Unix ↔ ISO 8601
+   - **Fake File Generator** — Generate dummy files (TXT, CSV, JSON, PNG, PDF) at chosen size for upload testing
+   - **Singapore NRIC/FIN Generator & Validator** — Generate and checksum-validate Singapore NRIC/FIN numbers for test data
+   - **Dummy Text Generator** — Generate placeholder text by word/sentence/paragraph count
+
+---
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/ai/generate` | `POST` | Generate test cases from a requirement description |
+| `/api/ai/enhance` | `POST` | Review (`mode: "review"`) or rewrite (`mode: "enhance"`) a set of test cases |
+| `/api/ai/documents/parse` | `POST` | AI Document Reader — atomize a Figma file, a Markdown/logic-doc/FS (.md/.txt/.pdf/.docx), or an ERD/diagram image into `DocumentAtom`s for the Generation Agent |
+| `/api/ai/embed` | `POST` | Create a vector embedding for RAG (backend ready, not yet called by the UI) |
+| `/api/ai/playwright` | `POST` | Playwright Codegen Agent — generate a `@playwright/test` script grounded in an inspected element map, saved as a new `automation_scripts` version |
+| `/api/automation/inspect` | `POST` | Launch a real browser server-side, navigate + auth, and extract a DOM/element map |
+| `/api/automation/run` | `POST` | Execute a generated (or ad-hoc) Playwright script and capture a screenshot + failure details into `automation_runs`; rate-limited per user |
+| `/api/automation/batch-run` | `POST` | Enqueue a batch: create `automation_batch_runs` + one `automation_batch_run_items` row per selected test case |
+| `/api/automation/batch-run/[id]/process-next` | `POST` | Claim and process exactly one queued item in a batch (Inspect+Generate if needed, then Run) — called repeatedly by the browser tab until the queue is empty |
+| `/api/automation/runs/[runId]/screenshot` | `GET` | Re-derive and redirect to a fresh signed URL for a run's stored screenshot (R2 or Supabase) |
+| `/api/test-cases/[id]/automation/scripts` | `GET` | Version history of generated Playwright scripts for a test case |
+| `/api/test-cases/[id]/automation/runs` | `GET` | Run history (pass/fail, screenshots, failure details) for a test case |
+| `/api/ai-reviews` | `POST` | Persist a review result against a test case set |
+| `/api/projects` | `GET`/`POST` | List / create projects |
+| `/api/projects/[projectId]` | `DELETE` | Delete a project |
+| `/api/projects/[projectId]/members` | `GET`/`POST`/`PATCH`/`DELETE` | List, invite, change role, or remove a project member |
+| `/api/projects/[projectId]/environments` | `GET`/`POST` | List / create saved, non-secret automation environments for a project |
+| `/api/test-case-sets` | `POST` | Create a test case set (requirement) |
+| `/api/test-cases` | `GET`/`POST`/`PATCH`/`DELETE` | List, create, update (status), or bulk-delete test cases |
+| `/api/test-cases/bulk` | `POST` | Bulk create/update test cases |
+| `/api/test-cases/export` | `GET` | Export a project's test cases |
+| `/api/test-cases/[id]` | `GET`/`PUT`/`DELETE` | Get, update, or delete a single test case |
+| `/api/test-cases/[id]/comments` | `GET`/`POST` | List / add comments on a test case |
+| `/api/test-cases/[id]/versions` | `GET` | Version history for a test case |
+
+### Example: Generate Test Cases
+
+```bash
+curl -X POST http://localhost:3000/api/ai/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requirement_description": "User can add items to cart and checkout",
+    "selected_categories": ["positive", "negative", "boundary"],
+    "language": "English",
+    "detail_level": "standard",
+    "retrieved_old_test_cases": []
+  }'
+```
+
+### Example: Review Coverage
+
+```bash
+curl -X POST http://localhost:3000/api/ai/enhance \
+  -H "Content-Type: application/json" \
+  -d '{
+    "mode": "review",
+    "requirement_description": "User can add items to cart and checkout",
+    "test_cases": [
+      {"code": "TC_CART_001", "title": "Add single item to cart", "...": "..."}
+    ]
+  }'
+```
+
+### Example: Enqueue a Batch Automation Run
+
+```bash
+curl -X POST http://localhost:3000/api/automation/batch-run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "uuid-of-project",
+    "test_case_ids": ["uuid-1", "uuid-2", "uuid-3"],
+    "environment_id": "uuid-of-saved-environment"
+  }'
+```
+
+---
+
+## Core Principles
+
+When contributing or modifying code, adhere to these principles:
+
+### 1. Never Trust Raw AI JSON
+
+Every response from Gemini/Groq must pass through `lib/validators/test-case.ts` before database write or client response. See `app/api/ai/generate/route.ts` for the implementation pattern.
+
+```typescript
+const validated = TestCaseSchema.parse(aiResponse);
+// Only then save to DB
+```
+
+### 2. Review Agent Must Be Independent
+
+- **Do not** pass previously generated test cases as reference
+- **Do not** share conversation history with the Generation Agent
+- The Review Agent must evaluate objectively without bias
+
+### 3. No Hard-Coded Model IDs
+
+Always read model identifiers from environment variables:
+
+```typescript
+const model = process.env.AI_MODEL_GENERATION; // ✅
+// const model = "gemini-1.5-pro"; // ❌ Never do this
+```
+
+Model routing tries the Gemini model for the task, then `AI_MODEL_FALLBACK`, then falls back to Groq entirely (see `lib/ai/provider.ts`).
+
+### 4. Test Cases Join Through Sets
+
+`test_cases` has no `project_id` column. Always join:
+
+```sql
+SELECT tc.*
+FROM test_cases tc
+JOIN test_case_sets tcs ON tc.test_case_set_id = tcs.id
+WHERE tcs.project_id = 'uuid';
+```
+
+### 5. RLS Is the Primary Defense
+
+- API route handlers validate input with Zod
+- But **RLS policies** enforce access control at the database level
+- Never bypass RLS with `supabase/admin.ts` except for true system operations (e.g., email lookup in `auth.users`)
+
+### 6. Automation Config Never Persists Secrets
+
+- `project_environments` stores only name, browser, target URL, and auth **mode** — never a cookie token, username, or password
+- Cookie tokens and login credentials are supplied fresh by the user at run time (single-case or batch start), held only in memory for that run/batch, and never written to `automation_batch_run_items`, `automation_batch_runs`, or logged
+
+### 7. Batch Processing Is One Item Per Request
+
+- `/api/automation/batch-run/[id]/process-next` deliberately processes exactly one test case per call, staying well inside Vercel Hobby's hard 60s `maxDuration`
+- There is no server-side loop or background worker — the open browser tab drives the queue by calling `process-next` repeatedly; closing the tab pauses the batch, it never gets stuck mid-item
+- See the "Batch Automation" header comment in `schema.sql` for the full architecture rationale
+
+---
+
+## Roadmap
+
+### Phase 2 — In Progress
+
+- **RAG Pipeline** — Complete flow: upload old test cases → auto-embed → retrieve during generation
+- **Requirement Traceability Matrix** — `requirement_traceability` table exists, needs UI
+- **AI Document Reader** — Reads and parses Figma designs (live via the Figma REST API), Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams (PDF/DOCX/image) for smarter test case generation. Each source is "atomized" into `DocumentAtom`s (`lib/validators/document.ts`); the Generation Agent is required to map every atom into a test case's `source_requirement_ids` (PHASE 0.5 of `lib/ai/prompts/generation-agent.ts`), and `/api/ai/generate` cross-checks that mapping server-side (`lib/documents/coverage.ts`) and returns a `document_coverage` score instead of just trusting the model's word. See `components/test-case/generate-workspace/document-reader-panel.tsx` and `app/api/ai/documents/parse/route.ts`.
+- **Can access project environment** — read the UI, auto create test data
+
+### Phase 3 — Implemented
+
+- **Automation test with AI** ✅
+  1. Open a test case detail → **Automation** tab
+  2. Configure the test environment (browser, target URL, optional cookie/session token or login credentials) and click **Inspect target page** — QAJD launches a real headless browser server-side and extracts a DOM/element map (role, accessible name, `data-testid`/id, tag)
+  3. Click **Generate Playwright Code** — the Playwright Codegen Agent produces a complete `@playwright/test` TypeScript file grounded in that element map (never a hallucinated selector), shown with syntax highlighting and a **Copy** button for your external suite
+  4. Click **Run Automation Test** to execute it right inside QAJD: on pass, the final-state screenshot is stored; on fail, the failing element is highlighted in the screenshot alongside structured failure details (error message, selector, which step)
+  5. Every generation is kept as a version (`automation_scripts`) and every run is kept in history (`automation_runs`), both visible from the same tab — an "Automation" status badge (not generated / generated / passed / failed) also shows on the test case in the library list
+
+### Phase 4 — Implemented
+
+- **Batch Automation** ✅ — Run automation on many (or all) test cases at once instead of one record at a time, with a resumable, tab-driven queue (see [Batch Automation Flow](#batch-automation-flow))
+- **Project Environments** ✅ — Save reusable, non-secret automation targets (browser + target URL + auth mode) per project
+- **Cloudflare R2 Storage** ✅ — Persistent, S3-compatible storage for run screenshots and generated scripts, with automatic fallback to Supabase Storage and always-fresh signed URLs (see [CLOUDFLARE_R2_SETUP.md](CLOUDFLARE_R2_SETUP.md))
+- **Automation run rate limiting** ✅ — Per-user cooldown on `/api/automation/run` since each run holds a real headless browser instance
+
+### Phase 5 — Not Started
+
+- **Durable global rate limiting** — Current limiter is in-memory, per-serverless-instance (see `lib/automation/rate-limit.ts`); a Redis/Upstash-backed limiter would give a hard global guarantee
+- **Background worker for batches** — Would remove the "tab must stay open" constraint on Batch Automation, contingent on moving off the Vercel Hobby tier or adding a queue service
+
+---
 
 ## License
 
