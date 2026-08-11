@@ -161,6 +161,13 @@ GROUNDING RULE (MANDATORY — INSTANT REJECTION IF VIOLATED)
 • The ELEMENT MAP may be truncated if inspection produced more than 400 elements across all pages — if a section header is present but its element list looks unexpectedly short or is missing entirely for a page a step needs, do NOT assume the page has no matching elements: add a warning saying grounding may be incomplete for that step, rather than treating the absence as confirmed.
 
 ══════════════════════════════════════════════════════════════════
+RESILIENT LOCATOR & SEMANTIC MATCHING RULE
+══════════════════════════════════════════════════════════════════
+• SEMANTIC SANITY CHECK: Ensure the element you select from the map logically aligns with the action. If a step requires entering data into a "JSON editor", do NOT select a completely unrelated element like a global search bar or a "project" dropdown just because it has a 'textbox' role. Look for appropriate tags (e.g., \`<textarea>\`), roles (\`textbox\`, \`code\`), or semantic names.
+• STRICT MODE PREVENTION: If you are forced to use a generic selector from the map that lacks a unique accessible name (e.g., a plain \`getByRole('textbox')\` or \`locator('textarea')\`), you MUST append \`.first()\` to prevent Playwright strict mode violations (which crash the test if multiple elements match).
+• RESILIENT COMBINATIONS (.or): To write "bulletproof" code like a Principal SDET, if the element map implies multiple plausible selectors for the exact same target, combine them using Playwright's \`.or()\` syntax. This is especially crucial for Code Editors, complex buttons, and dynamic text. Example for an editor: \`this.page.getByRole('textbox').first().or(this.page.locator('textarea').first())\`. Example for a button: \`this.page.getByRole('button', { name: /Format/i }).or(this.page.getByText(/Format/i))\`.
+
+══════════════════════════════════════════════════════════════════
 TEST ISOLATION & DETERMINISM RULE (MANDATORY)
 ══════════════════════════════════════════════════════════════════
 • The generated spec assumes a FRESH, ISOLATED browser context per run — this is guaranteed by the runner (see RUNTIME CONTRACT below and lib/automation/browser-runner.ts#runGeneratedScript, which launches a new context and injects env.cookie_token/env.login BEFORE any generated code executes). You must therefore NEVER write code that depends on state left behind by a previous run (no assuming a cart is already empty, no assuming a previous test's data still exists) unless that state is explicitly stated in "Preconditions" below — preconditions describe the world the test starts in; anything not stated there must be established by the test's own steps.
@@ -186,29 +193,29 @@ Enterprise-grade Playwright authentication treats "getting the browser into a si
 PAGE OBJECT MODEL RULE (MANDATORY — this is what "page_objects" means below)
 ══════════════════════════════════════════════════════════════════
 • Emit exactly ONE Page Object class per "--- Page: ... ---" section above, using the EXACT \`class_name\` and \`file_name\` printed in that section's header — never rename, re-case, or invent a different one. This is the full roster you must produce (one page_objects[] entry per line, in this order):
-${pageObjectRoster || '  (single unlabeled page — still emit exactly one class for it)'}
+\${pageObjectRoster || '  (single unlabeled page — still emit exactly one class for it)'}
 • Each class: \`constructor(private page: Page) {}\` (import \`Page\` as a type-only import from \`@playwright/test\`), then one small, intention-revealing async method per interaction needed for the steps grounded on that page (e.g. \`fillEmail(value: string)\`, \`clickSignIn()\`, \`expectDashboardVisible()\`) — never one giant method that does everything. Method names describe INTENT ("what the user is doing"), not implementation ("clickButton1"). Assertions belong in \`expect...\`-named methods on the class, not loose in the spec.
 • Every locator inside a class method MUST come from that class's OWN section of the element map — never reach into another page's elements from within a class. If a single logical action needs elements from two different page sections (rare — usually means the action spans a navigation), split it into two Page Object method calls from the spec, one per page, in the order they actually occur.
 • Every locator is resolved FRESH inside its method body (\`this.page.getByRole(...)\`), never cached as a class field assigned once in the constructor — Playwright locators are lazy/re-resolving by design, and caching one defeats the auto-waiting/auto-retry behavior that makes web-first assertions reliable across DOM re-renders.
 • The spec (\`code\`) file must: import each class via \`import { <class_name> } from './<file_name_without_.ts_extension>';\`, instantiate one instance per class actually used, and drive the test by calling ONLY their methods — no raw \`page.locator(...)\`/\`page.getByRole(...)\` calls directly in the spec body itself (that logic belongs inside a Page Object method). This isn't a style preference: it's what makes the generated suite maintainable when the target UI changes — a broken selector is fixed in exactly one place (the Page Object method), never hunted across every spec that happens to use it.
 
 ══════════════════════════════════════════════════════════════════
-ELEMENT MAP (real DOM elements from ${input.environment.target_url}, browser: ${input.environment.browser})
+ELEMENT MAP (real DOM elements from \${input.environment.target_url}, browser: \${input.environment.browser})
 ══════════════════════════════════════════════════════════════════
-${elementMapFormatted}
+\${elementMapFormatted}
 
 ══════════════════════════════════════════════════════════════════
 TEST CASE TO AUTOMATE
 ══════════════════════════════════════════════════════════════════
-Title: ${input.test_case.title}
+Title: \${input.test_case.title}
 
 Preconditions:
-${preconditionsFormatted}
+\${preconditionsFormatted}
 
 Steps:
-${stepsFormatted}
+\${stepsFormatted}
 
-Final expected result: ${input.test_case.expected_result}
+Final expected result: \${input.test_case.expected_result}
 
 ══════════════════════════════════════════════════════════════════
 OUTPUT CONTRACT
@@ -226,8 +233,8 @@ OUTPUT CONTRACT
    • Starts with \`import { test, expect } from '@playwright/test';\` followed by one \`import { <class_name> } from './<file_name without the trailing ".ts">';\` line per page object actually used (relative sibling path — the real export places page objects and their spec in the same directory, see PAGE OBJECT MODEL RULE above).
    • Exactly ONE \`test('<title>', async ({ page }) => { ... })\` block whose title is the test case title above.
    • First lines of the test body instantiate the page object(s) needed, e.g. \`const loginPage = new LoginPage(page);\`.
-   • MANDATORY: the Page Object matching the FIRST "--- Page: ... ---" section above (the one whose elements were captured on \`${input.environment.target_url}\` itself) MUST have a \`goto()\` method whose body is exactly \`async goto() { await this.page.goto('${input.environment.target_url}'); }\` — and the spec's very first call after instantiating page objects MUST be \`await <thatPageObject>.goto();\`, before any other action. This is not optional even though the runner also navigates as a safety net for the in-app Run button — the SAME code is exported as real files run via \`npx playwright test\`, where no such safety net exists, so a missing/broken \`goto()\` means the exported suite fails immediately on a blank page. Never call \`page.goto\` directly from the spec body — only through this method.
-   • Browser/channel note as a comment only (the actual browser is chosen by the Playwright config that runs this file, not inside the test body): \`// Runner uses: ${BROWSER_LAUNCH_COMMENT[input.environment.browser]}\`
+   • MANDATORY: the Page Object matching the FIRST "--- Page: ... ---" section above (the one whose elements were captured on \`${input.environment.target_url}\` itself) MUST have a \`goto()\` method whose body is exactly \`async goto() { await this.page.goto('\${input.environment.target_url}'); }\` — and the spec's very first call after instantiating page objects MUST be \`await <thatPageObject>.goto();\`, before any other action. This is not optional even though the runner also navigates as a safety net for the in-app Run button — the SAME code is exported as real files run via \`npx playwright test\`, where no such safety net exists, so a missing/broken \`goto()\` means the exported suite fails immediately on a blank page. Never call \`page.goto\` directly from the spec body — only through this method.
+   • Browser/channel note as a comment only (the actual browser is chosen by the Playwright config that runs this file, not inside the test body): \`// Runner uses: \${BROWSER_LAUNCH_COMMENT[input.environment.browser]}\`
    • Wrap the actions/assertions for EVERY test case step in its own \`await test.step('Step N: <action>', async () => { ... })\` block, in step order — one block per input step, no merging two steps into one block and no splitting one step across two. This gives 1-to-1 traceability between the input steps and the executed test, and makes failures reported against the exact step that produced them instead of an anonymous line number.
    • Inside each \`test.step\` block: call a Page Object method (never a raw locator) for the action, then immediately assert its result if that step has an "Expected" outcome — either an \`expect...\`-named Page Object method, or (only if no such method makes sense) a direct \`await expect(...)\` using Playwright's web-first assertions (\`toBeVisible\`, \`toHaveText\`, \`toHaveURL\`, \`toBeEnabled\`, etc.) — never a bare \`assert\`/\`if\` check, never a plain \`.textContent()\` read compared manually.
    • The final expected result becomes the LAST assertion in the LAST \`test.step\` block.
@@ -245,7 +252,7 @@ OUTPUT CONTRACT
 ══════════════════════════════════════════════════════════════════
 LANGUAGE RULE
 ══════════════════════════════════════════════════════════════════
-Code, identifiers, and Playwright API calls are always in English (this is source code). Only the \`test.step('Step N: ...')\` labels and any "warnings" text should be written in ${input.language}.
+Code, identifiers, and Playwright API calls are always in English (this is source code). Only the \`test.step('Step N: ...')\` labels and any "warnings" text should be written in \${input.language}.
 
 ══════════════════════════════════════════════════════════════════
 SELF-VERIFICATION CHECKLIST (run this BEFORE writing the final JSON — fix any failing item first)
@@ -253,15 +260,17 @@ SELF-VERIFICATION CHECKLIST (run this BEFORE writing the final JSON — fix any 
 □ Every locator string appearing anywhere in page_objects[].code is copied from a "selector=" value in the ELEMENT MAP above.
 □ IF a selector is a \`getByRole\` with a very long or concatenated name (e.g. "Xử lý dữ liệuJSON Formatter..."), I HAVE OPTIMIZED IT to use a Regex (e.g. \`/JSON Formatter/i\`) to prevent Timeout failures caused by whitespace/DOM rendering quirks.
 □ I HAVE VERIFIED that no syntax-highlighting HTML/CSS tags (e.g. \`<span class="text-emerald-300">\`) have been accidentally generated in my output TypeScript code.
+□ I HAVE APPLIED Semantic Sanity Checks: My locators make logical sense for the step (e.g. not picking a global nav search bar for a code editor).
+□ I HAVE APPENDED \`.first()\` to generic locators and utilized \`.or()\` where fallbacks are necessary for resilience.
 □ page_objects[] has exactly one entry per roster line, with class_name/file_name copied exactly — no extra, missing, or renamed entries.
 □ No locator call (\`page.locator\`, \`page.getByRole\`, etc.) appears anywhere in the spec's \`code\` field — only inside page_objects[].code methods.
 □ Every test case step above has exactly one corresponding \`test.step(...)\` block in the spec, in the same order, with no step merged, skipped, or duplicated.
 □ Every step with a stated "Expected" result has a web-first \`expect(...)\` assertion (or an \`expect...\`-named Page Object method) immediately after its action, inside the same \`test.step\` block.
 □ Zero occurrences of \`waitForTimeout\`, \`networkidle\`, \`page.pause()\`, or a bare \`if\`/\`assert\` standing in for an \`expect(...)\` call, anywhere in either the spec or any page object.
 □ Every Playwright action and every \`expect(...)\` call is preceded by \`await\` — scan for any bare (non-awaited) call before finalizing.
-□ No code anywhere fills in credentials, performs a login form submission, or otherwise duplicates what auth_mode = "${input.environment.auth_mode}" already guarantees is done before the test body runs — unless the test case is itself testing the login flow.
+□ No code anywhere fills in credentials, performs a login form submission, or otherwise duplicates what auth_mode = "\${input.environment.auth_mode}" already guarantees is done before the test body runs — unless the test case is itself testing the login flow.
 □ Nothing in either file imports anything beyond the type-only \`Page\` import and the sibling page-object imports — no other package, no Node built-in (see RUNTIME CONTRACT above for why this breaks the in-app runner).
-□ The Page Object for the FIRST page section has a \`goto()\` method that calls \`await this.page.goto('${input.environment.target_url}')\`, and the spec's very first call after instantiating page objects is \`await <thatPageObject>.goto();\` — before any other action.
+□ The Page Object for the FIRST page section has a \`goto()\` method that calls \`await this.page.goto('\${input.environment.target_url}')\`, and the spec's very first call after instantiating page objects is \`await <thatPageObject>.goto();\` — before any other action.
 □ The spec file contains exactly one \`test(...)\` call, and nothing — not even a comment — follows its closing \`});\`.
 If any box would be unchecked, revise "page_objects"/"code" until all are true before outputting.
 
@@ -270,12 +279,12 @@ OUTPUT FORMAT — STRICT JSON OBJECT, NOTHING ELSE
 ══════════════════════════════════════════════════════════════════
 {
   "page_objects": [
-    { "class_name": "string", "file_name": "string", "page_label": "string", "page_url": "string", "code": "string (full page object .ts file contents, use \n for newlines)" }
+    { "class_name": "string", "file_name": "string", "page_label": "string", "page_url": "string", "code": "string (full page object .ts file contents, use \\n for newlines)" }
   ],
-  "code": "string (full .spec.ts file contents, use \n for newlines)",
+  "code": "string (full .spec.ts file contents, use \\n for newlines)",
   "imports_used": ["string"],
   "selectors_used": ["string"],
   "warnings": ["string"]
 }
-No markdown, no \`\`\`json fences, no prose before or after the object.`;
+No markdown, no \`\`\`json fences, no prose before or after the object.\``;
 }
