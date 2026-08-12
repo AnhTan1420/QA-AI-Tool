@@ -1,9 +1,9 @@
 'use client';
 
 import { use } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, Plus, X, Globe, Trash2 } from 'lucide-react';
+import { Plus, X, Globe, Trash2 } from 'lucide-react';
 import { useEnvironments } from '@/components/automation/use-environments';
+import { BackLink } from '@/components/layout/back-link';
 
 const AUTH_MODE_BADGE: Record<string, string> = {
   none: 'badge-neutral',
@@ -21,12 +21,7 @@ export default function EnvironmentsPage({ params }: { params: Promise<{ project
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <Link
-            href={`/projects/${projectId}`}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:text-brand-700"
-          >
-            <ArrowLeft className="h-4 w-4" /> {e.backToProject}
-          </Link>
+          <BackLink href={`/projects/${projectId}`} label={e.backToProject} />
           <p className="text-eyebrow mt-4">{e.eyebrow}</p>
           <h1 className="text-h1 mt-2">{e.title}</h1>
           <p className="text-body mt-2 max-w-2xl">{e.subtitle}</p>

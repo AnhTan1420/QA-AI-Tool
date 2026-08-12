@@ -1,13 +1,13 @@
 'use client';
 
-import Link from 'next/link';
-import { ArrowLeft, ListChecks, Wand2 } from 'lucide-react';
+import { ListChecks, Wand2 } from 'lucide-react';
 import { SCROLLBAR } from './shared';
 import { WizardPanel } from './wizard-panel';
 import { ResultsPanel } from './results-panel';
 import { ReviewPanel } from './review-panel';
 import { GeneratingModal } from './generating-modal';
 import { useGenerateWorkspace } from './use-generate-workspace';
+import { BackLink } from '@/components/layout/back-link';
 
 export function GenerateWorkspace({ projectId }: { projectId: string }) {
   const workspace = useGenerateWorkspace(projectId);
@@ -18,13 +18,10 @@ export function GenerateWorkspace({ projectId }: { projectId: string }) {
       <GeneratingModal workspace={workspace} />
 
       {/* Nut quay lai - luon ve trang tong quan project (co dinh, khong phu thuoc history) */}
-      <Link
+      <BackLink
         href={workspace.isDemoProject ? '/projects' : `/projects/${projectId}`}
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 transition-colors hover:text-brand-700"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        {t.generateWorkspace.backToProject}
-      </Link>
+        label={t.generateWorkspace.backToProject}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr] xl:h-[calc(100vh-10rem)]">
         <WizardPanel workspace={workspace} />

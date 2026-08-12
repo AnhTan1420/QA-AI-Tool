@@ -1,8 +1,7 @@
 'use client';
 
-import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/language-context';
+import { BackLink } from '@/components/layout/back-link';
 import { TOOL_SLUGS, type ToolSlug } from './shared';
 import { JsonFormatterTool } from './json-formatter-tool';
 import { Base64Tool } from './base64-tool';
@@ -37,9 +36,7 @@ export function ToolRunner({ slug }: { slug: string }) {
   return (
     <div className="space-y-6">
       <div>
-        <Link href="/tools" className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 hover:text-brand-700">
-          <ArrowLeft className="h-4 w-4" /> {t.tools.backToToolkit}
-        </Link>
+        <BackLink href="/tools" label={t.tools.backToToolkit} />
         <p className="text-eyebrow mt-4">{tool.group}</p>
         <h1 className="text-h1 mt-2">{tool.title}</h1>
         <p className="text-body mt-2">{tool.description} {t.tools.clientSideNote}</p>

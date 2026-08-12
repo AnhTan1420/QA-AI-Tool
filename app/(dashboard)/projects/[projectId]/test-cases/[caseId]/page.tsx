@@ -3,13 +3,13 @@
 import { useLanguage } from '@/lib/i18n/language-context';
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { ArrowLeft, Pencil, Trash2, CheckCircle2, CornerDownRight, History, Bot } from 'lucide-react';
+import { Pencil, Trash2, CheckCircle2, CornerDownRight, History, Bot } from 'lucide-react';
 import TestCaseForm from '@/components/test-case-form';
 import { getPriorityStyle } from '@/lib/test-case-taxonomy';
 import VersionHistory from '@/components/test-case/version-history';
 import CommentsPanel from '@/components/test-case/comments-panel';
 import AutomationPanel from '@/components/test-case/automation-panel';
+import { BackLink } from '@/components/layout/back-link';
 
 type TestCase = {
   id: string;
@@ -73,13 +73,7 @@ export default function TestCaseDetailPage() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
-      <Link
-        href={`/projects/${projectId}/test-cases`}
-        className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 transition-colors hover:text-brand-700"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        {t.testCaseDetail.back}
-      </Link>
+      <BackLink href={`/projects/${projectId}/test-cases`} label={t.testCaseDetail.back} />
 
       {isEditing ? (
         <div className="surface-card p-6">

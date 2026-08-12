@@ -2,14 +2,14 @@
 
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
-import Link from 'next/link';
-import { ArrowLeft, Download, Plus, PlayCircle } from 'lucide-react';
+import { Download, Plus, PlayCircle } from 'lucide-react';
 import { useTestCaseList } from '@/components/test-case-list/use-test-case-list';
 import { CreateModal } from '@/components/test-case-list/create-modal';
 import { BulkDeleteBar } from '@/components/test-case-list/bulk-delete-bar';
 import { TestCaseTable } from '@/components/test-case-list/test-case-table';
 import { PaginationBar } from '@/components/test-case-list/pagination-bar';
 import { RunAutomationModal } from '@/components/automation/run-automation-modal';
+import { BackLink } from '@/components/layout/back-link';
 
 export default function TestCaseLibraryPage() {
   const { projectId } = useParams() as { projectId: string };
@@ -21,14 +21,7 @@ export default function TestCaseLibraryPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <Link
-            href={`/projects/${projectId}`}
-            className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 transition-colors hover:text-brand-700"
-            title={t.testCasesList.backToProjectTitle}
-          >
-            <ArrowLeft className="h-4 w-4" />
-            {t.testCasesList.backToProject}
-          </Link>
+          <BackLink href={`/projects/${projectId}`} label={t.testCasesList.backToProject} title={t.testCasesList.backToProjectTitle} />
           <p className="text-eyebrow mt-4">{t.testCasesList.eyebrow}</p>
         </div>
         <div className="flex flex-wrap gap-3">

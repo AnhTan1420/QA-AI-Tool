@@ -1,9 +1,10 @@
 import Link from 'next/link';
-import { ArrowLeft, Brain, CheckCircle2, ChevronDown } from 'lucide-react';
+import { Brain, CheckCircle2, ChevronDown } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getLocale } from '@/lib/i18n/get-locale';
 import { getDictionary } from '@/lib/i18n/dictionaries';
 import { getPriorityStyle } from '@/lib/test-case-taxonomy';
+import { BackLink } from '@/components/layout/back-link';
 
 export default async function GenerateResultPage({ params }: { params: Promise<{ projectId: string; setId: string }> }) {
   const { projectId, setId } = await params;
@@ -40,10 +41,7 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
 
   return (
     <div className="space-y-6">
-      <Link href={`/projects/${projectId}/test-cases`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 transition-colors hover:text-brand-700">
-        <ArrowLeft className="h-4 w-4" />
-        {t.generateResult.back}
-      </Link>
+      <BackLink href={`/projects/${projectId}/test-cases`} label={t.generateResult.back} />
 
       <div className="surface-card p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">

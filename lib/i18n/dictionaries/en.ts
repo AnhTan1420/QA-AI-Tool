@@ -243,7 +243,7 @@ const en: Dictionary = {
     },
   },
   testCaseDetail: {
-    back: '← Back to library',
+    back: 'Back to library',
     loading: 'Loading test case...',
     notFound: 'Test case not found',
     deleteButton: 'Delete',
@@ -372,7 +372,7 @@ const en: Dictionary = {
       eyebrow: 'Automation',
       title: 'Test Environments',
       subtitle: 'Reusable target_url/browser config for automation — used across every test case and batch run, so you never retype it.',
-      backToProject: '← Back to project',
+      backToProject: 'Back to project',
       createButton: 'Add Environment',
       empty: 'No environments yet. Create one to start running automation.',
       nameLabel: 'Name',
