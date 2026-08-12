@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { Search } from 'lucide-react';
 import type { TraceabilityMatrixRow } from '@/lib/documents/coverage';
 import type { Dictionary } from '@/lib/i18n/dictionaries/vi';
 import { SCROLLBAR } from './shared';
@@ -43,24 +44,27 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
   }, [matrix, query, onlyUncovered]);
 
   return (
-    <div className="mt-3 rounded-2xl border border-slate-100 bg-white">
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 p-3">
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={tm.searchPlaceholder}
-          className="min-w-[220px] flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs outline-none focus:border-blue-300"
-        />
-        <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
-          <input type="checkbox" checked={onlyUncovered} onChange={(e) => setOnlyUncovered(e.target.checked)} />
+    <div className="mt-3 rounded-[var(--radius-control)] border border-ink-100 bg-white">
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 p-3">
+        <div className="relative min-w-[220px] flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-400" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={tm.searchPlaceholder}
+            className="field-input w-full !py-1.5 pl-8 text-xs"
+          />
+        </div>
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-ink-600">
+          <input type="checkbox" checked={onlyUncovered} onChange={(e) => setOnlyUncovered(e.target.checked)} className="h-3.5 w-3.5 rounded border-ink-300 text-brand-600 focus:ring-brand-300" />
           {tm.onlyUncovered}
         </label>
-        <span className="text-xs text-slate-400">{filtered.length}/{matrix.length} {tm.atomsSuffix}</span>
+        <span className="text-xs text-ink-400">{filtered.length}/{matrix.length} {tm.atomsSuffix}</span>
       </div>
 
       <div className={`max-h-80 overflow-y-auto ${SCROLLBAR}`}>
         <table className="w-full text-left text-xs">
-          <thead className="sticky top-0 bg-slate-50 text-[10px] font-black uppercase tracking-wide text-slate-500">
+          <thead className="sticky top-0 bg-ink-50 text-[10px] font-bold uppercase tracking-wide text-ink-500">
             <tr>
               <th className="px-3 py-2">{tm.colAtom}</th>
               <th className="px-3 py-2">{tm.colType}</th>
@@ -70,20 +74,20 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
           </thead>
           <tbody>
             {filtered.map((row) => (
-              <tr key={row.atom_id} className="border-t border-slate-50">
-                <td className="px-3 py-2 font-mono text-indigo-600">{row.atom_id}</td>
-                <td className="px-3 py-2 text-slate-500">{ATOM_TYPE_LABELS[row.atom_type] ?? row.atom_type}</td>
-                <td className="px-3 py-2 text-slate-700">
+              <tr key={row.atom_id} className="border-t border-ink-50">
+                <td className="px-3 py-2 font-mono text-brand-600">{row.atom_id}</td>
+                <td className="px-3 py-2 text-ink-500">{ATOM_TYPE_LABELS[row.atom_type] ?? row.atom_type}</td>
+                <td className="px-3 py-2 text-ink-700">
                   {row.label}
-                  {row.screen_or_section && <span className="ml-1 text-slate-400">({row.screen_or_section})</span>}
+                  {row.screen_or_section && <span className="ml-1 text-ink-400">({row.screen_or_section})</span>}
                 </td>
                 <td className="px-3 py-2">
                   {row.covered_by.length === 0 ? (
-                    <span className="rounded bg-amber-50 px-1.5 py-0.5 font-bold text-amber-600">{tm.notCovered}</span>
+                    <span className="badge-warning">{tm.notCovered}</span>
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {row.covered_by.map((c, i) => (
-                        <span key={i} className="rounded bg-emerald-50 px-1.5 py-0.5 font-mono font-bold text-emerald-700" title={c.title}>
+                        <span key={i} className="rounded bg-success-50 px-1.5 py-0.5 font-mono text-[11px] font-bold text-success-600" title={c.title}>
                           {c.code}
                         </span>
                       ))}
@@ -93,7 +97,7 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={4} className="px-3 py-6 text-center text-slate-400">{tm.noMatch}</td></tr>
+              <tr><td colSpan={4} className="px-3 py-6 text-center text-ink-400">{tm.noMatch}</td></tr>
             )}
           </tbody>
         </table>

@@ -1,7 +1,9 @@
 'use client';
 
+import { CheckCircle2, AlertTriangle, Download, Loader2, Save, Sparkles, FileSpreadsheet } from 'lucide-react';
 import { TEST_CASE_CATEGORIES } from '@/lib/test-case-taxonomy';
 import { SCROLLBAR } from './shared';
+import { StepNumber, FileDropzone, AttachedFileChip } from './workspace-ui';
 import { DocumentReaderPanel } from './document-reader-panel';
 import type { GenerateWorkspaceState } from './use-generate-workspace';
 
@@ -16,81 +18,91 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
   const { t } = workspace;
 
   return (
-    <section className={`space-y-6 rounded-3xl border border-slate-200/70 bg-white/90 p-6 shadow-[0_2px_20px_-4px_rgba(15,23,42,0.06)] backdrop-blur-sm overflow-y-auto ${SCROLLBAR}`}>
+    <section className={`surface-card space-y-6 overflow-y-auto p-6 ${SCROLLBAR}`}>
       <div>
-        <p className="text-xs font-black uppercase tracking-widest text-blue-600">{t.generateWorkspace.wizardEyebrow}</p>
-        <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-950">{t.generateWorkspace.title}</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-500">{t.generateWorkspace.subtitle}</p>
+        <p className="text-eyebrow">{t.generateWorkspace.wizardEyebrow}</p>
+        <h1 className="text-h1 mt-2">{t.generateWorkspace.title}</h1>
+        <p className="text-body mt-2">{t.generateWorkspace.subtitle}</p>
       </div>
 
       <label className="block">
-        <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-[11px] font-black text-white shadow-sm shadow-blue-200">1</span>
+        <span className="flex items-center gap-2 text-sm font-semibold text-ink-700">
+          <StepNumber n={1} />
           {t.generateWorkspace.requirementLabel}
         </span>
         <textarea
           value={workspace.description}
           onChange={(event) => workspace.setDescription(event.target.value)}
           placeholder={t.generateWorkspace.requirementPlaceholder}
-          className={`mt-2 min-h-64 w-full rounded-2xl border border-slate-200 bg-slate-50/40 p-4 text-sm leading-6 text-slate-800 outline-none transition-all placeholder:text-slate-400/80 focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100 ${SCROLLBAR}`}
+          className={`field-input mt-2 min-h-64 resize-y leading-6 ${SCROLLBAR}`}
         />
-        <p className={`mt-1.5 text-xs font-semibold ${workspace.hasEnoughInputToGenerate ? 'text-emerald-600' : 'text-amber-600'}`}>
-          {workspace.hasEnoughInputToGenerate
-            ? (workspace.hasRequirementInput ? t.generateWorkspace.inputStatus.requirementReady : t.generateWorkspace.inputStatus.documentReady)
-            : t.generateWorkspace.inputStatus.needMore}
+        <p className={`mt-2 flex items-start gap-1.5 text-xs font-semibold ${workspace.hasEnoughInputToGenerate ? 'text-success-600' : 'text-warning-600'}`}>
+          {workspace.hasEnoughInputToGenerate ? (
+            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          )}
+          <span>
+            {workspace.hasEnoughInputToGenerate
+              ? (workspace.hasRequirementInput ? t.generateWorkspace.inputStatus.requirementReady : t.generateWorkspace.inputStatus.documentReady)
+              : t.generateWorkspace.inputStatus.needMore}
+          </span>
         </p>
       </label>
 
       <DocumentReaderPanel workspace={workspace} />
 
-      <div>
+      <div className="border-t border-ink-100 pt-6">
         <div className="flex items-center justify-between gap-2">
-          <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[11px] font-black text-white">3</span>
+          <span className="flex items-center gap-2 text-sm font-semibold text-ink-700">
+            <StepNumber n={3} />
             {t.generateWorkspace.oldCasesLabel}
           </span>
-          <button type="button" onClick={workspace.downloadOldCasesTemplate} className="text-xs font-bold text-blue-600 transition-colors hover:text-blue-700 hover:underline">
+          <button
+            type="button"
+            onClick={workspace.downloadOldCasesTemplate}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-brand-600 transition-colors hover:text-brand-700 hover:underline"
+          >
+            <Download className="h-3.5 w-3.5" />
             {t.generateWorkspace.downloadTemplate}
           </button>
         </div>
-        <label className="mt-2 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50/30 p-5 text-center transition-all hover:border-blue-300 hover:bg-blue-50/30">
-          <input
-            type="file"
+        <div className="mt-2">
+          <FileDropzone
             accept=".xlsx,.xls"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) workspace.handleOldCasesFile(file);
-              event.target.value = '';
-            }}
+            onFile={workspace.handleOldCasesFile}
+            icon={FileSpreadsheet}
+            label={workspace.isParsingOldCases ? t.generateWorkspace.chooseFileReading : t.generateWorkspace.chooseFile}
+            hint={t.generateWorkspace.fileHint}
           />
-          <svg className="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M12 12v9m0-9l-3 3m3-3l3 3" />
-          </svg>
-          <span className="text-sm font-semibold text-slate-700">{workspace.isParsingOldCases ? t.generateWorkspace.chooseFileReading : t.generateWorkspace.chooseFile}</span>
-          <span className="text-xs text-slate-400">{t.generateWorkspace.fileHint}</span>
-        </label>
+        </div>
         {workspace.oldCasesFileName && !workspace.isParsingOldCases && (
-          <div className="mt-2 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs">
-            <span className="font-semibold text-slate-700">{workspace.oldCasesFileName} {t.generateWorkspace.loadedSuffix(workspace.oldCases.length)}</span>
-            <button type="button" onClick={workspace.clearOldCasesFile} className="font-bold text-red-500 transition-colors hover:text-red-600 hover:underline">{t.generateWorkspace.removeFile}</button>
-          </div>
+          <AttachedFileChip
+            label={`${workspace.oldCasesFileName} ${t.generateWorkspace.loadedSuffix(workspace.oldCases.length)}`}
+            onRemove={workspace.clearOldCasesFile}
+            removeLabel={t.generateWorkspace.removeFile}
+          />
         )}
-        {workspace.oldCasesWarning && <p className="mt-1 text-xs font-semibold text-amber-600">{workspace.oldCasesWarning}</p>}
+        {workspace.oldCasesWarning && (
+          <p className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-warning-600">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            {workspace.oldCasesWarning}
+          </p>
+        )}
       </div>
 
-      <div>
-        <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[11px] font-black text-white">4</span>
+      <div className="border-t border-ink-100 pt-6">
+        <span className="flex items-center gap-2 text-sm font-semibold text-ink-700">
+          <StepNumber n={4} />
           {t.generateWorkspace.languageDetailHeading}
         </span>
         <div className="mt-3 grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="text-xs font-semibold text-slate-500">{t.generateWorkspace.languageLabel}</span>
+            <span className="text-xs font-semibold text-ink-500">{t.generateWorkspace.languageLabel}</span>
             <select
               value={workspace.language}
               onChange={(event) => workspace.setLanguage(event.target.value)}
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 text-sm outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100"
+              className="field-input mt-1"
             >
               {/* Neu gia tri dang luu (VD tu du an cu, hoac tu ngon ngu UI mac dinh)
                   khong khop bat ky preset nao ben duoi, them no nhu 1 option rieng
@@ -104,8 +116,12 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
             </select>
           </label>
           <label className="block">
-            <span className="text-xs font-semibold text-slate-500">{t.generateWorkspace.detailLevelLabel}</span>
-            <select value={workspace.detailLevel} onChange={(event) => workspace.setDetailLevel(event.target.value as typeof workspace.detailLevel)} className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 py-3 text-sm outline-none transition-all focus:border-blue-300 focus:bg-white focus:ring-4 focus:ring-blue-100">
+            <span className="text-xs font-semibold text-ink-500">{t.generateWorkspace.detailLevelLabel}</span>
+            <select
+              value={workspace.detailLevel}
+              onChange={(event) => workspace.setDetailLevel(event.target.value as typeof workspace.detailLevel)}
+              className="field-input mt-1"
+            >
               <option value="concise">{t.generateWorkspace.detailConcise}</option>
               <option value="standard">{t.generateWorkspace.detailStandard}</option>
               <option value="detailed">{t.generateWorkspace.detailDetailed}</option>
@@ -114,32 +130,41 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
         </div>
       </div>
 
-      <div>
+      <div className="border-t border-ink-100 pt-6">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="flex items-center gap-2 text-sm font-bold text-slate-700">
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-300 text-[11px] font-black text-white">5</span>
+          <span className="flex items-center gap-2 text-sm font-semibold text-ink-700">
+            <StepNumber n={5} />
             {t.generateWorkspace.taxonomyLabel}
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-600">{workspace.selectedCategories.length}/{TEST_CASE_CATEGORIES.length}</span>
+            <span className="badge-brand">{workspace.selectedCategories.length}/{TEST_CASE_CATEGORIES.length}</span>
           </span>
-          <div className="flex gap-3 text-xs font-bold">
-            <button type="button" onClick={() => workspace.setSelectedCategories(workspace.validCategoryValues)} className="text-blue-600 transition-colors hover:text-blue-700 hover:underline">{t.generateWorkspace.selectAll}</button>
-            <button type="button" onClick={() => workspace.setSelectedCategories([])} className="text-slate-400 transition-colors hover:text-slate-600 hover:underline">{t.generateWorkspace.deselectAll}</button>
+          <div className="flex gap-3 text-xs font-semibold">
+            <button type="button" onClick={() => workspace.setSelectedCategories(workspace.validCategoryValues)} className="text-brand-600 transition-colors hover:text-brand-700 hover:underline">
+              {t.generateWorkspace.selectAll}
+            </button>
+            <button type="button" onClick={() => workspace.setSelectedCategories([])} className="text-ink-400 transition-colors hover:text-ink-600 hover:underline">
+              {t.generateWorkspace.deselectAll}
+            </button>
           </div>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           {TEST_CASE_CATEGORIES.map((category) => (
             <label
               key={category.value}
-              className={`flex cursor-pointer gap-3 rounded-2xl border p-3 text-sm transition-all duration-150 ${
+              className={`flex cursor-pointer gap-3 rounded-[var(--radius-control)] border p-3 text-sm transition-all duration-150 ${
                 workspace.selectedCategories.includes(category.value)
-                  ? 'border-blue-300 bg-blue-50/60 shadow-sm shadow-blue-100'
-                  : 'border-slate-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-sm'
+                  ? 'border-brand-400 bg-brand-50 ring-1 ring-brand-400'
+                  : 'border-ink-200 hover:border-ink-300 hover:bg-ink-50'
               }`}
             >
-              <input type="checkbox" checked={workspace.selectedCategories.includes(category.value)} onChange={() => workspace.toggleCategory(category.value)} className="mt-0.5 accent-blue-600" />
+              <input
+                type="checkbox"
+                checked={workspace.selectedCategories.includes(category.value)}
+                onChange={() => workspace.toggleCategory(category.value)}
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-ink-300 text-brand-600 focus:ring-brand-300"
+              />
               <span>
-                <span className="block font-bold text-slate-800">{workspace.getCategoryLabel(category.value)}</span>
-                <span className="text-xs text-slate-500">{workspace.getCategoryDescription(category.value)}</span>
+                <span className="block font-semibold text-ink-800">{workspace.getCategoryLabel(category.value)}</span>
+                <span className="text-xs text-ink-500">{workspace.getCategoryDescription(category.value)}</span>
               </span>
             </label>
           ))}
@@ -147,7 +172,7 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
       </div>
 
       {workspace.error && (
-        <div className="animate-[fadeIn_0.2s_ease] rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
+        <div className="alert-danger animate-[fadeIn_0.2s_ease]">
           {workspace.error}
           {workspace.errorDetails.length > 0 && (
             <ul className="mt-2 list-disc space-y-1 pl-5 text-xs font-normal text-red-600">
@@ -156,41 +181,42 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
           )}
         </div>
       )}
-      {workspace.successMessage && <div className="animate-[fadeIn_0.2s_ease] rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{workspace.successMessage}</div>}
-      {workspace.isDemoProject && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">{t.generateWorkspace.demoNotice}</div>}
+      {workspace.successMessage && (
+        <div className="flex items-center gap-2 rounded-2xl border border-success-600/20 bg-success-50 p-4 text-sm font-semibold text-success-600 animate-[fadeIn_0.2s_ease]">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          {workspace.successMessage}
+        </div>
+      )}
+      {workspace.isDemoProject && (
+        <div className="flex items-start gap-2 rounded-2xl border border-warning-600/20 bg-warning-50 p-4 text-sm font-semibold text-warning-600">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {t.generateWorkspace.demoNotice}
+        </div>
+      )}
 
-      <div className="flex flex-wrap gap-3 pt-1">
+      <div className="flex flex-wrap gap-3 border-t border-ink-100 pt-6">
         <button
           disabled={!workspace.canGenerate}
           onClick={workspace.handleGenerateClick}
-          className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-3 text-sm font-bold text-white shadow-sm shadow-blue-200 transition-all hover:shadow-md hover:shadow-blue-200 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+          className="btn-primary"
         >
-          {workspace.isPending && (
-            <svg className="h-4 w-4 animate-spin text-white" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          )}
+          {workspace.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
           {workspace.isPending ? t.generateWorkspace.generating : t.generateWorkspace.generateButton}
         </button>
         <button
           disabled={workspace.isSaving || workspace.safeTestCasesCount === 0}
           onClick={workspace.saveToLibrary}
-          className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm font-bold text-emerald-700 transition-all hover:bg-emerald-100 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn border border-success-600/30 bg-success-50 text-success-600 hover:bg-emerald-100 focus-visible:ring-success-600/40"
         >
-          {workspace.isSaving && (
-            <svg className="h-4 w-4 animate-spin text-emerald-700" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          )}
+          {workspace.isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {workspace.isSaving ? t.generateWorkspace.saving : t.generateWorkspace.saveButton}
         </button>
         <button
           disabled={workspace.safeTestCasesCount === 0}
           onClick={workspace.exportExcel}
-          className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-800 transition-all hover:border-emerald-200 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-secondary"
         >
+          <Download className="h-4 w-4" />
           {t.generateWorkspace.exportButton}
         </button>
       </div>

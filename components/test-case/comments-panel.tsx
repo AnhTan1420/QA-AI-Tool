@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { MessageSquare, Send, Loader2 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { SCROLLBAR } from './generate-workspace/shared';
 
 type Comment = {
   id: string;
@@ -119,46 +121,44 @@ export default function CommentsPanel({ testCaseId }: { testCaseId: string }) {
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <svg className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-        <h3 className="text-sm font-bold uppercase tracking-wider text-gray-700">Thảo luận</h3>
-        {comments.length > 0 && (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500">{comments.length}</span>
-        )}
-        <span className={`ml-auto flex items-center gap-1.5 text-xs font-semibold ${isLive ? 'text-emerald-600' : 'text-gray-300'}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${isLive ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`} />
+    <div className="surface-card p-6">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="panel-icon">
+          <MessageSquare className="h-4 w-4" strokeWidth={2.25} />
+        </span>
+        <h3 className="text-h3">Thảo luận</h3>
+        {comments.length > 0 && <span className="badge-neutral">{comments.length}</span>}
+        <span className={`ml-auto flex items-center gap-1.5 text-xs font-semibold ${isLive ? 'text-success-600' : 'text-ink-300'}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${isLive ? 'bg-success-600 animate-pulse' : 'bg-ink-300'}`} />
           {isLive ? 'Realtime' : 'Đang kết nối...'}
         </span>
       </div>
 
-      <div className="max-h-96 space-y-4 overflow-y-auto pr-1">
-        {loading && <p className="text-sm text-gray-400">Đang tải...</p>}
+      <div className={`max-h-96 space-y-4 overflow-y-auto pr-1 ${SCROLLBAR}`}>
+        {loading && <p className="text-caption">Đang tải...</p>}
         {!loading && comments.length === 0 && (
-          <p className="text-sm italic text-gray-400">Chưa có bình luận nào. Hãy là người đầu tiên trao đổi về test case này.</p>
+          <p className="text-caption italic">Chưa có bình luận nào. Hãy là người đầu tiên trao đổi về test case này.</p>
         )}
         {comments.map((c) => (
           <div key={c.id} className="flex gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-100 text-xs font-bold text-brand-700">
               {initialsOf(c.profiles?.full_name)}
             </div>
-            <div className="min-w-0 flex-1 rounded-lg bg-gray-50 px-3 py-2">
+            <div className="min-w-0 flex-1 rounded-[var(--radius-control)] bg-ink-50 px-3 py-2">
               <div className="flex flex-wrap items-baseline gap-2">
-                <span className="text-sm font-semibold text-gray-800">{c.profiles?.full_name ?? 'Người dùng'}</span>
-                <span className="text-xs text-gray-400">{new Date(c.created_at).toLocaleString('vi-VN')}</span>
+                <span className="text-sm font-semibold text-ink-800">{c.profiles?.full_name ?? 'Người dùng'}</span>
+                <span className="text-xs text-ink-400">{new Date(c.created_at).toLocaleString('vi-VN')}</span>
               </div>
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-gray-700">{c.content}</p>
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink-700">{c.content}</p>
             </div>
           </div>
         ))}
         <div ref={listEndRef} />
       </div>
 
-      {error && <p className="mt-3 text-xs font-semibold text-red-600">{error}</p>}
+      {error && <p className="mt-3 text-xs font-semibold text-danger-600">{error}</p>}
 
-      <form onSubmit={sendComment} className="mt-4 flex items-end gap-2 border-t border-gray-100 pt-4">
+      <form onSubmit={sendComment} className="mt-4 flex items-end gap-2 border-t border-ink-100 pt-4">
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -170,13 +170,10 @@ export default function CommentsPanel({ testCaseId }: { testCaseId: string }) {
           }}
           placeholder="Viết bình luận... (Enter để gửi, Shift+Enter xuống dòng)"
           rows={2}
-          className="min-h-[2.5rem] flex-1 resize-none rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-300"
+          className="field-input min-h-[2.5rem] flex-1 resize-none !py-2"
         />
-        <button
-          type="submit"
-          disabled={isSending || !draft.trim()}
-          className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-        >
+        <button type="submit" disabled={isSending || !draft.trim()} className="btn-primary btn-sm shrink-0">
+          {isSending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           {isSending ? 'Đang gửi...' : 'Gửi'}
         </button>
       </form>

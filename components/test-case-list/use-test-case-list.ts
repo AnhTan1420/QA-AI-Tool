@@ -6,15 +6,15 @@ import type { TestCaseFormData } from '@/components/test-case-form/types';
 import type { TestCase } from './types';
 
 const CATEGORY_BADGE_COLORS: Record<string, string> = {
-  positive: 'bg-green-100 text-green-700',
-  negative: 'bg-red-100 text-red-700',
-  boundary: 'bg-yellow-100 text-yellow-700',
-  security: 'bg-purple-100 text-purple-700',
-  localization: 'bg-pink-100 text-pink-700',
+  positive: 'bg-success-50 text-success-600',
+  negative: 'bg-danger-50 text-danger-600',
+  boundary: 'bg-warning-50 text-warning-600',
+  security: 'bg-brand-50 text-brand-700',
+  localization: 'bg-ink-100 text-ink-600',
 };
 
 export function categoryBadge(cat: string) {
-  return CATEGORY_BADGE_COLORS[cat] || 'bg-gray-100 text-gray-700';
+  return CATEGORY_BADGE_COLORS[cat] || 'bg-ink-100 text-ink-600';
 }
 
 /** All state, fetching, and mutation handlers for the test case library page. */

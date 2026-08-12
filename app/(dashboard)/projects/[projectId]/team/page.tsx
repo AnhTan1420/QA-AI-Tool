@@ -39,7 +39,7 @@ export default function TeamPage({ params }: { params: Promise<{ projectId: stri
       {projectId !== 'demo' && !team.loading && team.members.length > 0 && <TeamStats team={team} />}
 
       {projectId === 'demo' ? (
-        <div className="rounded-[var(--radius-card)] border border-amber-200 bg-warning-50 p-6 text-sm font-semibold text-warning-600">
+        <div className="rounded-[var(--radius-card)] border border-warning-600/20 bg-warning-50 p-6 text-sm font-semibold text-warning-600">
           {t.team.demoNotice}
         </div>
       ) : (

@@ -16,7 +16,7 @@ export function SignOutButton({ className }: { className?: string }) {
   }
 
   return (
-    <button onClick={handleSignOut} className={className ?? 'text-xs font-bold text-slate-400 hover:text-white'}>
+    <button onClick={handleSignOut} className={className ?? 'text-xs font-bold text-ink-400 hover:text-white'}>
       {t.sidebar.signOut}
     </button>
   );

@@ -14,9 +14,9 @@ function highlight(code: string): string {
     .replace(/>/g, '&gt;');
 
   return escaped
-    .replace(/(\/\/.*)$/gm, '<span class="text-slate-400">$1</span>')
+    .replace(/(\/\/.*)$/gm, '<span class="text-ink-400">$1</span>')
     .replace(/(&#0*39;|'|")((?:(?!\1).)*)(\1)/g, (m) => `<span class="text-emerald-300">${m}</span>`)
-    .replace(TS_KEYWORDS, '<span class="text-sky-300 font-semibold">$1</span>');
+    .replace(TS_KEYWORDS, '<span class="text-brand-300 font-semibold">$1</span>');
 }
 
 type ActiveTab = 'spec' | `page:${number}`;
@@ -93,7 +93,7 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
                 type="button"
                 onClick={automation.deleteScript}
                 disabled={automation.deletingScript}
-                className="btn-secondary btn-sm !text-danger-600 hover:!border-danger-200 hover:!bg-danger-50"
+                className="btn-secondary btn-sm !text-danger-600 hover:!border-danger-600/30 hover:!bg-danger-50"
               >
                 {automation.deletingScript ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                 {automation.deletingScript ? 'Deleting...' : 'Delete'}
@@ -188,18 +188,18 @@ export function CodeViewer({ automation }: { automation: ReturnType<typeof useAu
 
           {automation.isEditingScript ? (
             <div>
-              <p className="alert-info mb-2 !border-warning-200 !bg-warning-50 !p-3 !text-warning-600">
+              <p className="alert-info mb-2 !border-warning-600/20 !bg-warning-50 !p-3 !text-warning-600">
                 Editing spec.ts — saving updates this script in place and approves it (Review Gate). Page Object files cannot be edited here individually.
               </p>
               <textarea
                 value={automation.editedCode}
                 onChange={(e) => automation.setEditedCode(e.target.value)}
                 spellCheck={false}
-                className="h-96 w-full resize-y whitespace-pre-wrap break-words rounded-[var(--radius-control)] bg-ink-900 p-4 font-mono text-xs leading-relaxed text-slate-100 outline-none focus:ring-4 focus:ring-brand-200"
+                className="h-96 w-full resize-y whitespace-pre-wrap break-words rounded-[var(--radius-control)] bg-ink-900 p-4 font-mono text-xs leading-relaxed text-ink-100 outline-none focus:ring-4 focus:ring-brand-200"
               />
             </div>
           ) : (
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-control)] bg-ink-900 p-4 text-xs leading-relaxed text-slate-100">
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-[var(--radius-control)] bg-ink-900 p-4 text-xs leading-relaxed text-ink-100">
               <code dangerouslySetInnerHTML={{ __html: highlight(activeCode ?? '') }} />
             </pre>
           )}

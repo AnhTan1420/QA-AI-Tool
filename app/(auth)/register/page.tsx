@@ -104,7 +104,7 @@ export default function RegisterPage() {
           </label>
 
           {error && <div className="alert-danger">{error}</div>}
-          {info && <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-700">{info}</div>}
+          {info && <div className="rounded-2xl border border-success-600/20 bg-success-50 p-4 text-sm font-medium text-success-600">{info}</div>}
 
           <button type="submit" disabled={isSubmitting} className="btn-primary w-full">
             {isSubmitting ? t.auth.register.submitting : t.auth.register.submit}

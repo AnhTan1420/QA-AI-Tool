@@ -28,7 +28,7 @@ export function LoremIpsumTool() {
         </label>
       </div>
       <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <input type="checkbox" checked={startWithLorem} onChange={(event) => setStartWithLorem(event.target.checked)} />
+        <input type="checkbox" checked={startWithLorem} onChange={(event) => setStartWithLorem(event.target.checked)} className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-300" />
         {t.tools.lorem.startWithLorem}
       </label>
       <pre className="min-h-40 overflow-auto whitespace-pre-wrap rounded-2xl bg-ink-900 p-4 text-sm text-emerald-300">{output}</pre>

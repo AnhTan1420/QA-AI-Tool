@@ -187,7 +187,7 @@ export default function ProjectsPage() {
                   setConfirmId(project.id);
                 }}
                 aria-label={t.projects.deleteAria(project.name)}
-                className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 opacity-0 transition-opacity duration-150 hover:bg-red-50 hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
+                className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 opacity-0 transition-opacity duration-150 hover:bg-danger-50 hover:text-danger-600 focus-visible:opacity-100 group-hover:opacity-100"
               >
                 <Trash2 className="h-4 w-4" strokeWidth={2.25} />
               </button>

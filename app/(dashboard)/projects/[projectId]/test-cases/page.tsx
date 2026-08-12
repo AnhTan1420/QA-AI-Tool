@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { ArrowLeft, Download, Plus, PlayCircle } from 'lucide-react';
 import { useTestCaseList } from '@/components/test-case-list/use-test-case-list';
 import { CreateModal } from '@/components/test-case-list/create-modal';
 import { BulkDeleteBar } from '@/components/test-case-list/bulk-delete-bar';
@@ -17,49 +18,32 @@ export default function TestCaseLibraryPage() {
   const [showRunAutomation, setShowRunAutomation] = useState(false);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3 mb-1">
-            <Link
-              href={`/projects/${projectId}`}
-              className="text-sm text-gray-500 hover:text-gray-800 flex items-center gap-1 transition-colors"
-              title={t.testCasesList.backToProjectTitle}
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              {t.testCasesList.backToProject}
-            </Link>
-          </div>
-          <p className="text-xs font-semibold text-blue-600 uppercase tracking-wider mb-1">{t.testCasesList.eyebrow}</p>
+          <Link
+            href={`/projects/${projectId}`}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 transition-colors hover:text-brand-700"
+            title={t.testCasesList.backToProjectTitle}
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {t.testCasesList.backToProject}
+          </Link>
+          <p className="text-eyebrow mt-4">{t.testCasesList.eyebrow}</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           {list.selectedIds.size > 0 && (
-            <button
-              onClick={() => setShowRunAutomation(true)}
-              className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 flex items-center gap-2"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+            <button onClick={() => setShowRunAutomation(true)} className="btn-success">
+              <PlayCircle className="h-4 w-4" />
               {t.testCasesList.runAutomationButton(list.selectedIds.size)}
             </button>
           )}
-          <button
-            onClick={list.handleExport}
-            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50 flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
+          <button onClick={list.handleExport} className="btn-secondary">
+            <Download className="h-4 w-4" />
             {t.testCasesList.exportButton}
           </button>
-          <button
-            onClick={() => list.setShowCreate(true)}
-            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-          >
+          <button onClick={() => list.setShowCreate(true)} className="btn-primary">
+            <Plus className="h-4 w-4" />
             {t.testCasesList.createButton}
           </button>
         </div>
@@ -80,7 +64,7 @@ export default function TestCaseLibraryPage() {
 
       {list.selectedIds.size > 0 && <BulkDeleteBar list={list} />}
 
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="surface-card overflow-hidden">
         <TestCaseTable list={list} />
         {!list.loading && list.cases.length > 0 && <PaginationBar list={list} />}
       </div>

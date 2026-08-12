@@ -6,6 +6,7 @@ import { PreconditionsEditor } from './preconditions-editor';
 import { TestDataEditor } from './test-data-editor';
 import { StepsEditor } from './steps-editor';
 import type { TestCaseFormData, TestCaseFormProps, TestStep } from './types';
+import { SCROLLBAR } from '@/components/test-case/generate-workspace/shared';
 
 export default function TestCaseForm({ initialData, onSubmit, onCancel, submitLabel }: TestCaseFormProps) {
   const [form, setForm] = useState<TestCaseFormData>({
@@ -99,67 +100,55 @@ export default function TestCaseForm({ initialData, onSubmit, onCancel, submitLa
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5 max-h-[70vh] overflow-y-auto pr-2">
+    <form onSubmit={handleSubmit} className={`max-h-[70vh] space-y-5 overflow-y-auto pr-2 ${SCROLLBAR}`}>
       <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Mã test case</label>
+        <label className="block">
+          <span className="field-label">Mã test case</span>
           <input
             required
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="field-input"
             value={form.code}
             onChange={(e) => updateField('code', e.target.value)}
             placeholder="VD: TC_LOGIN_006"
           />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Tiêu đề</label>
+        </label>
+        <label className="block">
+          <span className="field-label">Tiêu đề</span>
           <input
             required
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="field-input"
             value={form.title}
             onChange={(e) => updateField('title', e.target.value)}
             placeholder="VD: Forgot Password with valid email"
           />
-        </div>
+        </label>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Phân loại</label>
-          <select
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={form.category}
-            onChange={(e) => updateField('category', e.target.value)}
-          >
+        <label className="block">
+          <span className="field-label">Phân loại</span>
+          <select className="field-input" value={form.category} onChange={(e) => updateField('category', e.target.value)}>
             {CATEGORIES.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
-          <select
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={form.priority}
-            onChange={(e) => updateField('priority', e.target.value)}
-          >
+        </label>
+        <label className="block">
+          <span className="field-label">Priority</span>
+          <select className="field-input" value={form.priority} onChange={(e) => updateField('priority', e.target.value)}>
             {PRIORITIES.map((p) => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Trạng thái</label>
-          <select
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={form.status}
-            onChange={(e) => updateField('status', e.target.value)}
-          >
+        </label>
+        <label className="block">
+          <span className="field-label">Trạng thái</span>
+          <select className="field-input" value={form.status} onChange={(e) => updateField('status', e.target.value)}>
             {STATUSES.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
-        </div>
+        </label>
       </div>
 
       <PreconditionsEditor
@@ -181,29 +170,22 @@ export default function TestCaseForm({ initialData, onSubmit, onCancel, submitLa
 
       <StepsEditor steps={form.steps} onUpdate={updateStep} onAdd={addStep} onRemove={removeStep} />
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Kết quả mong đợi cuối cùng</label>
+      <label className="block">
+        <span className="field-label">Kết quả mong đợi cuối cùng</span>
         <textarea
           required
           rows={3}
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="field-input"
           value={form.expected_result}
           onChange={(e) => updateField('expected_result', e.target.value)}
         />
-      </div>
+      </label>
 
-      <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50"
-        >
+      <div className="flex justify-end gap-3 border-t border-ink-100 pt-4">
+        <button type="button" onClick={onCancel} className="btn-secondary">
           Hủy
         </button>
-        <button
-          type="submit"
-          className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
-        >
+        <button type="submit" className="btn-primary">
           {submitLabel}
         </button>
       </div>

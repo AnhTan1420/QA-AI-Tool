@@ -27,9 +27,9 @@ export const TEST_CASE_PRIORITIES: { value: 'Critical' | 'Major' | 'Normal'; lab
 ];
 
 export const PRIORITY_STYLES: Record<string, string> = {
-  Critical: 'bg-red-50 text-red-700 border border-red-200',
-  Major: 'bg-amber-50 text-amber-700 border border-amber-200',
-  Normal: 'bg-slate-100 text-slate-700 border border-slate-200',
+  Critical: 'bg-danger-50 text-danger-600 border border-danger-600/20',
+  Major: 'bg-warning-50 text-warning-600 border border-warning-600/20',
+  Normal: 'bg-ink-100 text-ink-600 border border-ink-200',
 };
 
 export function getPriorityStyle(value: string) {
@@ -39,10 +39,10 @@ export function getPriorityStyle(value: string) {
 // ── Automation status (Playwright Automation Agent — Phase 3 roadmap item) ──
 // Badge shown on the test case card/library list, see components/test-case-list/test-case-table.tsx.
 export const AUTOMATION_STATUS_STYLES: Record<string, string> = {
-  not_generated: 'bg-slate-50 text-slate-400 border border-slate-200',
-  generated: 'bg-blue-50 text-blue-700 border border-blue-200',
-  passed: 'bg-green-50 text-green-700 border border-green-200',
-  failed: 'bg-red-50 text-red-700 border border-red-200',
+  not_generated: 'bg-ink-50 text-ink-400 border border-ink-200',
+  generated: 'bg-brand-50 text-brand-700 border border-brand-200',
+  passed: 'bg-success-50 text-success-600 border border-success-600/20',
+  failed: 'bg-danger-50 text-danger-600 border border-danger-600/20',
 };
 
 export function getAutomationStatusStyle(value: string | undefined) {

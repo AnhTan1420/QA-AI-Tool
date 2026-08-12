@@ -15,7 +15,7 @@ export function ToolTextArea({
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <textarea value={input} onChange={(event) => setInput(event.target.value)} className="field-input min-h-80 font-mono text-sm" />
-      <pre className={`min-h-80 overflow-auto rounded-2xl p-4 text-sm ${tone === 'error' ? 'bg-red-950 text-red-100' : 'bg-ink-900 text-emerald-300'}`}>{output}</pre>
+      <pre className={`min-h-80 overflow-auto rounded-2xl bg-ink-900 p-4 text-sm ${tone === 'error' ? 'text-red-300' : 'text-emerald-300'}`}>{output}</pre>
     </div>
   );
 }

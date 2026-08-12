@@ -114,7 +114,7 @@ export function useGenerateWorkspace(projectId: string) {
     }, {});
   }, [importedReviewCases]);
 
-  const coverageTone = review && review.coverage_score >= 80 ? 'text-emerald-600' : 'text-amber-600';
+  const coverageTone = review && review.coverage_score >= 80 ? 'text-success-600' : 'text-warning-600';
   const isDemoProject = projectId === 'demo';
   const safeTestCasesCount = (testCases ?? []).length;
 

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { History, ChevronDown } from 'lucide-react';
 import { getPriorityStyle } from '@/lib/test-case-taxonomy';
 
 type Snapshot = {
@@ -86,22 +87,20 @@ export default function VersionHistory({ testCaseId, current }: { testCaseId: st
   }, [testCaseId]);
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-6">
-      <div className="mb-4 flex items-center gap-2">
-        <svg className="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <h3 className="text-sm font-bold uppercase tracking-wider text-gray-700">Lịch sử chỉnh sửa</h3>
-        {versions.length > 0 && (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-500">{versions.length}</span>
-        )}
+    <div className="surface-card p-6">
+      <div className="mb-4 flex items-center gap-2.5">
+        <span className="panel-icon">
+          <History className="h-4 w-4" strokeWidth={2.25} />
+        </span>
+        <h3 className="text-h3">Lịch sử chỉnh sửa</h3>
+        {versions.length > 0 && <span className="badge-neutral">{versions.length}</span>}
       </div>
 
-      {loading && <p className="text-sm text-gray-400">Đang tải...</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {loading && <p className="text-caption">Đang tải...</p>}
+      {error && <p className="alert-danger !p-3 text-xs">{error}</p>}
 
       {!loading && !error && versions.length === 0 && (
-        <p className="text-sm italic text-gray-400">Chưa có lần chỉnh sửa nào được ghi nhận.</p>
+        <p className="text-caption italic">Chưa có lần chỉnh sửa nào được ghi nhận.</p>
       )}
 
       {!loading && versions.length > 0 && (
@@ -111,50 +110,45 @@ export default function VersionHistory({ testCaseId, current }: { testCaseId: st
             const changes = diffSnapshots(entry.snapshot, newerState);
             const isExpanded = expandedId === entry.id;
             return (
-              <li key={entry.id} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+              <li key={entry.id} className="rounded-[var(--radius-control)] border border-ink-100 bg-ink-50/60 p-3">
                 <button
                   type="button"
                   onClick={() => setExpandedId(isExpanded ? null : entry.id)}
                   className="flex w-full items-center justify-between gap-3 text-left"
                 >
                   <div>
-                    <p className="text-sm font-semibold text-gray-800">
+                    <p className="text-sm font-semibold text-ink-800">
                       {entry.profiles?.full_name ?? 'Người dùng không xác định'}
-                      <span className="ml-2 font-normal text-gray-400">
+                      <span className="ml-2 font-normal text-ink-400">
                         {new Date(entry.edited_at).toLocaleString('vi-VN')}
                       </span>
                     </p>
-                    <p className="mt-0.5 text-xs text-gray-500">
+                    <p className="mt-0.5 text-xs text-ink-500">
                       {changes.length > 0
                         ? `Đã thay đổi: ${changes.map((c) => c.label).join(', ')}`
                         : 'Không có thay đổi nội dung ghi nhận được'}
                     </p>
                   </div>
-                  <svg
-                    className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
+                  <ChevronDown className={`h-4 w-4 shrink-0 text-ink-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                 </button>
 
                 {isExpanded && (
-                  <div className="mt-3 space-y-2 border-t border-gray-200 pt-3">
+                  <div className="mt-3 space-y-2 border-t border-ink-200 pt-3">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="rounded bg-blue-100 px-2 py-1 font-mono font-semibold text-blue-700">{entry.snapshot.code}</span>
+                      <span className="badge-brand font-mono">{entry.snapshot.code}</span>
                       <span className={`rounded px-2 py-1 font-semibold ${getPriorityStyle(entry.snapshot.priority)}`}>{entry.snapshot.priority}</span>
-                      <span className="rounded bg-gray-100 px-2 py-1 text-gray-600">{entry.snapshot.status}</span>
+                      <span className="badge-neutral">{entry.snapshot.status}</span>
                     </div>
                     {changes.length === 0 ? (
-                      <p className="text-xs italic text-gray-400">Trạng thái test case tại thời điểm này giống hệt phiên bản mới hơn liền kề.</p>
+                      <p className="text-xs italic text-ink-400">Trạng thái test case tại thời điểm này giống hệt phiên bản mới hơn liền kề.</p>
                     ) : (
                       <ul className="space-y-1.5">
                         {changes.map((c, i) => (
                           <li key={i} className="text-xs">
-                            <span className="font-semibold text-gray-700">{c.label}:</span>{' '}
-                            <span className="text-red-500 line-through">{c.from || '(trống)'}</span>{' '}
-                            <span className="text-gray-400">→</span>{' '}
-                            <span className="text-emerald-700">{c.to || '(trống)'}</span>
+                            <span className="font-semibold text-ink-700">{c.label}:</span>{' '}
+                            <span className="text-danger-600 line-through">{c.from || '(trống)'}</span>{' '}
+                            <span className="text-ink-400">→</span>{' '}
+                            <span className="text-success-600">{c.to || '(trống)'}</span>
                           </li>
                         ))}
                       </ul>

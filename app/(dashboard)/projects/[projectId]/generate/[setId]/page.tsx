@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { ArrowLeft, Brain, CheckCircle2, ChevronDown } from 'lucide-react';
 import { createClient } from '@/lib/supabase/server';
 import { getLocale } from '@/lib/i18n/get-locale';
 import { getDictionary } from '@/lib/i18n/dictionaries';
@@ -31,67 +32,77 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
     .maybeSingle();
 
   if (!set) {
-    return (
-      <div className="rounded-3xl border border-red-200 bg-red-50 p-8 text-center text-red-700 shadow-sm">
-        {t.generateResult.notFound}
-      </div>
-    );
+    return <div className="alert-danger text-center">{t.generateResult.notFound}</div>;
   }
 
   const requirement = Array.isArray(set.requirements) ? set.requirements[0] : set.requirements;
+  const coverageTone = review && review.coverage_score >= 80 ? 'text-success-600' : 'text-warning-600';
 
   return (
     <div className="space-y-6">
-      <Link href={`/projects/${projectId}/test-cases`} className="text-sm font-semibold text-blue-600">{t.generateResult.back}</Link>
+      <Link href={`/projects/${projectId}/test-cases`} className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand-600 transition-colors hover:text-brand-700">
+        <ArrowLeft className="h-4 w-4" />
+        {t.generateResult.back}
+      </Link>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+      <div className="surface-card p-8">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">{t.generateResult.eyebrow}</p>
-            <h1 className="mt-2 text-2xl font-black text-slate-950">{requirement?.title ?? t.generateResult.requirementFallback}</h1>
-            <p className="mt-2 max-w-2xl text-sm text-slate-600">{requirement?.description}</p>
+            <p className="text-eyebrow">{t.generateResult.eyebrow}</p>
+            <h1 className="text-h1 mt-2">{requirement?.title ?? t.generateResult.requirementFallback}</h1>
+            <p className="text-body mt-2 max-w-2xl">{requirement?.description}</p>
           </div>
           {review && (
-            <div className="text-right">
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{t.generateResult.coverageLabel}</p>
-              <p className="text-4xl font-black text-emerald-600">{review.coverage_score}%</p>
+            <div className="rounded-[var(--radius-control)] bg-ink-50 px-4 py-2 text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-ink-500">{t.generateResult.coverageLabel}</p>
+              <p className={`text-3xl font-black ${coverageTone}`}>{review.coverage_score}%</p>
             </div>
           )}
         </div>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold text-slate-500">
-          <span className="rounded-full bg-slate-100 px-3 py-1">{testCases?.length ?? 0} {t.generateResult.testCaseSuffix}</span>
-          <span className="rounded-full bg-slate-100 px-3 py-1">{t.generateResult.statusPrefix}: {set.status}</span>
-          {set.generated_by_model && <span className="rounded-full bg-slate-100 px-3 py-1">{t.generateResult.modelPrefix}: {set.generated_by_model}</span>}
+        <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold">
+          <span className="badge-neutral">{testCases?.length ?? 0} {t.generateResult.testCaseSuffix}</span>
+          <span className="badge-neutral">{t.generateResult.statusPrefix}: {set.status}</span>
+          {set.generated_by_model && <span className="badge-neutral">{t.generateResult.modelPrefix}: {set.generated_by_model}</span>}
         </div>
       </div>
 
       {review?.review_payload?.summary && (
-        <div className="rounded-3xl border border-purple-100 bg-purple-50/60 p-6 text-sm leading-6 text-purple-900 shadow-sm">
-          <p className="mb-1 text-xs font-black uppercase tracking-wide text-purple-600">Tóm tắt Review của AI</p>
+        <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-6 text-sm leading-6 text-ink-800">
+          <p className="mb-1 text-xs font-bold uppercase tracking-wide text-brand-700">Tóm tắt Review của AI</p>
           {review.review_payload.summary}
         </div>
       )}
 
       {set.analysis && (
-        <details className="rounded-3xl border border-indigo-100 bg-indigo-50/40 p-6 shadow-sm">
-          <summary className="cursor-pointer text-xs font-black uppercase tracking-wide text-indigo-700">
-            🧠 AI Reasoning lúc generate {set.analysis.input_source && <span className="ml-1 font-normal normal-case text-indigo-400">· nguồn: {set.analysis.input_source}</span>}
+        <details className="surface-card group p-6">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-xs font-bold uppercase tracking-wide text-ink-700">
+            <span className="flex items-center gap-2">
+              <Brain className="h-4 w-4 shrink-0 text-brand-600" />
+              AI Reasoning lúc generate
+              {set.analysis.input_source && <span className="font-normal normal-case text-ink-400">· nguồn: {set.analysis.input_source}</span>}
+            </span>
+            <ChevronDown className="h-4 w-4 shrink-0 text-ink-400 transition-transform group-open:rotate-180" />
           </summary>
           <div className="mt-4 space-y-4 text-sm">
             {Array.isArray(set.analysis.coverage_self_check) && set.analysis.coverage_self_check.length > 0 && (
               <div>
-                <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">AI tự kiểm tra độ phủ</p>
-                <ul className="space-y-1 text-xs text-slate-600">
-                  {set.analysis.coverage_self_check.map((item: string, i: number) => <li key={i}>✓ {item}</li>)}
+                <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-500">AI tự kiểm tra độ phủ</p>
+                <ul className="space-y-1 text-xs text-ink-600">
+                  {set.analysis.coverage_self_check.map((item: string, i: number) => (
+                    <li key={i} className="flex items-start gap-1.5">
+                      <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-success-600" />
+                      {item}
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
             {Array.isArray(set.analysis.risk_ranking) && set.analysis.risk_ranking.length > 0 && (
               <div>
-                <p className="mb-1 text-xs font-black uppercase tracking-wide text-indigo-600">Xếp hạng rủi ro (FMEA)</p>
-                <ul className="space-y-1 text-xs text-slate-600">
+                <p className="mb-1 text-xs font-bold uppercase tracking-wide text-ink-500">Xếp hạng rủi ro (FMEA)</p>
+                <ul className="space-y-1 text-xs text-ink-600">
                   {set.analysis.risk_ranking.map((risk: Record<string, unknown>, i: number) => (
-                    <li key={i}>• {String(risk.scenario)} → <span className="font-bold">{String(risk.resulting_priority)}</span></li>
+                    <li key={i}>• {String(risk.scenario)} → <span className="font-bold text-ink-800">{String(risk.resulting_priority)}</span></li>
                   ))}
                 </ul>
               </div>
@@ -100,28 +111,28 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
         </details>
       )}
 
-      <div className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-        <div className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-200 bg-slate-50 px-5 py-3 text-xs font-black uppercase tracking-wide text-slate-500">
+      <div className="surface-card overflow-hidden">
+        <div className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-ink-200 bg-ink-50 px-5 py-3 text-xs font-bold uppercase tracking-wide text-ink-500">
           <span>{t.generateResult.colCode}</span>
           <span>{t.generateResult.colTitle}</span>
           <span>{t.generateResult.colCategory}</span>
           <span>{t.generateResult.colPriority}</span>
           <span>{t.generateResult.colStatus}</span>
         </div>
-        {(!testCases || testCases.length === 0) && <div className="p-8 text-center text-slate-500">{t.generateResult.empty}</div>}
+        {(!testCases || testCases.length === 0) && <div className="p-8 text-center text-ink-500">{t.generateResult.empty}</div>}
         {testCases?.map((testCase) => (
           <Link
             key={testCase.id}
             href={`/projects/${projectId}/test-cases/${testCase.id}`}
-            className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-slate-100 px-5 py-4 text-sm last:border-b-0 hover:bg-blue-50/50"
+            className="grid grid-cols-[0.8fr_2fr_1fr_0.8fr_1fr] gap-4 border-b border-ink-100 px-5 py-4 text-sm transition-colors last:border-b-0 hover:bg-brand-50/50"
           >
-            <span className="font-mono font-bold text-blue-700">{testCase.code}</span>
-            <span className="font-semibold text-slate-950">{testCase.title}</span>
-            <span className="text-slate-600">{testCase.category}</span>
+            <span className="font-mono font-bold text-brand-700">{testCase.code}</span>
+            <span className="font-semibold text-ink-900">{testCase.title}</span>
+            <span className="text-ink-600">{testCase.category}</span>
             <span>
               <span className={`rounded px-2 py-0.5 text-xs font-bold ${getPriorityStyle(testCase.priority)}`}>{testCase.priority}</span>
             </span>
-            <span className="text-slate-600">{testCase.status}</span>
+            <span className="text-ink-600">{testCase.status}</span>
           </Link>
         ))}
       </div>

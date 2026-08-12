@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown, Loader2, ShieldCheck, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Loader2, ShieldCheck, Trash2 } from 'lucide-react';
 import type { Member, Role } from './types';
 import type { TeamMembersState } from './use-team-members';
 
@@ -91,7 +91,7 @@ export function MemberRow({ team, member }: { team: TeamMembersState; member: Me
                         <span className="flex items-center gap-1.5 text-sm font-bold text-ink-900">
                           {option === 'admin' && <ShieldCheck className="h-3.5 w-3.5 text-brand-600" strokeWidth={2.5} />}
                           {option}
-                          {option === member.role && <span className="text-brand-600">✓</span>}
+                          {option === member.role && <Check className="h-3.5 w-3.5 text-brand-600" strokeWidth={2.5} />}
                         </span>
                         <span className="text-xs text-ink-500">{option === 'admin' ? t.team.roleAdminDesc : t.team.roleQaDesc}</span>
                       </button>
@@ -105,7 +105,7 @@ export function MemberRow({ team, member }: { team: TeamMembersState; member: Me
               type="button"
               onClick={() => team.setRemovingUserId(member.user_id)}
               aria-label={t.team.removeButton}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 hover:bg-red-50 hover:text-red-600"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 hover:bg-danger-50 hover:text-danger-600"
             >
               <Trash2 className="h-4 w-4" strokeWidth={2.25} />
             </button>
