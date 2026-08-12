@@ -596,6 +596,9 @@ end $$;
 
 create index if not exists idx_automation_scripts_test_case_id on automation_scripts(test_case_id);
 create index if not exists idx_automation_runs_test_case_id on automation_runs(test_case_id);
+-- Covers the run-history query (WHERE test_case_id = ? ORDER BY started_at DESC LIMIT 20):
+-- without this, Postgres scans+sorts every run for the test case on each page load.
+create index if not exists idx_automation_runs_test_case_started_at on automation_runs(test_case_id, started_at desc);
 
 alter table automation_scripts enable row level security;
 alter table automation_runs enable row level security;

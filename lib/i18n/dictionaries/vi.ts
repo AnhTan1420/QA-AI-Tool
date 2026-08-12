@@ -358,6 +358,7 @@ const vi = {
       scriptsHeading: 'Lịch sử code đã sinh',
       runsHeading: 'Lịch sử chạy',
       empty: 'Chưa có dữ liệu.',
+      loadMore: 'Xem thêm',
     },
     errors: {
       inspectFailed: 'Không thể inspect environment',
