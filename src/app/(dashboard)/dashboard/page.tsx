@@ -6,15 +6,25 @@ import { getDictionary } from '@/lib/i18n/dictionaries';
 
 export default async function DashboardPage() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
   const locale = await getLocale();
   const t = getDictionary(locale);
 
-  const { count: projectCount } = await supabase.from('projects').select('*', { count: 'exact', head: true });
-  const { count: testCaseCount } = await supabase.from('test_cases').select('*', { count: 'exact', head: true });
+  // 3 request độc lập (auth + 2 count) trước đây chạy tuần tự (await từng cái), cộng dồn
+  // độ trễ mạng của cả 3. Chạy song song bằng Promise.all vì không cái nào phụ thuộc
+  // kết quả của cái kia. Ngoài ra count: 'exact' luôn ép Postgres seq scan toàn bảng để
+  // đếm chính xác (COUNT(*) không dùng được index-only scan) - với một con số hiển thị
+  // trên thẻ dashboard thì không cần chính xác tuyệt đối, nên đổi sang 'estimated'
+  // (dùng thống kê planner, gần như tức thời, không scan bảng) để nhanh hơn nhiều khi
+  // bảng lớn dần.
+  const [
+    { data: { user } },
+    { count: projectCount },
+    { count: testCaseCount },
+  ] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.from('projects').select('*', { count: 'estimated', head: true }),
+    supabase.from('test_cases').select('*', { count: 'estimated', head: true }),
+  ]);
 
   const metrics = [
     { label: t.dashboard.metricProjects, value: String(projectCount ?? 0), icon: FolderKanban },

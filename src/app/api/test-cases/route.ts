@@ -15,11 +15,17 @@ export async function GET(req: NextRequest) {
   }
 
   const supabase = await createClient();
+  // Danh sách chỉ render code/title/category/priority/status/automation_status (xem
+  // TestCaseTable) - trước đây select('*') kéo theo cả steps/preconditions/test_data/
+  // expected_result (jsonb, có thể rất nặng khi nhiều bước) cho TỪNG test case trong
+  // project, dù trang list không dùng tới. Đây là nguyên nhân chính khiến trang chậm
+  // khi project có nhiều test case. Sort theo `code` ngay tại DB luôn, khỏi phải kéo
+  // hết mảng về rồi sort lại ở client (frontend trước đây tự .sort() sau khi fetch).
   const { data, error } = await supabase
     .from('test_cases')
-    .select('*, test_case_sets!inner(project_id)')
+    .select('id, code, title, category, priority, status, automation_status, test_case_sets!inner(project_id)')
     .eq('test_case_sets.project_id', projectId)
-    .order('created_at', { ascending: false });
+    .order('code', { ascending: true });
 
   if (error) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
