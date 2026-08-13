@@ -1,288 +1,249 @@
 # Project Structure
 
-> Complete map of the QAJD codebase. Every directory and key file is documented below.
+> Complete map of the QAJD codebase. The app is organized as a layered architecture —
+> Models / Views / Controllers / Services — so each file has exactly one job and lives
+> in exactly one place.
+
+## The four layers
+
+| Layer | Folder | Job | May import from |
+|---|---|---|---|
+| **Controllers** | `src/app/` | Receive HTTP requests / render routes. Thin — parse input, call a Service, shape the response. Next.js requires these to live under `app/`, so this is the one layer that can't be physically relocated. | Services, Models, Views |
+| **Views** | `src/views/` | Presentational React components. No `fetch`, no Supabase calls, no business rules — just props in, JSX out. | Models (types), `hooks/` |
+| *(view-state glue)* | `src/hooks/` | Client-side state + API calls that back a View (not a layer the request asked for by name, but kept separate from `views/` on purpose — state logic and markup shouldn't live in the same file). | Services (via `lib/api/client.ts`), Models |
+| **Services** | `src/services/` | Business logic: AI/LLM calls, Playwright automation, document parsing, Supabase queries. Where the actual work happens. | Models, `lib/` |
+| **Models** | `src/models/` | Data shape: TypeScript types, Zod validation schemas, domain constants (e.g. category/priority taxonomy). No logic, no I/O. | nothing (leaf layer) |
+| *(shared infra)* | `src/lib/` | Generic, feature-agnostic utilities (i18n, small helpers, the client-side fetch wrapper). Not part of the MVC split — everything in here is boring on purpose. | nothing above it |
+
+Dependency direction is one-way: **Controllers → Services → Models**, with **Views + hooks** sitting
+beside Controllers on the client side, only ever reaching Services through an API route (never
+importing a Service directly into a View or hook).
 
 ```
 QA-AI-Tool/
 │
-├── 📁 app/                          # Next.js App Router (v16)
+├── 📁 src/
 │   │
-│   ├── 📁 (auth)/                   # Route group: authentication pages
-│   │   ├── 📁 login/
-│   │   │   └── page.tsx             # Login page (Supabase Auth UI)
-│   │   └── 📁 register/
-│   │       └── page.tsx             # Registration page
+│   ├── 📁 app/                          # CONTROLLERS — Next.js App Router (v16)
+│   │   │                                # route.ts = API controllers, page.tsx = route controllers
+│   │   ├── 📁 (auth)/                   # Route group: authentication pages
+│   │   │   ├── 📁 login/
+│   │   │   │   └── page.tsx             # Login page (Supabase Auth UI)
+│   │   │   └── 📁 register/
+│   │   │       └── page.tsx             # Registration page
+│   │   │
+│   │   ├── 📁 (dashboard)/              # Route group: protected dashboard pages
+│   │   │   ├── layout.tsx
+│   │   │   ├── 📁 dashboard/
+│   │   │   │   └── page.tsx             # Overview: project stats, recent activity
+│   │   │   ├── 📁 projects/
+│   │   │   │   ├── page.tsx             # Project list + create new project
+│   │   │   │   └── 📁 [projectId]/      # Dynamic route: single project workspace
+│   │   │   │       ├── page.tsx         # Project detail / overview
+│   │   │   │       ├── 📁 automation/environments/
+│   │   │   │       │   └── page.tsx     # Environment management (project batch automation)
+│   │   │   │       ├── 📁 generate/     # AI Test Case Generation Wizard
+│   │   │   │       │   ├── page.tsx     # Generation workspace (renders views/test-case/generate-workspace)
+│   │   │   │       │   └── 📁 [setId]/
+│   │   │   │       │       └── page.tsx # View previously generated test case set
+│   │   │   │       ├── 📁 test-cases/   # Test Case Library
+│   │   │   │       │   ├── page.tsx     # List view
+│   │   │   │       │   └── 📁 [caseId]/
+│   │   │   │       │       └── page.tsx # Steps, version history, comments, Automation tab
+│   │   │   │       └── 📁 team/
+│   │   │   │           └── page.tsx     # Invite, roles, remove members
+│   │   │   └── 📁 tools/
+│   │   │       ├── page.tsx             # Grid of all utility tools
+│   │   │       └── 📁 [toolSlug]/
+│   │   │           └── page.tsx
+│   │   │
+│   │   ├── 📁 api/                      # API controllers — call into services/, return JSON
+│   │   │   ├── 📁 ai/
+│   │   │   │   ├── 📁 generate/route.ts       # POST: Generation Agent
+│   │   │   │   ├── 📁 enhance/route.ts        # POST: Review/Enhance Agent
+│   │   │   │   ├── 📁 documents/parse/route.ts  # POST: AI Document Reader
+│   │   │   │   ├── 📁 embed/route.ts          # POST: create vector embeddings
+│   │   │   │   └── 📁 playwright/route.ts     # POST: Playwright Codegen Agent
+│   │   │   ├── 📁 ai-reviews/route.ts         # POST: persist review results
+│   │   │   ├── 📁 automation/
+│   │   │   │   ├── 📁 inspect/route.ts        # POST: launch browser, extract DOM/element map
+│   │   │   │   ├── 📁 run/route.ts            # POST: execute a generated script
+│   │   │   │   ├── 📁 batch-run/route.ts      # POST: start a batch run
+│   │   │   │   ├── 📁 batch-run/[id]/process-next/route.ts
+│   │   │   │   └── 📁 runs/[runId]/screenshot/route.ts
+│   │   │   ├── 📁 projects/
+│   │   │   │   ├── route.ts                   # GET list | POST create
+│   │   │   │   └── 📁 [projectId]/
+│   │   │   │       ├── route.ts               # DELETE project
+│   │   │   │       ├── 📁 members/route.ts    # Member CRUD
+│   │   │   │       └── 📁 environments/route.ts
+│   │   │   ├── 📁 test-case-sets/route.ts     # POST: create requirement + test case set
+│   │   │   └── 📁 test-cases/
+│   │   │       ├── route.ts, bulk/route.ts, export/route.ts
+│   │   │       └── 📁 [id]/
+│   │   │           ├── route.ts, comments/route.ts, versions/route.ts
+│   │   │           └── 📁 automation/{scripts, scripts/[scriptId], runs}/route.ts
+│   │   │
+│   │   ├── layout.tsx                   # Root layout
+│   │   ├── page.tsx                     # Landing / redirect
+│   │   └── globals.css
 │   │
-│   ├── 📁 (dashboard)/              # Route group: protected dashboard pages
-│   │   ├── 📁 dashboard/
-│   │   │   └── page.tsx             # Overview: project stats, recent activity
-│   │   │
-│   │   ├── 📁 projects/
-│   │   │   ├── page.tsx             # Project list + create new project
-│   │   │   └── 📁 [projectId]/      # Dynamic route: single project workspace
-│   │   │       ├── page.tsx         # Project detail / overview
-│   │   │       │
-│   │   │       ├── 📁 generate/     # AI Test Case Generation Wizard
-│   │   │       │   ├── page.tsx     # Generation workspace (orchestrator)
-│   │   │       │   └── 📁 [setId]/  # View previously generated test case set
-│   │   │       │       └── page.tsx
-│   │   │       │
-│   │   │       ├── 📁 test-cases/   # Test Case Library
-│   │   │       │   ├── page.tsx     # List view: search, paginate, bulk actions, Automation badge column
-│   │   │       │   └── 📁 [caseId]/ # Single test case detail
-│   │   │       │       └── page.tsx # Steps, version history, comments, Automation tab
-│   │   │       │
-│   │   │       └── 📁 team/         # Team Member Management
-│   │   │           └── page.tsx     # Invite, roles, remove members
-│   │   │
-│   │   └── 📁 tools/                # QA Utility Toolkit
-│   │       └── page.tsx             # Grid of all utility tools
+│   ├── 📁 views/                        # VIEWS — presentational components (by feature)
+│   │   ├── 📁 auth/
+│   │   │   └── sign-out-button.tsx
+│   │   ├── 📁 layout/
+│   │   │   ├── back-link.tsx
+│   │   │   ├── nav-link.tsx
+│   │   │   └── language-toggle.tsx
+│   │   ├── 📁 team/
+│   │   │   └── {team-stats, invite-form, member-row, member-list}.tsx
+│   │   ├── 📁 test-case-form/
+│   │   │   ├── index.tsx                # Form orchestrator
+│   │   │   ├── constants.ts             # Form defaults & validation rules
+│   │   │   └── {steps-editor, preconditions-editor, test-data-editor}.tsx
+│   │   ├── 📁 test-case-list/
+│   │   │   └── {create-modal, bulk-delete-bar, test-case-table, pagination-bar}.tsx
+│   │   ├── 📁 test-case/
+│   │   │   ├── {comments-panel, version-history}.tsx
+│   │   │   ├── 📁 generate-workspace/   # AI generation wizard
+│   │   │   │   ├── index.tsx, shared.ts
+│   │   │   │   └── {wizard-panel, document-reader-panel, results-panel, review-panel,
+│   │   │   │        generating-modal, test-case-card, traceability-matrix, workspace-ui}.tsx
+│   │   │   └── 📁 automation/           # Per-test-case automation tab
+│   │   │       ├── index.tsx            # Thin orchestrator
+│   │   │       └── {environment-form, element-preview, code-viewer, run-result, history-lists}.tsx
+│   │   ├── 📁 project-automation/       # Project-level batch automation (distinct feature from
+│   │   │   └── {run-automation-modal, batch-progress-panel}.tsx  # the per-test-case tab above)
+│   │   └── 📁 tools/tool-runner/
+│   │       ├── index.tsx, shared.ts, tool-text-area.tsx, tools-grid.tsx, tool-runner.tsx
+│   │       └── {base64, fake-file-generator, hash-generator, json-formatter, lorem-ipsum,
+│   │            nric, regex-tester, timestamp, uuid}-tool.tsx
 │   │
-│   ├── 📁 api/                      # Next.js API Routes (server handlers)
-│   │   ├── 📁 ai/
-│   │   │   ├── 📁 generate/
-│   │   │   │   └── route.ts         # POST: Generation Agent endpoint
-│   │   │   ├── 📁 enhance/
-│   │   │   │   └── route.ts         # POST: Review/Enhance Agent (mode: review|enhance)
-│   │   │   ├── 📁 documents/
-│   │   │   │   └── 📁 parse/
-│   │   │   │       └── route.ts     # POST: AI Document Reader (Figma/MD/PDF/Image → DocumentAtoms)
-│   │   │   ├── 📁 embed/
-│   │   │   │   └── route.ts         # POST: Create vector embeddings for RAG
-│   │   │   └── 📁 playwright/
-│   │   │       └── route.ts         # POST: Playwright Codegen Agent (element-map-grounded script generation)
-│   │   │
-│   │   ├── 📁 ai-reviews/
-│   │   │   └── route.ts             # POST: Persist review results to DB
-│   │   │
-│   │   ├── 📁 automation/           # Playwright automation runner endpoints
-│   │   │   ├── 📁 inspect/
-│   │   │   │   └── route.ts         # POST: launch browser, navigate + auth, extract DOM/element map
-│   │   │   └── 📁 run/
-│   │   │       └── route.ts         # POST: execute a generated script, capture screenshot + failure details
-│   │   │
-│   │   ├── 📁 projects/
-│   │   │   ├── route.ts             # GET: list projects | POST: create project
-│   │   │   └── 📁 [projectId]/
-│   │   │       ├── route.ts         # DELETE: delete project
-│   │   │       └── 📁 members/
-│   │   │           └── route.ts     # GET/POST/PATCH/DELETE: member CRUD
-│   │   │
-│   │   ├── 📁 test-case-sets/
-│   │   │   └── route.ts             # POST: create requirement + test case set
-│   │   │
-│   │   └── 📁 test-cases/
-│   │       ├── route.ts             # GET/POST/PATCH/DELETE: test case operations
-│   │       ├── 📁 bulk/
-│   │       │   └── route.ts         # POST: bulk create/update test cases
-│   │       ├── 📁 export/
-│   │       │   └── route.ts         # GET: export project test cases as .xlsx
-│   │       └── 📁 [id]/
-│   │           ├── route.ts         # GET/PUT/DELETE: single test case
-│   │           ├── 📁 comments/
-│   │           │   └── route.ts     # GET/POST: comments CRUD
-│   │           ├── 📁 versions/
-│   │           │   └── route.ts     # GET: version history (read-only)
-│   │           └── 📁 automation/
-│   │               ├── 📁 scripts/
-│   │               │   └── route.ts # GET: generated Playwright script version history
-│   │               └── 📁 runs/
-│   │                   └── route.ts # GET: automation run history (status, screenshots, failures)
+│   ├── 📁 hooks/                        # View-state layer — one hook per View feature above
+│   │   ├── 📁 team/use-team-members.ts
+│   │   ├── 📁 test-case/{use-generate-workspace, use-automation}.ts
+│   │   ├── 📁 test-case-list/use-test-case-list.ts
+│   │   └── 📁 automation/{use-environments, use-batch-automation}.ts
 │   │
-│   ├── layout.tsx                     # Root layout (providers, fonts, metadata)
-│   └── page.tsx                       # Landing / redirect page
+│   ├── 📁 services/                     # SERVICES — business logic, external integrations, data access
+│   │   ├── 📁 ai/                       # AI/LLM layer
+│   │   │   ├── provider.ts              # Model routing: Gemini → fallback → Groq
+│   │   │   ├── gemini.ts, vision.ts, groq.ts, parse.ts
+│   │   │   └── 📁 prompts/
+│   │   │       ├── generation-agent.ts, review-agent.ts, enhance-agent.ts
+│   │   │       ├── document-extraction-agent.ts
+│   │   │       └── playwright-agent.ts, playwright-response-schema.ts
+│   │   ├── 📁 automation/               # Playwright automation runner (server-side only)
+│   │   │   ├── browser-runner.ts        # Launch browser, inspect DOM, execute script
+│   │   │   ├── batch-runner.ts          # Batch run orchestration
+│   │   │   ├── screenshot-storage.ts    # Upload run screenshots + signed URLs
+│   │   │   └── r2-storage.ts, rate-limit.ts
+│   │   ├── 📁 documents/                # AI Document Reader helpers
+│   │   │   └── text-extractors.ts, figma-client.ts, coverage.ts, vendor-shims.d.ts
+│   │   ├── 📁 supabase/                 # Supabase clients (3 tiers) — the data-access boundary
+│   │   │   ├── client.ts                # Browser client (anon key + RLS)
+│   │   │   ├── server.ts                # Server client (cookie-based session)
+│   │   │   └── admin.ts                 # Service role client (system ops only)
+│   │   ├── test-case-diff.ts            # Diff two test case sets
+│   │   └── test-case-similarity.ts      # Duplicate/near-duplicate detection
+│   │
+│   ├── 📁 models/                       # MODELS — types, validation schemas, domain constants
+│   │   ├── 📁 types/                    # Feature types
+│   │   │   ├── team.ts, test-case-form.ts, test-case-list.ts
+│   │   │   └── index.ts                 # Barrel re-export
+│   │   ├── 📁 validators/               # Zod schemas (never trust raw AI JSON)
+│   │   │   └── test-case.ts, document.ts, playwright.ts
+│   │   └── test-case-taxonomy.ts        # Category/priority labels + styling helpers
+│   │
+│   ├── 📁 lib/                          # Shared infra — not part of the MVC split
+│   │   ├── 📁 i18n/                     # Internationalization (Vietnamese / English)
+│   │   │   ├── config.ts, get-locale.ts, language-context.tsx
+│   │   │   └── 📁 dictionaries/{en, vi, index}.ts
+│   │   ├── 📁 api/
+│   │   │   └── client.ts                # `postJson` — the only way hooks/ talk to app/api/
+│   │   └── 📁 utils/
+│   │       └── {test-case-excel, smart-xlsx-parser, file-to-base64, fake-file-payloads,
+│   │             nric, lorem-ipsum, file-download, fetch-json}.ts
+│   │
+│   ├── 📁 __tests__/services/           # Unit tests, mirrors services/ layer
+│   │   └── {playwright-validators, r2-storage, rate-limit, screenshot-storage}.test.ts
+│   │
+│   └── proxy.ts                         # Session refresh + auth redirect middleware
+│                                          # (Next.js middleware — auto-detected inside src/)
 │
-├── 📁 components/                     # React components (by feature)
-│   │
-│   ├── 📁 auth/
-│   │   └── sign-out-button.tsx        # Sign out button with confirmation
-│   │
-│   ├── 📁 layout/
-│   │   ├── nav-link.tsx               # Active-state navigation link
-│   │   └── language-toggle.tsx        # Vietnamese / English switcher
-│   │
-│   ├── 📁 team/                       # Team management feature
-│   │   ├── use-team-members.ts        # Hook: state + API calls (invite/role/remove)
-│   │   ├── types.ts                   # Team member TypeScript types
-│   │   ├── team-stats.tsx             # Member count / role distribution display
-│   │   ├── invite-form.tsx            # Email + role invitation form
-│   │   ├── member-row.tsx             # Single member table row
-│   │   └── member-list.tsx            # Member table with actions
-│   │
-│   ├── 📁 test-case/
-│   │   ├── 📁 generate-workspace/     # AI generation wizard (complex feature)
-│   │   │   ├── index.tsx              # Thin orchestrator: composes all panels
-│   │   │   ├── use-generate-workspace.ts  # Hook: all state + business logic
-│   │   │   ├── wizard-panel.tsx       # Left column: requirement input, taxonomy, actions
-│   │   │   ├── document-reader-panel.tsx  # Left column: AI Document Reader (Figma/MD/FS/ERD)
-│   │   │   ├── results-panel.tsx      # Right column: generated test cases + coverage banner
-│   │   │   ├── review-panel.tsx       # Right column: review & enhance actions
-│   │   │   ├── test-case-card.tsx     # Individual generated test case card
-│   │   │   └── shared.ts              # Shared types & constants for workspace
-│   │   ├── version-history.tsx        # Version timeline component
-│   │   ├── comments-panel.tsx         # Threaded comments UI
-│   │   ├── automation-panel.tsx       # Automation tab orchestrator (env config → inspect → generate → run → history)
-│   │   └── 📁 automation/             # Automation tab sub-components
-│   │       ├── use-automation.ts      # Hook: all state + API calls (inspect/generate/run)
-│   │       ├── environment-form.tsx   # Browser/target URL/auth config form
-│   │       ├── element-preview.tsx    # Inspected DOM/element map preview
-│   │       ├── code-viewer.tsx        # Generated code display (syntax highlight + Copy)
-│   │       ├── run-result.tsx         # Run button + latest result (screenshot / failure callout)
-│   │       └── history-lists.tsx      # Past script versions + past run results
-│   │
-│   ├── 📁 test-case-form/             # Create / Edit test case form
-│   │   ├── index.tsx                  # Form orchestrator
-│   │   ├── steps-editor.tsx           # Reorderable test steps editor
-│   │   ├── preconditions-editor.tsx   # Preconditions input
-│   │   ├── test-data-editor.tsx       # Test data fields
-│   │   ├── types.ts                   # Form-specific types
-│   │   └── constants.ts               # Form defaults & validation rules
-│   │
-│   ├── 📁 test-case-list/             # Test case library page
-│   │   ├── use-test-case-list.ts      # Hook: fetch, paginate, bulk-delete, status
-│   │   ├── types.ts                   # List view types
-│   │   ├── create-modal.tsx           # Quick-create test case modal
-│   │   ├── bulk-delete-bar.tsx        # Bulk selection + delete actions
-│   │   ├── test-case-table.tsx        # Paginated table with inline status + Automation badge
-│   │   └── pagination-bar.tsx         # Pagination controls
-│   │
-│   └── 📁 tools/
-│       └── 📁 tool-runner/            # QA Utility Toolkit components
-│           ├── index.tsx              # Exports: ToolsGrid + ToolRunner
-│           ├── tools-grid.tsx         # Grid layout of all tool cards
-│           ├── tool-runner.tsx        # Shell: renders active tool
-│           ├── shared.ts              # Shared tool types & utilities
-│           ├── tool-text-area.tsx     # Reusable textarea for tool I/O
-│           ├── json-formatter-tool.tsx
-│           ├── base64-tool.tsx
-│           ├── uuid-tool.tsx
-│           ├── regex-tester-tool.tsx
-│           ├── hash-generator-tool.tsx
-│           ├── timestamp-tool.tsx
-│           ├── fake-file-generator-tool.tsx
-│           ├── nric-tool.tsx
-│           └── lorem-ipsum-tool.tsx
+├── 📁 public/                           # Static assets (images, fonts)
 │
-├── 📁 lib/                            # Shared utilities & business logic
-│   │
-│   ├── 📁 ai/                         # AI/LLM layer
-│   │   ├── provider.ts                # Model routing: Gemini → fallback → Groq
-│   │   ├── gemini.ts                  # Google Gemini API wrapper
-│   │   ├── vision.ts                  # Gemini multimodal (image/diagram) wrapper
-│   │   ├── groq.ts                    # Groq API wrapper
-│   │   ├── parse.ts                   # Robust JSON extraction from markdown/code blocks
-│   │   └── 📁 prompts/
-│   │       ├── generation-agent.ts    # Generation Agent system prompt (+ document atom mapping)
-│   │       ├── review-agent.ts        # Review Agent system prompt (independent evaluation)
-│   │       ├── enhance-agent.ts       # Enhance Agent system prompt (rewrite based on review)
-│   │       ├── document-extraction-agent.ts  # AI Document Reader prompt
-│   │       ├── playwright-agent.ts    # Playwright Codegen Agent prompt (element-map-grounded)
-│   │       └── playwright-response-schema.ts  # Gemini structured-output schema for codegen
-│   │
-│   ├── 📁 automation/                 # Playwright automation runner (server-side only)
-│   │   ├── browser-runner.ts          # Launch browser, inspect DOM, execute generated script
-│   │   │                              # (architecture decision: Chromium-only on serverless via
-│   │   │                              #  playwright-core + @sparticuz/chromium; full `playwright`
-│   │   │                              #  package for self-hosted Firefox/Edge — see file header)
-│   │   └── screenshot-storage.ts      # Upload run screenshots to Supabase Storage + signed URLs
-│   │
-│   ├── 📁 documents/                  # AI Document Reader helpers
-│   │   ├── text-extractors.ts         # PDF/DOCX → plain text (mammoth, pdf-parse)
-│   │   ├── figma-client.ts            # Figma REST API client + node flattening
-│   │   └── coverage.ts                # Cross-check document atoms vs generated test cases
-│   │
-│   ├── 📁 api/
-│   │   └── client.ts                  # Shared `postJson` fetch helper for client components
-│   │
-│   ├── 📁 i18n/                       # Internationalization (Vietnamese / English)
-│   │   ├── config.ts                  # i18n configuration
-│   │   ├── get-locale.ts              # Locale detection utility
-│   │   ├── language-context.tsx       # React context for current locale
-│   │   └── 📁 dictionaries/
-│   │       ├── en.ts                  # English translations
-│   │       ├── vi.ts                  # Vietnamese translations
-│   │       └── index.ts               # Dictionary loader
-│   │
-│   ├── 📁 validators/                 # Zod schemas (never trust raw AI JSON)
-│   │   ├── test-case.ts               # Test case schema (AI I/O validation)
-│   │   ├── document.ts                # DocumentAtom & ParsedDocument schemas
-│   │   └── playwright.ts              # Environment config, element map, codegen output, run request/result
-│   │
-│   ├── 📁 utils/                      # General utilities
-│   │   ├── test-case-excel.ts         # Excel export/import for test cases
-│   │   ├── smart-xlsx-parser.ts       # Best-effort column mapping for .xlsx imports
-│   │   ├── file-to-base64.ts          # File → base64 (doc-reader uploads)
-│   │   ├── fake-file-payloads.ts      # Dummy file content generators
-│   │   ├── nric.ts                    # Singapore NRIC/FIN generation & validation
-│   │   ├── lorem-ipsum.ts             # Placeholder text generator
-│   │   └── file-download.ts           # Browser file download helper
-│   │
-│   ├── 📁 supabase/                   # Supabase clients (3 tiers)
-│   │   ├── client.ts                  # Browser client (anon key + RLS)
-│   │   ├── server.ts                  # Server client (cookie-based session)
-│   │   └── admin.ts                   # Service role client (system ops only)
-│   │
-│   └── test-case-taxonomy.ts          # Category/priority labels + styling helpers
+├── schema.sql                           # Complete database schema
+│                                        # - Extensions: vector, pgcrypto
+│                                        # - All tables + constraints, RLS policies
+│                                        # - Trigger: auto-create profile on auth.users insert
+│                                        # - automation_scripts / automation_runs tables + RLS,
+│                                        #   automation-screenshots storage bucket + policies
 │
-├── 📁 public/                         # Static assets (images, fonts)
-│
-├── schema.sql                         # Complete database schema
-│                                      # - Extensions: vector, pgcrypto
-│                                      # - All tables + constraints
-│                                      # - RLS policies
-│                                      # - Trigger: auto-create profile on auth.users insert
-│                                      # - automation_scripts / automation_runs tables + RLS,
-│                                      #   automation-screenshots storage bucket + policies
-│
-├── proxy.ts                           # Session refresh + auth redirect middleware
-│
-├── next.config.ts                     # Next.js configuration
-├── tailwind.config.ts                 # Tailwind CSS theme + design tokens
-├── tsconfig.json                      # TypeScript configuration
-└── package.json                       # Dependencies & scripts
+├── next.config.ts                       # Next.js configuration
+├── tailwind.config.ts                   # Tailwind CSS theme + design tokens
+├── tsconfig.json                        # TypeScript configuration (`@/*` → `./src/*`)
+└── package.json                         # Dependencies & scripts
 ```
 
 ---
 
 ## Key Conventions
 
-### 1. Component Architecture Pattern
+### 1. Where new code goes
 
-Any screen with non-trivial state follows this pattern:
+Ask what the code *is*, not what feature it's for:
+
+- Fetches/mutates data, calls an external API, or talks to Supabase? → **`src/services/<domain>/`**
+- Describes a data shape, or validates one? → **`src/models/types|validators/<domain>.ts`**
+- Renders UI, takes props, no I/O? → **`src/views/<feature>/`**
+- Holds the state a View needs and calls `src/lib/api/client.ts` to reach a controller? → **`src/hooks/<feature>/use-<feature>.ts`**
+- Handles an HTTP request or is a route entry point? → **`src/app/api/...` or `src/app/(dashboard)/...`** (must stay under `app/` — Next.js routing requirement)
+
+### 2. Feature Slice Pattern
+
+Within `views/` + `hooks/`, a feature with non-trivial state is still split the same way it was before —
+just across two top-level folders instead of one:
 
 ```
-components/<feature>/
-├── use-<feature>.ts          # Hook: all state + API calls
-├── types.ts                  # Feature-specific types
+views/<feature>/
 ├── <presentational>.tsx        # Small UI pieces (accept hook return as props)
-└── index.tsx                 # Thin orchestrator (composes everything)
+└── index.tsx                   # Thin orchestrator (composes everything)
+
+hooks/<feature>/
+└── use-<feature>.ts            # All state + calls to lib/api/client.ts
 ```
 
 **Examples:**
-- `components/test-case/generate-workspace/` — `use-generate-workspace.ts` holds all state
-- `components/team/` — `use-team-members.ts` manages invite/role/remove
-- `components/test-case-list/` — `use-test-case-list.ts` handles fetch/paginate/bulk-delete
+- `views/test-case/generate-workspace/` (UI) + `hooks/test-case/use-generate-workspace.ts` (state) — generation wizard
+- `views/team/` (UI) + `hooks/team/use-team-members.ts` (state) + `models/types/team.ts` (types) — invite/role/remove
+- `views/test-case-list/` (UI) + `hooks/test-case-list/use-test-case-list.ts` (state) — fetch/paginate/bulk-delete
+- `views/test-case/automation/` (UI) + `hooks/test-case/use-automation.ts` (state) — per-test-case automation tab
+- `views/project-automation/` (UI) + `hooks/automation/` (state) — project-level batch automation runs
 
-### 2. API Route Pattern
+### 3. Controller (API Route) Pattern
+
+A controller stays thin — parse the request, call a service, shape the response. Business logic
+that would make a `route.ts` file grow past that belongs in `services/`, not inline:
 
 ```
 app/api/<resource>/
-├── route.ts                  # GET (list) / POST (create)
+├── route.ts                  # GET (list) / POST (create) — delegates to services/<domain>/
 └── [id]/
     ├── route.ts              # GET (single) / PUT (update) / DELETE
     └── <subresource>/
         └── route.ts          # Sub-resource operations
 ```
 
-### 3. Supabase Client Tiers
+### 4. Supabase Client Tiers (Services layer)
 
 | Client | File | Use Case | Key Characteristic |
 |--------|------|----------|-------------------|
-| Browser | `lib/supabase/client.ts` | Client components | Anon key, RLS enforced |
-| Server | `lib/supabase/server.ts` | API routes, Server Components | Cookie session, RLS enforced |
-| Admin | `lib/supabase/admin.ts` | System operations | Service role, **bypasses RLS** — use sparingly |
+| Browser | `services/supabase/client.ts` | Client components | Anon key, RLS enforced |
+| Server | `services/supabase/server.ts` | API routes, Server Components | Cookie session, RLS enforced |
+| Admin | `services/supabase/admin.ts` | System operations | Service role, **bypasses RLS** — use sparingly |
 
-### 4. AI Model Routing
+### 5. AI Model Routing (Services layer)
 
 ```
 Task-specific Gemini model
@@ -294,7 +255,7 @@ GROQ_MODEL_PRIMARY (Llama)
 GROQ_MODEL_FALLBACK (Llama)
 ```
 
-See `lib/ai/provider.ts` for implementation.
+See `services/ai/provider.ts` for implementation.
 
 ---
 
@@ -302,23 +263,21 @@ See `lib/ai/provider.ts` for implementation.
 
 | Pattern | Used For | Example |
 |---------|----------|---------|
-| `kebab-case.tsx` | Components | `wizard-panel.tsx` |
-| `use-<feature>.ts` | Custom hooks | `use-generate-workspace.ts` |
-| `<action>-<noun>.ts` | Utilities | `file-to-base64.ts` |
-| `route.ts` | API handlers | `app/api/ai/generate/route.ts` |
-| `page.tsx` | Route pages | `app/(dashboard)/projects/page.tsx` |
+| `kebab-case.tsx` | Views | `wizard-panel.tsx` |
+| `use-<feature>.ts` | Hooks | `use-generate-workspace.ts` |
+| `<action>-<noun>.ts` | Services / utils | `file-to-base64.ts` |
+| `route.ts` | Controllers (API) | `app/api/ai/generate/route.ts` |
+| `page.tsx` | Controllers (route) | `app/(dashboard)/projects/page.tsx` |
 | `layout.tsx` | Layout wrappers | `app/layout.tsx` |
 
 ---
 
 ## Adding a New Feature
 
-Follow this checklist when adding new functionality:
-
-1. **Route**: Add page under `app/(dashboard)/` or `app/api/`
-2. **Components**: Create `components/<feature>/` with `use-<feature>.ts` hook
-3. **API**: Add route handler under `app/api/<resource>/`
-4. **Validation**: Add Zod schema to `lib/validators/` if AI is involved
-5. **Types**: Add shared types to `lib/` or `components/<feature>/types.ts`
+1. **Model**: Define the shape in `src/models/types/<feature>.ts`; add a Zod schema to `src/models/validators/` if AI is involved
+2. **Service**: Write the business logic / data access in `src/services/<domain>/`
+3. **Controller**: Add a route handler under `src/app/api/<resource>/` that calls the service
+4. **View**: Create `src/views/<feature>/` (presentational only)
+5. **Hook**: Create `src/hooks/<feature>/use-<feature>.ts` to wire the View to the Controller via `lib/api/client.ts`
 6. **DB**: Update `schema.sql` if new tables/columns are needed
 7. **i18n**: Add translations to `lib/i18n/dictionaries/en.ts` and `vi.ts`

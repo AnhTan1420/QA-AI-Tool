@@ -141,7 +141,8 @@ npm run dev
 | Version History | Every edit to a test case is tracked and viewable from the case detail page |
 | Comments | Threaded comments on individual test cases |
 | Old-Cases Import (Excel) | Upload an existing `.xlsx` test suite to review it, or feed it to the Generation Agent as reference |
-| RAG Support | Vector embeddings for semantic search and retrieval (DB + `/api/ai/embed` ready, not yet wired into the UI) |
+| RAG Support | Old test cases are auto-embedded on upload and auto-retrieved by semantic similarity during generation (`/api/test-case-imports`, `/api/ai/retrieve`) |
+| Requirement Traceability Matrix | Every requirement clause (AI-identified) is matched against saved test cases and shown as a coverage matrix on the generated-set page |
 | QA Utilities | JSON formatter, Base64, UUID, Regex tester, Hash generator (SHA-1/256), Timestamp converter, Fake File generator, SG NRIC/FIN generator & validator, Lorem Ipsum generator |
 | Team Management | Role-based project access (`qa` / `admin`) with email invitation |
 | Playwright Automation Agent | Generate, run, and maintain Playwright TypeScript automation scripts from any test case — grounded in a real, server-inspected DOM/element map, with screenshot capture and an annotated failure callout on the "Automation" tab |
@@ -400,7 +401,7 @@ AI_MODEL_REVIEW=gemini-3.5-flash-lite
 AI_MODEL_CLASSIFICATION=gemini-3.5-flash-lite
 AI_MODEL_DOCUMENT_EXTRACTION=gemini-3.6-flash    # AI Document Reader (text + vision atomization) — must support multimodal input
 AI_MODEL_FALLBACK=gemini-3.5-flash-lite    # used if a task-specific model isn't set
-AI_MODEL_EMBEDDING=gemini-embedding-001     # used by /api/ai/embed (RAG, not yet wired into UI)
+AI_MODEL_EMBEDDING=gemini-embedding-001     # used by /api/ai/embed, /api/test-case-imports, /api/ai/retrieve (RAG)
 GROQ_MODEL_PRIMARY=llama-3.1-70b-versatile
 GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
 
@@ -507,7 +508,10 @@ R2_BUCKET_NAME=qa-automation-assets
 | `/api/ai/generate` | `POST` | Generate test cases from a requirement description |
 | `/api/ai/enhance` | `POST` | Review (`mode: "review"`) or rewrite (`mode: "enhance"`) a set of test cases |
 | `/api/ai/documents/parse` | `POST` | AI Document Reader — atomize a Figma file, a Markdown/logic-doc/FS (.md/.txt/.pdf/.docx), or an ERD/diagram image into `DocumentAtom`s for the Generation Agent |
-| `/api/ai/embed` | `POST` | Create a vector embedding for RAG (backend ready, not yet called by the UI) |
+| `/api/ai/embed` | `POST` | Create a raw vector embedding for arbitrary content |
+| `/api/test-case-imports` | `POST` | RAG "auto-embed": save an uploaded old-test-case file and embed each case for later semantic retrieval |
+| `/api/ai/retrieve` | `POST` | RAG "retrieve": semantic search for old test cases similar to the current requirement, within a project |
+| `/api/test-case-sets/[setId]/traceability` | `POST` | Match requirement clauses (AI analysis) against a set's saved test cases and persist the Requirement Traceability Matrix |
 | `/api/ai/playwright` | `POST` | Playwright Codegen Agent — generate a `@playwright/test` script grounded in an inspected element map, saved as a new `automation_scripts` version |
 | `/api/automation/inspect` | `POST` | Launch a real browser server-side, navigate + auth, and extract a DOM/element map |
 | `/api/automation/run` | `POST` | Execute a generated (or ad-hoc) Playwright script and capture a screenshot + failure details into `automation_runs`; rate-limited per user |
@@ -635,10 +639,13 @@ WHERE tcs.project_id = 'uuid';
 
 ### Phase 2 — In Progress
 
-- **RAG Pipeline** — Complete flow: upload old test cases → auto-embed → retrieve during generation
-- **Requirement Traceability Matrix** — `requirement_traceability` table exists, needs UI
 - **AI Document Reader** — Reads and parses Figma designs (live via the Figma REST API), Markdown docs, logic documents, Functional Specifications (FS), ERD, and diagrams (PDF/DOCX/image) for smarter test case generation. Each source is "atomized" into `DocumentAtom`s (`lib/validators/document.ts`); the Generation Agent is required to map every atom into a test case's `source_requirement_ids` (PHASE 0.5 of `lib/ai/prompts/generation-agent.ts`), and `/api/ai/generate` cross-checks that mapping server-side (`lib/documents/coverage.ts`) and returns a `document_coverage` score instead of just trusting the model's word. See `components/test-case/generate-workspace/document-reader-panel.tsx` and `app/api/ai/documents/parse/route.ts`.
 - **Can access project environment** — read the UI, auto create test data
+
+### Phase 2.5 — Implemented
+
+- **RAG Pipeline** ✅ — Complete flow: upload old test cases (`.xlsx`) → auto-embed (Gemini Embedding, `services/rag/test-case-rag.ts`) → auto-retrieve similar old cases from any prior upload in the project during generation (`/api/ai/retrieve`), merged with any file uploaded in the current session before being sent to the Generation Agent.
+- **Requirement Traceability Matrix** ✅ — After Save to Library, each requirement clause from the Generation Agent's PHASE 0 analysis (`explicit_rules` + `implicit_rules`) is matched against the saved test cases via a local token-overlap heuristic (`services/requirement-traceability.ts`, no extra AI calls) and persisted to `requirement_traceability`. Viewable on the generated-set detail page (`views/test-case/requirement-traceability-section.tsx`), showing which test case(s) cover each clause and flagging uncovered ones.
 
 ### Phase 3 — Implemented
 

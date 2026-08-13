@@ -61,9 +61,16 @@ create table if not exists test_case_embeddings (
   id uuid primary key default gen_random_uuid(),
   test_case_import_id uuid references test_case_imports(id) on delete cascade,
   content_snippet text,
+  -- Cau truc GeneratedTestCase day du (code/title/category/steps/...) cua chinh
+  -- case duoc embed - luu lai de RAG retrieval (match_test_case_embeddings ben
+  -- duoi) tra thang ve duoc object test case, khong can parse lai content_snippet.
+  raw_case jsonb,
   embedding vector(768),
   created_at timestamptz default now()
 );
+
+-- Idempotent cho DB da chay schema.sql tu truoc khi co cot raw_case.
+alter table test_case_embeddings add column if not exists raw_case jsonb;
 
 create table if not exists test_case_sets (
   id uuid primary key default gen_random_uuid(),
@@ -173,6 +180,48 @@ create index if not exists idx_project_members_user_id on project_members(user_i
 create index if not exists idx_test_case_sets_project_id on test_case_sets(project_id);
 create index if not exists idx_test_cases_set_id on test_cases(set_id);
 create index if not exists idx_test_case_embeddings_vector on test_case_embeddings using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+create index if not exists idx_test_case_imports_project_id on test_case_imports(project_id);
+
+-- ----------------------------------------------------------------------------
+-- RAG retrieval: semantic search over previously-embedded old test cases,
+-- scoped to a single project. Called from services/rag/test-case-rag.ts
+-- (POST /api/ai/retrieve) with the embedding of the current requirement
+-- description as query_embedding. NOT security definer - runs with the
+-- caller's privileges so the existing test_case_embeddings_member_select /
+-- test_case_imports_member_access RLS policies apply exactly as if the join
+-- were run directly by the client; match_project_id only narrows which of the
+-- caller's own projects to search within.
+-- ----------------------------------------------------------------------------
+create or replace function public.match_test_case_embeddings(
+  query_embedding vector(768),
+  match_project_id uuid,
+  match_count int default 5,
+  match_threshold float default 0.5
+)
+returns table (
+  id uuid,
+  test_case_import_id uuid,
+  content_snippet text,
+  raw_case jsonb,
+  similarity float
+)
+language sql
+stable
+as $$
+  select
+    tce.id,
+    tce.test_case_import_id,
+    tce.content_snippet,
+    tce.raw_case,
+    1 - (tce.embedding <=> query_embedding) as similarity
+  from test_case_embeddings tce
+  join test_case_imports tci on tci.id = tce.test_case_import_id
+  where tci.project_id = match_project_id
+    and tce.embedding is not null
+    and 1 - (tce.embedding <=> query_embedding) > match_threshold
+  order by tce.embedding <=> query_embedding
+  limit match_count;
+$$;
 
 alter table profiles enable row level security;
 alter table projects enable row level security;
