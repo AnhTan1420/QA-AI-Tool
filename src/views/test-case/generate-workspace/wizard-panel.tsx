@@ -19,7 +19,7 @@ export function WizardPanel({ workspace }: { workspace: GenerateWorkspaceState }
 
   return (
     <section className={`surface-card space-y-6 overflow-y-auto p-6 ${SCROLLBAR}`}>
-      <div>
+      <div className="sticky -top-6 z-10 -mx-6 -mt-6 rounded-t-[var(--radius-card)] border-b border-ink-100 bg-white px-6 pb-6 pt-6">
         <p className="text-eyebrow">{t.generateWorkspace.wizardEyebrow}</p>
         <h1 className="text-h1 mt-2">{t.generateWorkspace.title}</h1>
         <p className="text-body mt-2">{t.generateWorkspace.subtitle}</p>

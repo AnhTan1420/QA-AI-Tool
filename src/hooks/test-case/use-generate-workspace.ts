@@ -439,10 +439,15 @@ export function useGenerateWorkspace(projectId: string) {
     }
   }
 
-  /** Uploads a document (.md/.txt/.pdf/.docx or a diagram/ERD/UI-mockup image) to
-   * /api/ai/documents/parse, which atomizes it and returns a ParsedDocument. Text
-   * files are read client-side (File.text()); binary files (pdf/docx/images) are
-   * base64-encoded and extracted/analyzed server-side. */
+  /** Uploads a document (.md/.txt/.pdf/.docx, a diagram/ERD/UI-mockup image, or a design
+   * EXPORTED out of Figma via its own "Export" panel — PDF/PNG/JPEG/WebP, since that's
+   * indistinguishable from any other diagram image once exported) to /api/ai/documents/parse,
+   * which atomizes it and returns a ParsedDocument. Text files are read client-side
+   * (File.text()); binary files (pdf/docx/images) are base64-encoded and extracted/analyzed
+   * server-side — for PDFs specifically, the server tries text extraction first and falls
+   * back to Vision automatically if the PDF turns out to be visual-only (see
+   * app/api/ai/documents/parse/route.ts), so this ONE handler covers both a text FS/PDF and
+   * a Figma-exported PDF without the UI needing to ask which kind it is. */
   async function handleDocumentFile(file: File) {
     setIsParsingDocument(true);
     setDocumentError('');
@@ -507,34 +512,6 @@ export function useGenerateWorkspace(projectId: string) {
       setFigmaUrl('');
     } catch (err) {
       setDocumentError(err instanceof Error ? err.message : t.generateWorkspace.errors.figmaImportFailed);
-    } finally {
-      setIsParsingDocument(false);
-    }
-  }
-
-  /** Fallback for when the user has no Figma Personal Access Token / API access: upload
-   * a design EXPORTED out of Figma instead (PDF, PNG, JPEG, WebP — via Figma's own
-   * "Export" panel). This is intentionally routed through the SAME source_type as any
-   * diagram/ERD/UI-mockup image (`diagram_image`), because that's exactly what it is once
-   * exported — Gemini Vision reads it region-by-region, including multi-frame PDFs (Gemini
-   * natively treats PDF pages as images, no separate OCR/conversion step needed). */
-  async function handleFigmaFileImport(file: File) {
-    setIsParsingDocument(true);
-    setDocumentError('');
-    try {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-      const mimeType =
-        file.type || (ext === 'pdf' ? 'application/pdf' : `image/${ext === 'jpg' ? 'jpeg' : ext}`);
-
-      const parsed = await postJson<ParsedDocument>('/api/ai/documents/parse', {
-        source_type: 'diagram_image',
-        file_name: file.name,
-        mime_type: mimeType,
-        data_base64: await fileToBase64(file),
-      }, t.generateWorkspace.errors.requestFailed);
-      setDocuments((current) => [...current, parsed]);
-    } catch (err) {
-      setDocumentError(err instanceof Error ? err.message : t.generateWorkspace.errors.figmaFileImportFailed);
     } finally {
       setIsParsingDocument(false);
     }
@@ -607,7 +584,7 @@ export function useGenerateWorkspace(projectId: string) {
     // AI Document Reader (Figma / Markdown / logic document / FS / ERD / diagram)
     documents, isParsingDocument, documentError, documentCoverage,
     figmaUrl, setFigmaUrl, figmaToken, setFigmaToken,
-    handleDocumentFile, handleFigmaImport, handleFigmaFileImport, removeDocument,
+    handleDocumentFile, handleFigmaImport, removeDocument,
 
     // Generate action + status
     isPending, handleGenerateClick, generatingStep,

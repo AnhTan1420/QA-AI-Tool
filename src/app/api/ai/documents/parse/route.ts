@@ -9,6 +9,39 @@ import { fetchAndParseFigmaFile } from '@/services/documents/figma-client';
 export const maxDuration = 120;
 export const runtime = 'nodejs';
 
+// Nguong so ky tu text-layer toi thieu de coi 1 file PDF la "van ban that su".
+// Duoi nguong nay (bao gom ca chuoi rong khi pdf-parse khong doc duoc gi) - coi
+// nhu PDF chi la anh/vector thuan tuy (vd export tu Figma) va rot xuong doc bang
+// Vision thay vi bao loi "khong trich xuat duoc noi dung".
+const MIN_PDF_TEXT_CHARS = 40;
+
+/** Doc 1 anh/PDF-thuan-hinh qua Gemini Vision va tra ve ParsedDocument, hoac null
+ * neu AI khong tra ve JSON dung schema (nguoi goi tu quyet dinh response loi). */
+async function parseVisualDocument(
+  fileName: string,
+  mimeType: string,
+  base64Data?: string,
+): Promise<ParsedDocument | null> {
+  if (!base64Data) throw new Error('Thiếu dữ liệu file.');
+  const prompt = buildVisualDocumentExtractionPrompt({ fileName });
+  const aiRawResult = await runDocumentVisionAgent(prompt, [{ mimeType, base64Data }]);
+
+  const parsed = documentExtractionResultSchema.safeParse(aiRawResult);
+  if (!parsed.success) {
+    console.error('[ai/documents/parse] Visual extraction schema fail:', parsed.error.flatten());
+    return null;
+  }
+
+  return {
+    id: randomUUID(),
+    source_type: 'diagram_image',
+    title: parsed.data.title,
+    file_name: fileName,
+    summary: parsed.data.summary,
+    atoms: parsed.data.atoms,
+  };
+}
+
 /**
  * AI Document Reader — atomize 1 nguon tai lieu (Figma / Markdown / logic
  * document / Functional Specification / ERD / diagram) thanh ParsedDocument
@@ -44,28 +77,13 @@ export async function POST(req: Request) {
 
     // ── Nhanh 2: anh diagram/ERD/UI mockup — doc qua Gemini Vision ──
     if (input.source_type === 'diagram_image') {
-      const prompt = buildVisualDocumentExtractionPrompt({ fileName: input.file_name });
-      const aiRawResult = await runDocumentVisionAgent(prompt, [
-        { mimeType: input.mime_type, base64Data: input.data_base64 },
-      ]);
-
-      const parsed = documentExtractionResultSchema.safeParse(aiRawResult);
-      if (!parsed.success) {
-        console.error('[ai/documents/parse] Diagram extraction schema fail:', parsed.error.flatten());
+      const parsedDocument = await parseVisualDocument(input.file_name, input.mime_type, input.data_base64);
+      if (!parsedDocument) {
         return NextResponse.json(
           { success: false, error: 'AI không phân tích được ảnh này. Vui lòng thử ảnh rõ nét hơn hoặc thử lại.' },
           { status: 502 },
         );
       }
-
-      const parsedDocument: ParsedDocument = {
-        id: randomUUID(),
-        source_type: 'diagram_image',
-        title: parsed.data.title,
-        file_name: input.file_name,
-        summary: parsed.data.summary,
-        atoms: parsed.data.atoms,
-      };
       return NextResponse.json({ success: true, data: parsedDocument });
     }
 
@@ -74,7 +92,27 @@ export async function POST(req: Request) {
     let rawText: string;
     if (input.file_format === 'pdf') {
       if (!input.data_base64) throw new Error('Thiếu dữ liệu file PDF.');
-      rawText = await extractPdfText(Buffer.from(input.data_base64, 'base64'));
+      // pdf-parse chi doc duoc text layer that su co trong file - mot PDF export
+      // ra tu Figma (hoac bat ky cong cu design nao) thuong la vector/hinh anh
+      // thuan tuy, KHONG co text layer, nen se tra ve chuoi rong hoac gan nhu
+      // rong o day. Coi day la tin hieu de rot xuong nhanh Vision ben duoi thay
+      // vi bao loi ngay - nguoi dung khong can phai biet truoc "PDF cua minh la
+      // van ban hay la thiet ke" va chon dung o upload, MOT o duy nhat xu ly ca hai.
+      try {
+        rawText = await extractPdfText(Buffer.from(input.data_base64, 'base64'));
+      } catch {
+        rawText = '';
+      }
+      if (rawText.trim().length < MIN_PDF_TEXT_CHARS) {
+        const parsedDocument = await parseVisualDocument(input.file_name, 'application/pdf', input.data_base64);
+        if (!parsedDocument) {
+          return NextResponse.json(
+            { success: false, error: 'AI không phân tích được file PDF này (không trích xuất được văn bản, và AI Vision cũng không đọc được như ảnh thiết kế). Vui lòng thử lại.' },
+            { status: 502 },
+          );
+        }
+        return NextResponse.json({ success: true, data: parsedDocument });
+      }
     } else if (input.file_format === 'docx') {
       if (!input.data_base64) throw new Error('Thiếu dữ liệu file DOCX.');
       rawText = await extractDocxText(Buffer.from(input.data_base64, 'base64'));

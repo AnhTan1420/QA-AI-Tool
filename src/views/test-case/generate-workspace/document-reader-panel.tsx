@@ -1,7 +1,6 @@
 'use client';
 
-import { useState } from 'react';
-import { Upload, KeyRound, Eye, EyeOff, Loader2, AlertTriangle } from 'lucide-react';
+import { Upload, AlertTriangle } from 'lucide-react';
 import { SCROLLBAR } from './shared';
 import { StepNumber, FileDropzone, sourceTypeIcon } from './workspace-ui';
 import type { GenerateWorkspaceState } from '@/hooks/test-case/use-generate-workspace';
@@ -23,7 +22,6 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
 export function DocumentReaderPanel({ workspace }: { workspace: GenerateWorkspaceState }) {
   const { t } = workspace;
   const dr = t.generateWorkspace.documentReader;
-  const [showToken, setShowToken] = useState(false);
 
   return (
     <div className="border-t border-ink-100 pt-6">
@@ -43,58 +41,8 @@ export function DocumentReaderPanel({ workspace }: { workspace: GenerateWorkspac
           icon={Upload}
           label={workspace.isParsingDocument ? dr.parsing : dr.chooseFile}
           hint={dr.fileHint}
-        />
-      </div>
-
-      <div className="mt-3 flex flex-col gap-2 rounded-[var(--radius-control)] border border-ink-200 bg-ink-50/60 p-4">
-        <input
-          value={workspace.figmaUrl}
-          onChange={(event) => workspace.setFigmaUrl(event.target.value)}
-          placeholder={dr.figmaUrlPlaceholder}
-          className="field-input !py-2 text-xs"
-        />
-        <div className="relative">
-          <input
-            value={workspace.figmaToken}
-            onChange={(event) => workspace.setFigmaToken(event.target.value)}
-            type={showToken ? 'text' : 'password'}
-            placeholder={dr.figmaTokenPlaceholder}
-            className="field-input !py-2 pr-9 text-xs"
-          />
-          <button
-            type="button"
-            onClick={() => setShowToken((v) => !v)}
-            className="icon-btn absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2"
-            aria-label={showToken ? 'Hide token' : 'Show token'}
-          >
-            {showToken ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-          </button>
-        </div>
-        <button
-          type="button"
-          disabled={workspace.isParsingDocument || !workspace.figmaUrl.trim()}
-          onClick={workspace.handleFigmaImport}
-          className="btn-primary btn-sm w-full !bg-ink-800 hover:!bg-ink-900 focus-visible:!ring-ink-400"
-        >
-          {workspace.isParsingDocument ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
-          {dr.figmaImportButton}
-        </button>
-
-        <div className="flex items-center gap-2 py-0.5">
-          <span className="h-px flex-1 bg-ink-200" />
-          <span className="text-[10px] font-bold uppercase tracking-wide text-ink-400">{dr.figmaFileDivider}</span>
-          <span className="h-px flex-1 bg-ink-200" />
-        </div>
-
-        <FileDropzone
-          accept=".pdf,.png,.jpg,.jpeg,.webp"
-          onFile={workspace.handleFigmaFileImport}
-          icon={Upload}
-          label={workspace.isParsingDocument ? dr.parsing : dr.figmaFileUploadLabel}
           disabled={workspace.isParsingDocument}
-          compact
         />
-        <span className="text-[10px] text-ink-400">{dr.figmaFileHint}</span>
       </div>
 
       {workspace.documentError && (
