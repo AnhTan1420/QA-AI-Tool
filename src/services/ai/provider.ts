@@ -1,10 +1,21 @@
 import { GoogleGenAI } from "@google/genai";
 import { generateWithGemini } from "./gemini";
 import { generateWithGroq } from "./groq";
+import { generateWithCopilot, createEmbeddingWithCopilot } from "./copilot";
 import { generateWithGeminiVision, type VisionImageInput } from "./vision";
 
 export type { VisionImageInput };
 export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction' | 'playwright_codegen';
+
+/**
+ * GitHub Copilot dùng CHUNG 1 cặp model (primary + fallback) cho mọi task,
+ * khác với Gemini vốn có model riêng theo từng task (xem getGeminiModelsForTask).
+ */
+function getCopilotModels(): string[] {
+  return [process.env.AI_MODEL_COPILOT, process.env.AI_MODEL_COPILOT_FALLBACK].filter(
+    (m): m is string => Boolean(m)
+  );
+}
 
 function getGeminiModelsForTask(task: AITask): string[] {
   const primaryByTask: Record<AITask, string | undefined> = {
@@ -41,18 +52,25 @@ export async function runAIAgent(
 ) {
   const systemPrompt = "You are a professional QA Assistant. Return ONLY valid JSON format.";
 
+  // Thứ tự thử: GitHub Copilot -> Gemini -> Groq.
   try {
-    return await generateWithGemini(systemPrompt, fullPrompt, getGeminiModelsForTask(task), responseSchema);
-  } catch (geminiError) {
-    console.warn("⚠️ [Provider] Gemini thất bại. Đang chuyển qua Groq...", geminiError);
+    return await generateWithCopilot(systemPrompt, fullPrompt, getCopilotModels());
+  } catch (copilotError) {
+    console.warn("⚠️ [Provider] Copilot thất bại. Đang chuyển qua Gemini...", copilotError);
 
     try {
-      return await generateWithGroq(systemPrompt, fullPrompt, getGroqModelsForTask());
-    } catch (groqError) {
-      console.error("❌ [Provider] Tất cả AI Model đều thất bại!", groqError);
-      throw new Error(
-        "Hệ thống AI hiện đang quá tải (Vượt quá Rate Limit của cả Gemini lẫn Groq). Vui lòng đợi khoảng 1 phút rồi thử lại."
-      );
+      return await generateWithGemini(systemPrompt, fullPrompt, getGeminiModelsForTask(task), responseSchema);
+    } catch (geminiError) {
+      console.warn("⚠️ [Provider] Gemini thất bại. Đang chuyển qua Groq...", geminiError);
+
+      try {
+        return await generateWithGroq(systemPrompt, fullPrompt, getGroqModelsForTask());
+      } catch (groqError) {
+        console.error("❌ [Provider] Tất cả AI Model đều thất bại!", groqError);
+        throw new Error(
+          "Hệ thống AI hiện đang quá tải (Vượt quá Rate Limit của cả Copilot, Gemini lẫn Groq). Vui lòng đợi khoảng 1 phút rồi thử lại."
+        );
+      }
     }
   }
 }
@@ -74,9 +92,30 @@ export async function runDocumentVisionAgent(fullPrompt: string, images: VisionI
 }
 
 /**
- * Tạo vector embedding (RAG) bằng Gemini Embedding API.
+ * Tạo vector embedding (RAG). Thứ tự thử: GitHub Copilot -> Gemini Embedding API.
+ * Copilot chỉ được thử nếu đã cấu hình đủ GITHUB_COPILOT_TOKEN, GITHUB_COPILOT_BASE_URL
+ * và AI_MODEL_COPILOT_EMBEDDING; nếu chưa cấu hình thì bỏ qua thẳng xuống Gemini
+ * (không tính là fallback do lỗi).
  */
-export async function createEmbedding(content: string) {
+export async function createEmbedding(content: string): Promise<number[]> {
+  const copilotConfigured = Boolean(
+    process.env.GITHUB_COPILOT_TOKEN &&
+    process.env.GITHUB_COPILOT_BASE_URL &&
+    process.env.AI_MODEL_COPILOT_EMBEDDING
+  );
+
+  if (copilotConfigured) {
+    try {
+      return await createEmbeddingWithCopilot(content);
+    } catch (copilotError) {
+      console.warn("⚠️ [Provider] Copilot Embedding thất bại. Đang chuyển qua Gemini...", copilotError);
+    }
+  }
+
+  return createEmbeddingWithGemini(content);
+}
+
+async function createEmbeddingWithGemini(content: string): Promise<number[]> {
   const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error('Thiếu GOOGLE_GEMINI_API_KEY trong biến môi trường server.');
@@ -98,7 +137,7 @@ export async function createEmbedding(content: string) {
       throw new Error("Không nhận được dữ liệu embedding từ Gemini");
     }
 
-    return response.embeddings[0].values;
+    return response.embeddings[0].values as number[];
   } catch (error) {
     console.error("❌ Lỗi tạo Embedding:", error);
     throw error;
