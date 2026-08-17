@@ -174,13 +174,19 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
 
 // ── Auth: cookie injection or best-effort UI login flow ─────────────────────
 
-// Cookie injection accepts two shapes in `cookie_token`, kept backward-compatible:
+// Cookie injection accepts three shapes in `cookie_token`, kept backward-compatible:
 //  1) A plain string -> injected as a single cookie named "session" (legacy behavior,
 //     fine for apps you built yourself that use one session cookie).
 //  2) A JSON array string, e.g. copied straight from DevTools -> Application -> Cookies:
 //     '[{"name":"SID","value":"..."},{"name":"HSID","value":"..."},...]'
 //     -> every entry is injected as-is. Needed for providers like Google/YouTube that
 //     authenticate via several cookies at once rather than a single session cookie.
+//  3) A "Cookie header" style string, e.g. pasted straight from `document.cookie` or a
+//     DevTools Network request header: 'name1=value1; name2=value2; name3=value3'
+//     -> split on '; ' into individual cookies. Without this, the whole string (which
+//     contains ';' and whitespace - invalid characters inside a single cookie value)
+//     got shoved into one cookie's value, which Chrome's CDP layer rejects with
+//     "Protocol error (Storage.setCookies): Invalid cookie fields".
 type RawCookieEntry = { name: string; value: string; domain?: string; path?: string };
 
 function parseCookieToken(token: string): RawCookieEntry[] | null {
@@ -188,7 +194,7 @@ function parseCookieToken(token: string): RawCookieEntry[] | null {
   try {
     parsed = JSON.parse(token);
   } catch {
-    return null; // not JSON -> treat as legacy single-value token
+    return null; // not JSON -> maybe cookie-header string, or legacy single-value token
   }
   if (!Array.isArray(parsed) || parsed.length === 0) return null;
   const entries: RawCookieEntry[] = [];
@@ -206,11 +212,34 @@ function parseCookieToken(token: string): RawCookieEntry[] | null {
   return entries;
 }
 
+// Only triggers on an actual 'name=value; name2=value2' header string (requires a
+// semicolon separator), so it never misfires on a legacy single opaque token - even
+// one that happens to contain '=' (e.g. base64/JWT padding).
+function parseCookieHeaderString(token: string): RawCookieEntry[] | null {
+  if (!token.includes(';') || !token.includes('=')) return null;
+  const parts = token
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const entries: RawCookieEntry[] = [];
+  for (const part of parts) {
+    const eqIdx = part.indexOf('=');
+    if (eqIdx <= 0) return null; // malformed segment -> not this format, bail out
+    const name = part.slice(0, eqIdx).trim();
+    const value = part.slice(eqIdx + 1).trim();
+    if (!name || /[\s;]/.test(name)) return null;
+    entries.push({ name, value });
+  }
+  return entries;
+}
+
 async function injectCookieIfPresent(context: any, env: EnvironmentConfig) {
   if (!env.cookie_token) return;
   const url = new URL(env.target_url);
   const isHttps = url.protocol === 'https:';
-  const multiCookies = parseCookieToken(env.cookie_token);
+  const multiCookies = parseCookieToken(env.cookie_token) ?? parseCookieHeaderString(env.cookie_token);
 
   // __Secure-/__Host- prefixed cookies (Google auth SID/HSID and friends, among
   // others) REQUIRE the Secure attribute by spec, and are commonly rejected by
@@ -607,6 +636,12 @@ async function runInspectionStep(page: any, step: InspectionStep): Promise<strin
       await locator.first().press('Enter', { timeout: 10000 });
     }
     await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+    // Same rationale as the initial-page wait above: an action (e.g. submitting "New
+    // project") often kicks off a client-side create + refetch that hasn't rendered yet
+    // by the time 'domcontentloaded' resolves. Give it a bounded chance to settle before
+    // the caller snapshots this step's page, so the just-created element has a chance to
+    // actually be in the DOM.
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
     return null;
   } catch (err: any) {
     return `Bước "${step.label}" thất bại (${String(err?.message ?? err)}) - trang có thể đã đổi hoặc phần tử không còn đúng như kỳ vọng. Bỏ qua và giữ nguyên element map đã có tới thời điểm này.`;
@@ -682,6 +717,7 @@ async function crawlSite(
     try {
       await assertPublicUrl(url); // same-origin doesn't imply safe - re-check every hop
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {}); // let client-side data land before snapshotting, see note above
     } catch (err: any) {
       warnings.push(`Crawl: không thể mở "${url}" (${String(err?.message ?? err)}) - bỏ qua.`);
       continue;
@@ -735,6 +771,15 @@ export async function inspectEnvironment(
     // then for each inspection step drive the browser forward and re-snapshot. Elements
     // are tagged with page_url/page_label (see extractElementMap) so the codegen prompt
     // can tell which page each selector belongs to instead of assuming a single page.
+    // Bounded settle-wait before the FIRST snapshot too: 'domcontentloaded' (used for the
+    // goto above) fires once the HTML/JS has parsed, but SPA pages (Next.js/Supabase, etc.)
+    // typically fetch their real data (project list, dashboard cards, ...) client-side
+    // AFTER that event and re-render moments later. Without this, extractElementMap() runs
+    // against the pre-fetch DOM and silently misses any element that only exists once that
+    // fetch resolves (e.g. project cards) - not "hidden", just not created yet. Bounded
+    // real wait condition, not the banned waitForTimeout pattern; best-effort on timeout.
+    await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
+
     let element_map: ElementMap = await extractElementMap(page, 'Initial page (target_url)');
     const page_title = await page.title();
     const visitedUrls = new Set<string>([normalizeUrlForDedupe(page.url())]);

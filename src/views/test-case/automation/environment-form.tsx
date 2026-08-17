@@ -125,7 +125,7 @@ export function EnvironmentForm({ automation }: { automation: ReturnType<typeof 
             <textarea
               value={automation.cookieToken}
               onChange={(ev) => automation.setCookieToken(ev.target.value)}
-              placeholder='Paste cookie value OR JSON array: [{"name":"session","value":"abc..."}]'
+              placeholder='Paste cookie value, "name=value; name2=value2" header string, OR JSON array: [{"name":"session","value":"abc..."}]'
               rows={4}
               className="field-input font-mono text-xs !py-2"
             />
@@ -161,7 +161,9 @@ copy(JSON.stringify(document.cookie.split('; ').map(c => {
                   </li>
                 </ol>
                 <p className="text-[11px] text-ink-400">
-                  Supported formats: plain value (injected as &quot;session&quot; cookie), or JSON array
+                  Supported formats: plain value (injected as &quot;session&quot; cookie), a
+                  <code className="mx-1 rounded bg-ink-100 px-1">name=value; name2=value2</code>
+                  header string, or JSON array
                   <code className="mx-1 rounded bg-ink-100 px-1">[&#123;&quot;name&quot;:&quot;SID&quot;,&quot;value&quot;:&quot;...&quot;&#125;]</code>
                 </p>
               </div>

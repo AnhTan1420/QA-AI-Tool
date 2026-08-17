@@ -13,7 +13,6 @@ Built by **Jordan Le** (Le Van Anh Tan)
 
 ## Table of Contents
 
-- [System Overview](#system-overview)
 - [Quick Start](#quick-start)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
@@ -27,68 +26,6 @@ Built by **Jordan Le** (Le Van Anh Tan)
 - [License](#license)
 
 ---
-## System Overview
-
-```mermaid
-flowchart TD
-    subgraph Setup["1. Setup & Auth"]
-        A1[Sign up / Login] --> A2[Create Project]
-        A2 --> A3[Invite Team Members]
-    end
-
-    subgraph Input["2. Input"]
-        B1[Requirement Description] --> C1
-        B2[AI Document Reader<br/>Figma / MD / PDF / Image] --> C1
-        B3[Old Test Cases .xlsx] --> C1
-    end
-
-    subgraph Generate["3. AI Generation"]
-        C1[Generation Agent<br/>Gemini / Groq] --> C2[Zod Validation]
-        C2 --> C3[Document Coverage Check]
-    end
-
-    subgraph Review["4. Review & Enhance (Optional)"]
-        C3 --> D1{Review?}
-        D1 -->|Yes| D2[Review Agent<br/>Independent scoring]
-        D2 --> D3[Enhance Agent<br/>Rewrite based on review]
-        D3 --> E1
-        D1 -->|No| E1
-    end
-
-    subgraph Save["5. Persist"]
-        E1[Save to Library] --> E2[Test Case Library]
-    end
-
-    subgraph Manage["6. Manage & Export"]
-        E2 --> F1[Browse / Search / Paginate]
-        E2 --> F2[Version History]
-        E2 --> F3[Comments]
-        E2 --> F4[Export .xlsx]
-    end
-
-    subgraph Automate["7. Playwright Automation"]
-        E2 --> H1[Single case: Automation tab<br/>Inspect → Generate → Run]
-        E2 --> H2[Batch: select N cases<br/>Run Automation modal]
-        H2 --> H3[process-next loop<br/>driven by open browser tab]
-        H1 --> H4[(R2 / Supabase Storage<br/>screenshots + scripts)]
-        H3 --> H4
-    end
-
-    subgraph Toolkit["8. QA Utility Toolkit"]
-        G1[JSON Formatter]
-        G2[Base64 / UUID / Regex]
-        G3[Hash / Timestamp]
-        G4[Fake File / NRIC / Lorem]
-    end
-
-    Setup --> Input
-    Input --> Generate
-    Generate --> Review
-    Review --> Save
-    Save --> Manage
-    Manage -.-> Automate
-    Manage -.-> Toolkit
-```
 
 ## Quick Start
 
