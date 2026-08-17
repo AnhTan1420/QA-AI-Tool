@@ -1,6 +1,6 @@
 'use client';
 
-import { PlayCircle, ShieldCheck, Loader2, CircleCheck, CircleX, ZoomIn, Download } from 'lucide-react';
+import { PlayCircle, ShieldCheck, Loader2, CircleCheck, CircleX, ZoomIn, Download, Wrench } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/language-context';
 import type { useAutomation } from '@/hooks/test-case/use-automation';
 
@@ -22,8 +22,9 @@ export function RunResultPanel({ automation }: { automation: ReturnType<typeof u
   const hasScript = !!automation.script;
   const isApproved = automation.script?.status === 'approved';
   const isPendingReview = hasScript && !isApproved;
-  const isBusy = automation.running || automation.approving;
+  const isBusy = automation.running || automation.approving || automation.healing;
   const canAct = hasScript && !!automation.targetUrl && !isBusy;
+  const canHeal = canAct && !automation.inspecting && !!automation.runResult?.failure_details;
 
   return (
     <div className="surface-card space-y-4 p-6">
@@ -80,8 +81,24 @@ export function RunResultPanel({ automation }: { automation: ReturnType<typeof u
           </div>
 
           {automation.runResult.failure_details && (
-            <div className="space-y-1 rounded-[var(--radius-control)] border border-danger-600/20 bg-danger-50 p-3">
-              <p className="text-xs font-bold text-danger-600">{r.failureDetailsHeading}</p>
+            <div className="space-y-2 rounded-[var(--radius-control)] border border-danger-600/20 bg-danger-50 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="text-xs font-bold text-danger-600">{r.failureDetailsHeading}</p>
+                <button
+                  type="button"
+                  onClick={automation.healAndRetry}
+                  disabled={!canHeal}
+                  title={r.healHint}
+                  className="btn-secondary btn-sm !h-7 shrink-0 !px-2.5 !text-xs disabled:opacity-60"
+                >
+                  {automation.healing ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Wrench className="h-3.5 w-3.5" />
+                  )}
+                  {automation.healing ? r.healing : r.healButton}
+                </button>
+              </div>
               {automation.runResult.failure_details.selector && (
                 <p className="text-xs text-danger-600/90">
                   <span className="font-semibold">{r.selectorLabel}:</span> {automation.runResult.failure_details.selector}
@@ -90,6 +107,7 @@ export function RunResultPanel({ automation }: { automation: ReturnType<typeof u
               <p className="text-xs text-danger-600/90">
                 <span className="font-semibold">{r.errorLabel}:</span> {automation.runResult.failure_details.error_message}
               </p>
+              {automation.healError && <p className="alert-danger !p-2 !text-xs">{automation.healError}</p>}
             </div>
           )}
 

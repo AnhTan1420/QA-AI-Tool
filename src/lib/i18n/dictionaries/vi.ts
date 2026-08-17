@@ -353,6 +353,9 @@ const vi = {
       selectorLabel: 'Selector',
       errorLabel: 'Thông báo lỗi',
       screenshotHeading: 'Screenshot',
+      healButton: 'Heal & Retry',
+      healing: 'Đang heal...',
+      healHint: 'Inspect lại trang, nhờ AI sửa tối thiểu đúng lỗi vừa fail, rồi chạy lại.',
     },
     history: {
       scriptsHeading: 'Lịch sử code đã sinh',

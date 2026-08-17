@@ -10,6 +10,7 @@ import {
   runRequestSchema,
   playwrightScriptSchema,
   pageObjectSchema,
+  playwrightHealRequestSchema,
 } from '@/models/validators/playwright';
 
 describe('environmentConfigSchema', () => {
@@ -124,6 +125,75 @@ describe('pageObjectSchema / playwrightScriptSchema', () => {
 
   it('rejects a script missing the required "code" field', () => {
     const result = playwrightScriptSchema.safeParse({ page_objects: [] });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('playwrightHealRequestSchema', () => {
+  const baseHealRequest = {
+    test_case_id: '00000000-0000-0000-0000-000000000001',
+    test_case: {
+      title: 'Existing customer can log in',
+      steps: [{ step_number: 1, action: 'Click Sign in', expected_result: 'Login form appears' }],
+      expected_result: 'Dashboard is shown',
+    },
+    element_map: [
+      {
+        role: 'button',
+        tag: 'button',
+        selector: "getByRole('button', { name: 'Sign in' })",
+        selector_strategy: 'role_name' as const,
+        accessible_name: 'Sign in',
+      },
+    ],
+    environment: { browser: 'chromium' as const, target_url: 'https://example.com', auth_mode: 'none' as const },
+    previous_code: 'test("Existing customer can log in", async ({ page }) => {});',
+    previous_page_objects: [],
+    failure: { error_message: 'locator not found: getByRole(\'button\', { name: \'Sign in\' })' },
+  };
+
+  it('accepts a well-formed heal request, defaulting "language"', () => {
+    const result = playwrightHealRequestSchema.safeParse(baseHealRequest);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.language).toBe('Tiếng Việt');
+      expect(result.data.previous_page_objects).toEqual([]);
+    }
+  });
+
+  it('accepts a failure with step/selector/expected/actual all populated', () => {
+    const result = playwrightHealRequestSchema.safeParse({
+      ...baseHealRequest,
+      failure: {
+        step: 'Step 1: Click Sign in',
+        error_message: 'Timed out waiting for element',
+        selector: "getByRole('button', { name: 'Sign in' })",
+        expected: 'visible',
+        actual: 'not found',
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a heal request with an empty element_map (must be a FRESH re-inspection)', () => {
+    const result = playwrightHealRequestSchema.safeParse({ ...baseHealRequest, element_map: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a heal request missing "previous_code"', () => {
+    const { previous_code: _drop, ...withoutPreviousCode } = baseHealRequest;
+    const result = playwrightHealRequestSchema.safeParse(withoutPreviousCode);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects a heal request missing "failure"', () => {
+    const { failure: _drop, ...withoutFailure } = baseHealRequest;
+    const result = playwrightHealRequestSchema.safeParse(withoutFailure);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects an invalid test_case_id (must be a UUID)', () => {
+    const result = playwrightHealRequestSchema.safeParse({ ...baseHealRequest, test_case_id: 'not-a-uuid' });
     expect(result.success).toBe(false);
   });
 });

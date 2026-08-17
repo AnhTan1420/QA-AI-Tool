@@ -217,6 +217,27 @@ export const failureDetailsSchema = z.object({
 });
 export type FailureDetails = z.infer<typeof failureDetailsSchema>;
 
+// ── /api/ai/playwright/heal request (self-heal a failed run) ────────────────
+// "Playwright Test Healer" (Phase 4.5 roadmap item — see docs/e2e-agents.md's
+// qa-healer for the same idea applied to this repo's OWN test suite; this is the
+// product-facing equivalent for the scripts QAJD generates on behalf of its users).
+// Re-generates ONLY the minimal fix needed to make a previously-failed script pass
+// again, grounded in a FRESH element map re-inspected just before healing — the
+// DOM having drifted since the script was originally generated is the most common
+// real cause of a selector that used to work suddenly failing. See the "HEAL MODE"
+// section this feeds into in lib/ai/prompts/playwright-agent.ts.
+export const playwrightHealRequestSchema = z.object({
+  test_case_id: z.string().uuid(),
+  test_case: playwrightCodegenRequestSchema.shape.test_case,
+  element_map: elementMapSchema.min(1, 'Cần Inspect lại (fresh) trước khi heal.'),
+  environment: environmentPublicSchema,
+  language: z.string().min(2).default('Tiếng Việt'),
+  previous_code: z.string().min(1),
+  previous_page_objects: z.array(pageObjectSchema).default([]),
+  failure: failureDetailsSchema,
+});
+export type PlaywrightHealRequest = z.infer<typeof playwrightHealRequestSchema>;
+
 export const automationRunStatusSchema = z.enum(['passed', 'failed', 'error']);
 
 export const automationRunResultSchema = z.object({

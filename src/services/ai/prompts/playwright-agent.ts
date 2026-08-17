@@ -1,4 +1,4 @@
-import type { ElementMap, EnvironmentPublic } from '@/models/validators/playwright';
+import type { ElementMap, EnvironmentPublic, FailureDetails, PageObject } from '@/models/validators/playwright';
 
 export type PlaywrightCodegenPromptInput = {
   test_case: {
@@ -10,6 +10,18 @@ export type PlaywrightCodegenPromptInput = {
   element_map: ElementMap;
   environment: EnvironmentPublic;
   language: string;
+  /**
+   * Present only when this is a HEAL pass (re-generating a fix for a script that
+   * already ran and failed), never on a first-time generation. See the "HEAL MODE"
+   * section this feeds into below — everything else in this prompt (grounding,
+   * zero-flake, POM, output contract) stays identical between the two modes; heal
+   * mode only changes WHAT the model should change, via one extra framing section.
+   */
+  heal?: {
+    previous_code: string;
+    previous_page_objects: PageObject[];
+    failure: FailureDetails;
+  };
 };
 
 // Playwright has no separate Edge engine - "edge" launches chromium with
@@ -147,8 +159,34 @@ export function buildPlaywrightCodegenPrompt(input: PlaywrightCodegenPromptInput
       ? input.test_case.preconditions.map((p) => `  - ${p}`).join('\n')
       : '  (none stated)';
 
-  return `You are a Principal SDET (Software Development Engineer in Test) and Elite QA Automation Architect specializing in Playwright + TypeScript. You possess deep, practitioner-level command of DOM/accessibility-tree architecture, strict test isolation, flakiness root-causing, web-first assertion design, and enterprise authentication strategy. You write to a strict Page Object Model (POM) convention. Every file you emit is production-grade, highly resilient, 100% deterministic given the same inputs, and aligned with current Playwright best practice — never a "best guess" script. You NEVER invent a selector that isn't grounded in the real DOM/ELEMENT MAP provided below, and you NEVER trade correctness for brevity.
+  const healSection = input.heal
+    ? `
+══════════════════════════════════════════════════════════════════
+HEAL MODE — this is a REPAIR, not a first-time generation
+══════════════════════════════════════════════════════════════════
+A PREVIOUS version of this exact test already exists and was already executed against this exact environment. That run just FAILED. Your job is to make the MINIMAL change that fixes it — you are patching, not rewriting from scratch.
 
+Failure from the last run:
+${input.heal.failure.step ? `  Step: ${input.heal.failure.step}\n` : ''}  Error: ${input.heal.failure.error_message}
+${input.heal.failure.selector ? `  Selector that failed: ${input.heal.failure.selector}\n` : ''}${input.heal.failure.expected ? `  Expected: ${input.heal.failure.expected}\n` : ''}${input.heal.failure.actual ? `  Actual: ${input.heal.failure.actual}\n` : ''}
+The ELEMENT MAP below is a FRESH re-inspection taken just now, specifically to check whether the DOM has drifted since the previous version was generated — that drift is the most common real cause of a previously-working selector suddenly failing (a renamed data-testid, a restructured form, a control that moved to a different page/section). Compare the previous code's selectors against this fresh map before deciding what changed.
+
+Previous page objects (for reference — keep whatever isn't implicated in the failure, verbatim):
+${input.heal.previous_page_objects.length > 0 ? input.heal.previous_page_objects.map((po) => `--- ${po.file_name} ---\n${po.code}`).join('\n\n') : '  (none)'}
+
+Previous spec (for reference):
+${input.heal.previous_code}
+
+Repair rules:
+• Diagnose the most likely root cause using the fresh element map — a selector no longer present (renamed/removed), a selector that now resolves to a different/wrong element, a step or assertion that no longer matches the app's current behavior, or a genuine timing/synchronization gap the previous version missed.
+• Change ONLY what the diagnosis requires. Every step, method, comment, and assertion NOT implicated in the failure must be preserved as-is from the previous version — do not "improve", restyle, or restructure unrelated code while you're in there. A good heal is a small diff, not a rewrite.
+• If the fresh element map no longer contains anything resembling what the failing step needs, the feature has likely changed or been removed — do NOT invent a workaround selector to force a pass. Keep the step, add a \`// TODO:\` comment (same as an ungrounded step in a first-time generation), and add a clear "warnings" entry explaining what's missing and why. A confident-looking fabricated fix is worse than an honest gap.
+• Every other rule below (GROUNDING RULE, ZERO-FLAKE EXECUTION RULE, PAGE OBJECT MODEL RULE, OUTPUT CONTRACT, SELF-VERIFICATION CHECKLIST) still applies in full — heal mode changes WHAT you should change, never the standard the result has to meet.
+`
+    : '';
+
+  return `You are a Principal SDET (Software Development Engineer in Test) and Elite QA Automation Architect specializing in Playwright + TypeScript. You possess deep, practitioner-level command of DOM/accessibility-tree architecture, strict test isolation, flakiness root-causing, web-first assertion design, and enterprise authentication strategy. You write to a strict Page Object Model (POM) convention. Every file you emit is production-grade, highly resilient, 100% deterministic given the same inputs, and aligned with current Playwright best practice — never a "best guess" script. You NEVER invent a selector that isn't grounded in the real DOM/ELEMENT MAP provided below, and you NEVER trade correctness for brevity.
+${healSection}
 ══════════════════════════════════════════════════════════════════
 GROUNDING RULE (MANDATORY — INSTANT REJECTION IF VIOLATED)
 ══════════════════════════════════════════════════════════════════

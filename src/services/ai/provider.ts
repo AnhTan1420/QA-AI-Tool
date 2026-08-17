@@ -5,7 +5,7 @@ import { generateWithCopilot, createEmbeddingWithCopilot } from "./copilot";
 import { generateWithGeminiVision, type VisionImageInput } from "./vision";
 
 export type { VisionImageInput };
-export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction' | 'playwright_codegen';
+export type AITask = 'generation' | 'review' | 'classification' | 'document_extraction' | 'playwright_codegen' | 'playwright_heal';
 
 /**
  * GitHub Copilot dùng CHUNG 1 cặp model (primary + fallback) cho mọi task,
@@ -26,6 +26,11 @@ function getGeminiModelsForTask(task: AITask): string[] {
     // Playwright Automation Agent (Phase 3 roadmap item) - dedicated model, falls back
     // to AI_MODEL_FALLBACK -> Groq like every other task. Never hardcode a model id here.
     playwright_codegen: process.env.AI_MODEL_PLAYWRIGHT_CODEGEN,
+    // Heal (Phase 4.5) - same prompt builder, one extra framing section (see
+    // playwright-agent.ts's HEAL MODE) - cascades to AI_MODEL_PLAYWRIGHT_CODEGEN first
+    // (a heal is still fundamentally a codegen call) so this works with zero extra
+    // config, then AI_MODEL_FALLBACK like everything else if neither is set.
+    playwright_heal: process.env.AI_MODEL_PLAYWRIGHT_HEAL ?? process.env.AI_MODEL_PLAYWRIGHT_CODEGEN,
   };
   const primary = primaryByTask[task];
   const fallback = process.env.AI_MODEL_FALLBACK;

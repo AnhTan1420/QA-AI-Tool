@@ -127,6 +127,8 @@ npm run dev
 | Requirement Traceability Matrix | Every AI-identified requirement clause matched against saved test cases, shown as a coverage matrix |
 | AI Document Reader | Atomizes Figma designs, MD/PDF/DOCX docs, or ERD/diagram images into elements the Generation Agent must map into test cases |
 | Playwright Automation Agent | Generates, runs, and versions real `@playwright/test` scripts grounded in a server-inspected DOM/element map — single-case or batch |
+| Playwright Test Healer | One-click "Heal & Retry" on a failed run — re-inspects the target for DOM drift, asks AI for the minimal fix grounded in the fresh map, saves a new (still review-gated) version, then re-runs |
+| Agent-Driven E2E Suite | `qa-planner` / `qa-generator` / `qa-healer` Claude Code subagents plan, write, and self-heal a committed Playwright suite (`tests/`) for this app itself — see [docs/e2e-agents.md](docs/e2e-agents.md) |
 | Project Environments | Reusable, non-secret automation targets (browser + URL + auth mode) per project |
 | Screenshot & Script Storage | Cloudflare R2 with automatic Supabase Storage fallback; signed URLs always re-derived fresh |
 | QA Utility Toolkit | JSON formatter, Base64, UUID, Regex tester, Hash (SHA-1/256), Timestamp converter, Fake File generator, SG NRIC/FIN generator & validator, Lorem Ipsum |
@@ -145,6 +147,7 @@ Database:     Supabase PostgreSQL + pgvector
 Auth:         Supabase Auth (Email/Password + Google OAuth)
 AI/LLM:       GitHub Copilot (proxy) → Google Gemini (@google/genai) → Groq (groq-sdk), automatic fallback
 Automation:   Playwright (playwright-core + @sparticuz/chromium on serverless, full `playwright` self-hosted)
+E2E Suite:    @playwright/test (tests/) — authored by qa-planner/qa-generator/qa-healer Claude Code subagents, see docs/e2e-agents.md
 Storage:      Cloudflare R2 (S3-compatible, @aws-sdk/client-s3), Supabase Storage as fallback
 Validation:   Zod (all AI I/O and automation config)
 Testing:      Vitest
@@ -236,6 +239,7 @@ test_cases (1:N) ──► automation_runs (pass/fail history, screenshot_url)
 3. **Generate** (`/api/ai/playwright`) — Playwright Codegen Agent writes a `@playwright/test` file grounded in that map, saved as a new `automation_scripts` version.
 4. **Run** (`/api/automation/run`) — executes the script; pass stores a screenshot, fail highlights the failing element with structured details. Rate-limited per user.
 5. Screenshots/scripts upload to R2 (fallback: Supabase Storage); signed URLs are always re-derived fresh.
+6. On a failed run, **Heal & Retry** (`/api/ai/playwright/heal`) — re-inspects the target for a fresh element map, asks the Codegen Agent for the *minimal* fix grounded in the exact failure (never a rewrite), saves it as a new version (still `pending_review` — heal never skips the Review Gate), then approves + re-runs in the same click.
 
 ### Batch Automation
 1. Select test cases in the library → **Run Automation** → pick a saved environment.
@@ -244,6 +248,11 @@ test_cases (1:N) ──► automation_runs (pass/fail history, screenshot_url)
 4. The **Batch Progress Panel** polls and shows live per-item status.
 5. Closing the tab pauses the batch (nothing left mid-item); reopening and resuming continues the queue. Deliberate design for Vercel Hobby's 60s `maxDuration` / no background workers.
 6. Credentials are entered once, held only in browser memory, resent with every `process-next` call, never persisted.
+
+### Agent-Driven E2E Suite (this app's own regression tests)
+1. `qa-planner` explores a running instance with `playwright-cli` → writes `specs/<name>.md`.
+2. `qa-generator` turns each scenario in that plan into a self-contained `tests/**/*.spec.ts` file (no Page Object Model — deliberately different style from Single-Case/Batch Automation above, see [docs/e2e-agents.md](docs/e2e-agents.md)).
+3. `npx playwright test` (or `qa-healer`) runs the suite; the healer iterates on failures until green, or marks `test.fixme()` with a comment if a failure looks like a real app bug.
 
 ---
 
@@ -365,6 +374,7 @@ curl -X POST http://localhost:3000/api/automation/batch-run \
 - **Phase 2.5 (done)** — RAG pipeline (auto-embed on upload, auto-retrieve during generation); Requirement Traceability Matrix.
 - **Phase 3 (done)** — Single-case Playwright automation (Inspect → Generate → Run), versioned scripts and run history.
 - **Phase 4 (done)** — Batch automation with resumable tab-driven queue; Project Environments; Cloudflare R2 storage; per-user automation rate limiting.
+- **Phase 4.5 (done)** — Agent-driven E2E suite for this app itself (`qa-planner` / `qa-generator` / `qa-healer` Claude Code subagents, `tests/`, `playwright.config.ts`) — see [docs/e2e-agents.md](docs/e2e-agents.md); Playwright Test Healer for the in-app Automation Agent (`/api/ai/playwright/heal`, "Heal & Retry" on a failed run).
 - **Phase 5 (not started)** — Durable global rate limiting (Redis/Upstash-backed, current limiter is in-memory per instance); background worker for batches (removes the "tab must stay open" constraint, needs a paid tier or queue service).
 
 ---

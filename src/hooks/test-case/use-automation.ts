@@ -389,8 +389,14 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
       setElementMap(json.data.element_map);
       setPageTitle(json.data.page_title);
       setInspectWarnings(json.data.warnings ?? []);
+      // Returned directly (not just set into state) so callers that need the fresh
+      // map right away — e.g. healAndRetry(), which re-inspects then immediately
+      // builds a heal request — don't have to work around React's async state
+      // update/stale-closure timing to get at it.
+      return json.data.element_map as InspectedElement[];
     } catch (err) {
       setInspectError(err instanceof Error ? err.message : 'Inspect failed');
+      return null;
     } finally {
       setInspecting(false);
     }
@@ -486,6 +492,73 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     }
   }
 
+  // ── Heal & Retry ("Playwright Test Healer", Phase 4.5) ──────────────────────
+  const [healing, setHealing] = useState(false);
+  const [healError, setHealError] = useState('');
+
+  /**
+   * One-click self-heal for the CURRENT run result: re-inspects the target (fresh
+   * element map — the DOM may have drifted since `script` was generated, the most
+   * common real cause of a heal being needed), asks the AI to make the minimal fix
+   * for exactly the failure that was just observed (/api/ai/playwright/heal), saves
+   * it as a new script version (still 'pending_review' — heal never bypasses the
+   * Review Gate), then approves + runs it immediately — same one-click precedent as
+   * approveAndRun(). Mirrors the qa-healer subagent's loop (run → diagnose → fix →
+   * re-run) but for a script generated on behalf of a QAJD end user, not this repo's
+   * own tests — see docs/e2e-agents.md.
+   */
+  async function healAndRetry() {
+    if (!script || !runResult?.failure_details) return;
+    setHealing(true);
+    setHealError('');
+    try {
+      const freshMap = await inspect();
+      if (!freshMap || freshMap.length === 0) {
+        throw new Error(inspectError || 'Không inspect lại được trang để lấy element map mới cho việc heal.');
+      }
+
+      const res = await fetch('/api/ai/playwright/heal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          test_case_id: testCaseId,
+          test_case: testCase,
+          element_map: freshMap,
+          environment: { browser, target_url: targetUrl, auth_mode: authMode },
+          language: locale === 'vi' ? 'Tiếng Việt' : 'English',
+          previous_code: script.code,
+          previous_page_objects: script.page_objects,
+          failure: runResult.failure_details,
+        }),
+      });
+      const json = await parseJsonResponse(res);
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Heal failed');
+
+      const healed: PlaywrightScript = { ...json.data, status: 'pending_review' };
+      setScript(healed);
+      bumpHistoryRefresh();
+
+      // Approve + run in the same click, same closure-safety reasoning as
+      // approveAndRun() above (setScript's update may not have flushed into a
+      // `script` read yet, so build the post-approval object explicitly instead).
+      if (healed.script_id) {
+        const approveRes = await fetch(`/api/test-cases/${testCaseId}/automation/scripts/${healed.script_id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'approve' }),
+        });
+        const approveJson = await parseJsonResponse(approveRes);
+        if (!approveRes.ok || !approveJson.success) throw new Error(approveJson.error ?? 'Approve failed');
+        setScript((current) => (current?.script_id === healed.script_id ? { ...current, status: 'approved' } : current));
+      }
+      await runTestWith({ ...healed, status: 'approved' });
+    } catch (err) {
+      setHealError(err instanceof Error ? err.message : 'Heal failed');
+    } finally {
+      setHealing(false);
+    }
+  }
+
   return {
     scriptLoaded,
     historyRefreshKey,
@@ -546,5 +619,9 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     runError,
     runResult,
     runTest,
+    // Heal & Retry
+    healing,
+    healError,
+    healAndRetry,
   };
 }

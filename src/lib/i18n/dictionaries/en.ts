@@ -355,6 +355,9 @@ const en: Dictionary = {
       selectorLabel: 'Selector',
       errorLabel: 'Error message',
       screenshotHeading: 'Screenshot',
+      healButton: 'Heal & Retry',
+      healing: 'Healing...',
+      healHint: 'Re-inspects the page, asks AI to make the minimal fix for this exact failure, then re-runs.',
     },
     history: {
       scriptsHeading: 'Generated Code History',
