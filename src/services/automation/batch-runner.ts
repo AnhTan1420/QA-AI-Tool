@@ -99,7 +99,9 @@ export async function processClaimedBatchItem(
 
     let elementMap;
     try {
-      const inspected = await inspectEnvironment(environment, [], undefined);
+      // Same default as the interactive Inspect flow (use-automation.ts) - see
+      // autoExpandTriggers() in browser-runner.ts for why this is safe to default on.
+      const inspected = await inspectEnvironment(environment, [], undefined, { enabled: true, max_triggers: 5 });
       elementMap = inspected.element_map;
     } catch (err: any) {
       return { item_status: 'error', run_id: null, generate_error: `Inspect thất bại: ${String(err?.message ?? err)}` };
