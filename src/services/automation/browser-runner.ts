@@ -703,6 +703,17 @@ async function autoExpandTriggers(
     })
     .slice(0, options.max_triggers);
 
+  // Always-emitted, unconditional on outcome: without this, "no candidate matched the
+  // allowlist" and "auto_expand wasn't even enabled" look identical from the outside -
+  // both just produce zero new elements with zero explanation. This line alone answers
+  // "did auto-expand even try anything, and on what" every time it runs.
+  const buttonLikeTotal = baseMap.filter((el) => el.is_visible && el.tag !== 'a' && (el.role === 'button' || el.role === 'link')).length;
+  warnings.push(
+    candidates.length > 0
+      ? `Auto-expand: sẽ thử click ${candidates.length}/${buttonLikeTotal} button/link khớp allowlist: ${candidates.map((c) => `"${c.accessible_name}"`).join(', ')}.`
+      : `Auto-expand: 0/${buttonLikeTotal} button/link trong element_map khớp allowlist ("new/create/add/+/tạo/thêm/mới/..."), không có gì để thử click. Nếu nút mở form của bạn có tên khác, cho mình biết tên chính xác để mở rộng allowlist.`,
+  );
+
   const beforeIdentities = new Set(baseMap.map(identity));
 
   for (const candidate of candidates) {
