@@ -1100,6 +1100,11 @@ export async function inspectEnvironment(
       warnings.push(...(await performLoginFlow(page, env.login)));
     }
 
+    // Installed once per Inspect session (after login, so a real session-establishing
+    // POST still goes through) - see installWriteGuard() doc comment above for what this
+    // blocks and why it's safe to explore destructive-looking UI once it's active.
+    const { blocked: writeGuardBlocked } = installWriteGuard(page);
+
     // Snapshot every page in the flow, not just the first one: capture target_url as-is,
     // then for each inspection step drive the browser forward and re-snapshot. Elements
     // are tagged with page_url/page_label (see extractElementMap) so the codegen prompt
@@ -1140,7 +1145,12 @@ export async function inspectEnvironment(
     // so crawl's own pages get the fully up-to-date `visitedUrls`/element_map state,
     // and so a trigger discovered here can't accidentally get re-clicked mid-crawl.
     if (autoExpandOptions?.enabled) {
-      const { discovered, warnings: expandWarnings } = await autoExpandTriggers(page, element_map, autoExpandOptions);
+      const { discovered, warnings: expandWarnings } = await autoExpandTriggers(
+        page,
+        element_map,
+        autoExpandOptions,
+        writeGuardBlocked,
+      );
       const before = element_map.length + discovered.length;
       element_map = [...element_map, ...discovered].slice(0, MAX_TOTAL_ELEMENTS);
       if (before > MAX_TOTAL_ELEMENTS) {
