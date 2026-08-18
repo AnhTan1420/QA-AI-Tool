@@ -111,6 +111,19 @@ export const crawlOptionsSchema = z.object({
 });
 export type CrawlOptions = z.infer<typeof crawlOptionsSchema>;
 
+// Opt-in: after the base snapshot(s), try a bounded, allowlist-only set of buttons
+// that look like "open something" (New/Create/Add/+, tạo/thêm/mới, ...) so content
+// that only exists once clicked - a dialog's fields, a dropdown's options - ends up
+// in element_map too, instead of requiring the caller to know and list every such
+// trigger up front as an inspection_step. Never denylist-only and always bounded by
+// max_triggers: this clicks real elements in the caller's own authenticated session,
+// so an unrecognized button name is skipped rather than risking a real mutation.
+export const autoExpandOptionsSchema = z.object({
+  enabled: z.boolean().default(false),
+  max_triggers: z.coerce.number().int().min(1).max(10).default(5),
+});
+export type AutoExpandOptions = z.infer<typeof autoExpandOptionsSchema>;
+
 // ── Inspect endpoint (app/api/automation/inspect) ───────────────────────────
 export const inspectRequestSchema = z.object({
   environment: environmentConfigSchema,
@@ -121,6 +134,10 @@ export const inspectRequestSchema = z.object({
   // Optional: after inspection_steps run, crawl same-origin links breadth-first and
   // snapshot each page found (see crawlOptionsSchema).
   crawl: crawlOptionsSchema.optional(),
+  // Optional: after inspection_steps run (on whichever page they left the browser on),
+  // try auto-revealing modal/dropdown content behind safe-looking trigger buttons (see
+  // autoExpandOptionsSchema).
+  auto_expand: autoExpandOptionsSchema.optional(),
 });
 
 export const inspectResponseDataSchema = z.object({
