@@ -493,9 +493,19 @@ function resolveSelectorChain(page: any, selector: string): any {
 
 async function extractElementMap(page: any, pageLabel?: string): Promise<ElementMap> {
   const raw: any[] = await page.evaluate(() => {
+    // Two different kinds of "things a test case needs a selector for": elements you
+    // ACT on (interactiveSelector - clickable/fillable) and elements you ASSERT on
+    // (headings, testid-tagged labels/badges/eyebrows - never clickable, so they never
+    // matched interactiveSelector at all and were silently never in element_map,
+    // regardless of any timing/auto-expand fix). A step like "verify heading 'Test case
+    // library' is visible" needs the latter category grounded too.
     const interactiveSelector =
       'a[href], button, input, select, textarea, [role], [tabindex]:not([tabindex="-1"]), [onclick]';
-    const nodes = Array.from(document.querySelectorAll(interactiveSelector)).slice(0, 200);
+    const assertionTextSelector = 'h1, h2, h3, h4, h5, h6, [role="heading"], [data-testid], [data-test-id], [data-test]';
+    const nodes = Array.from(document.querySelectorAll(`${interactiveSelector}, ${assertionTextSelector}`)).slice(
+      0,
+      200,
+    );
 
     function accessibleName(el: Element): string {
       const aria = el.getAttribute('aria-label');
@@ -554,6 +564,8 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
       if (tag === 'a') return 'link';
       if (tag === 'select') return 'combobox';
       if (tag === 'textarea') return 'textbox';
+      if (/^h[1-6]$/.test(tag)) return 'heading'; // real accessible role for h1-h6 - lets
+      // getByRole('heading', { name }) work instead of the meaningless 'generic' below
       if (tag === 'input') {
         const type = (el as HTMLInputElement).type;
         if (type === 'checkbox') return 'checkbox';
@@ -606,6 +618,24 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
       };
     }
     if (el.accessible_name) {
+      // role 'generic' means defaultRole() found no real semantic role (a plain <span>/
+      // <p> "eyebrow" label, badge, etc. - exactly the kind of non-interactive text an
+      // assertion step targets). Most browsers don't reliably expose an accessible-tree
+      // role of "generic" for these, so getByRole('generic', { name }) frequently matches
+      // nothing at runtime even though the map "saw" the element. getByText() matches on
+      // rendered text directly and doesn't depend on role computation at all.
+      if (el.role === 'generic') {
+        return {
+          role: el.role,
+          accessible_name: el.accessible_name,
+          tag: el.tag,
+          selector: `getByText('${el.accessible_name.replace(/'/g, "\\'")}', { exact: true })`,
+          selector_strategy: 'text',
+          input_type: el.input_type,
+          is_visible: el.is_visible,
+          ...context,
+        };
+      }
       return {
         role: el.role,
         accessible_name: el.accessible_name,
