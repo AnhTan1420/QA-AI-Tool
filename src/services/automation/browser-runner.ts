@@ -706,6 +706,7 @@ async function autoExpandTriggers(
   const beforeIdentities = new Set(baseMap.map(identity));
 
   for (const candidate of candidates) {
+    let newOnes: ElementMap = [];
     try {
       const locator = candidate.test_id
         ? page.getByTestId(candidate.test_id)
@@ -716,7 +717,7 @@ async function autoExpandTriggers(
       await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
       const after = await extractElementMap(page, `Sau khi click "${candidate.accessible_name}"`);
-      const newOnes = after.filter((e) => !beforeIdentities.has(identity(e)));
+      newOnes = after.filter((e) => !beforeIdentities.has(identity(e)));
       if (newOnes.length === 0) {
         warnings.push(`Auto-expand: click "${candidate.accessible_name}" không lộ ra phần tử mới nào.`);
       } else {
@@ -726,10 +727,30 @@ async function autoExpandTriggers(
     } catch (err: any) {
       warnings.push(`Auto-expand: không thể mở "${candidate.accessible_name}" (${String(err?.message ?? err)}).`);
     } finally {
-      // Best-effort revert to base state before the next candidate - Escape is what
-      // closes the vast majority of modals/dropdowns/popovers. If it doesn't, the next
-      // candidate's click may fail (element obscured) - caught above, reported, skipped.
+      // Best-effort revert to base state before the next candidate. Escape closes most
+      // real <dialog>/role="dialog" overlays, but plenty of apps reveal content as a
+      // plain conditional-render toggle instead (a "New project" button that flips a
+      // boolean and mounts a <form> inline, closed by its own "Close"/X button, not
+      // Esc - exactly this app's pattern). Checking whether any of THIS candidate's own
+      // newly-revealed elements are still present tells us whether Escape actually
+      // closed anything; only then try re-clicking the same trigger (the common
+      // toggle-button idiom) as a second attempt - never blind, so a real modal that
+      // Escape DID close doesn't get accidentally reopened by this second click.
       await page.keyboard.press('Escape').catch(() => {});
+      if (newOnes.length > 0) {
+        const stillPresent = await extractElementMap(page);
+        const stillPresentIds = new Set(stillPresent.map(identity));
+        const escapeWorked = !newOnes.some((e) => stillPresentIds.has(identity(e)));
+        if (!escapeWorked) {
+          const locator = candidate.test_id
+            ? page.getByTestId(candidate.test_id)
+            : page.getByRole(candidate.role, { name: candidate.accessible_name, exact: false });
+          await locator
+            .first()
+            .click({ timeout: 3000 })
+            .catch(() => {});
+        }
+      }
     }
   }
 
