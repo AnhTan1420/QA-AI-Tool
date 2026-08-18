@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { runAIAgent } from '@/services/ai/provider';
-import { buildPlaywrightCodegenPrompt, groupElementMapByPage } from '@/services/ai/prompts/playwright-agent';
+import { buildPlaywrightCodegenPrompt, groupElementMapByPage, checkSelectorAttribution } from '@/services/ai/prompts/playwright-agent';
 import { buildPlaywrightResponseSchema } from '@/services/ai/prompts/playwright-response-schema';
 import { playwrightHealRequestSchema, playwrightScriptSchema } from '@/models/validators/playwright';
 import { createClient } from '@/services/supabase/server';
@@ -115,6 +115,13 @@ export async function POST(req: Request) {
     if (!/\.goto\s*\(/.test(allGeneratedSource)) {
       rosterWarnings.push('Không tìm thấy lệnh page.goto(...) nào trong code đã heal.');
     }
+
+    // Same defense-in-depth SELECTOR ATTRIBUTION check as app/api/ai/playwright/route.ts
+    // - see checkSelectorAttribution() in playwright-agent.ts. Arguably MORE important
+    // here than on a first-time generation: a heal pass is specifically prone to
+    // "adapting" a nearby real selector to patch a failure instead of admitting the
+    // target element still isn't grounded.
+    rosterWarnings.push(...checkSelectorAttribution(parsed.data.page_objects, input.element_map));
 
     // Provenance marker so Code Viewer's warnings list makes it visible this version
     // came from a heal pass, not a plain Generate — no schema/DB migration needed,
