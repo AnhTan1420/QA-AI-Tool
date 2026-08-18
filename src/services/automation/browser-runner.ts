@@ -591,6 +591,31 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
   const pageUrl = await page.url();
   const context = { page_url: pageUrl, page_label: pageLabel };
 
+  // Two elements with the SAME role where one's accessible_name is a substring of the
+  // other's (case-insensitive) - e.g. an icon button "Delete project Mock test" vs. the
+  // confirm dialog's own "Delete project" button it reveals once clicked - collide under
+  // Playwright's default substring-matching getByRole name match: a selector built from
+  // the shorter name would match BOTH elements, causing a strict-mode violation at
+  // runtime. Since the codegen prompt instructs the AI to copy each "selector" string
+  // VERBATIM (see GROUNDING RULE in playwright-agent.ts) rather than re-deriving it, this
+  // disambiguation has to happen HERE, once, server-side - the AI never gets the chance
+  // to add exact:true itself, because it isn't supposed to touch the string at all.
+  const namesByRole = new Map<string, Set<string>>();
+  for (const el of raw) {
+    if (!el.accessible_name || el.role === 'generic') continue; // generic already always gets exact:true via getByText below
+    if (!namesByRole.has(el.role)) namesByRole.set(el.role, new Set());
+    namesByRole.get(el.role)!.add(el.accessible_name);
+  }
+  const needsExact = new Set<string>(); // `${role}\u0000${accessible_name}`
+  for (const [role, namesSet] of namesByRole) {
+    const names = Array.from(namesSet);
+    for (const shorter of names) {
+      if (names.some((longer) => longer !== shorter && longer.toLowerCase().includes(shorter.toLowerCase()))) {
+        needsExact.add(`${role}\u0000${shorter}`);
+      }
+    }
+  }
+
   return raw.map((el): InspectedElement => {
     if (el.test_id) {
       return {
@@ -640,7 +665,7 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
         role: el.role,
         accessible_name: el.accessible_name,
         tag: el.tag,
-        selector: `getByRole('${el.role}', { name: '${el.accessible_name.replace(/'/g, "\\'")}' })`,
+        selector: `getByRole('${el.role}', { name: '${el.accessible_name.replace(/'/g, "\\'")}'${needsExact.has(`${el.role}\u0000${el.accessible_name}`) ? ', exact: true' : ''} })`,
         selector_strategy: 'role_name',
         input_type: el.input_type,
         is_visible: el.is_visible,
