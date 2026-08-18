@@ -177,6 +177,12 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
 
   const [crawlEnabled, setCrawlEnabled] = useState(false);
   const [crawlMaxPages, setCrawlMaxPages] = useState(5);
+  // Defaults ON (unlike crawl): scoped to the current page only, allowlist-filtered to
+  // "reveal something" buttons, bounded, and self-reverting - see autoExpandTriggers()
+  // in browser-runner.ts. Still exposed as a toggle in case a particular environment's
+  // buttons misbehave when auto-clicked.
+  const [autoExpandEnabled, setAutoExpandEnabled] = useState(true);
+  const [autoExpandMaxTriggers, setAutoExpandMaxTriggers] = useState(5);
 
   const [inspectionSteps, setInspectionSteps] = useState<InspectionStepDraft[]>([]);
 
@@ -382,6 +388,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
           environment: buildEnvironmentPayload(),
           inspection_steps: buildInspectionStepsPayload(),
           crawl: crawlEnabled ? { enabled: true, max_pages: crawlMaxPages } : undefined,
+          auto_expand: autoExpandEnabled ? { enabled: true, max_triggers: autoExpandMaxTriggers } : undefined,
         }),
       });
       const json = await parseJsonResponse(res);
@@ -581,6 +588,10 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     setCrawlEnabled,
     crawlMaxPages,
     setCrawlMaxPages,
+    autoExpandEnabled,
+    setAutoExpandEnabled,
+    autoExpandMaxTriggers,
+    setAutoExpandMaxTriggers,
     inspectionSteps,
     addInspectionStep,
     updateInspectionStep,
