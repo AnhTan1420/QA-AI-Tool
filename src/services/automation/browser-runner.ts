@@ -1,4 +1,5 @@
 import type {
+  AutoExpandOptions,
   AutomationBrowser,
   CrawlOptions,
   ElementMap,
@@ -521,7 +522,22 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
         // No label at all (explicit or implicit) - placeholder is the correct fallback.
         if ('placeholder' in el && el.placeholder) return el.placeholder.trim();
       }
-      return (el.textContent || '').trim().slice(0, 80);
+      // NOT el.textContent - it concatenates every descendant text node with zero
+      // separator, ignoring layout entirely. A card like <h3>Demo create project</h3>
+      // <p>No description yet.</p> has no literal whitespace character between those
+      // two elements in the compiled JSX, so textContent yields
+      // "Demo create projectNo description yet." - exactly the mangled name that shows
+      // up in getByRole('link', { name: '...' }) selectors and then fails at runtime,
+      // because the REAL accessible name (which Playwright's getByRole reads from the
+      // browser's accessibility tree, not from textContent) does insert a break between
+      // separately-rendered block elements. el.innerText respects rendering/layout the
+      // same way, so it doesn't smash sibling blocks together; collapse its line breaks
+      // to single spaces afterward so the string is a normal one-line locator name.
+      const htmlEl = el as HTMLElement;
+      const rendered = typeof htmlEl.innerText === 'string' && htmlEl.innerText.length > 0
+        ? htmlEl.innerText
+        : (el.textContent || '');
+      return rendered.replace(/\s+/g, ' ').trim().slice(0, 80);
     }
 
     function isVisible(el: Element): boolean {
@@ -612,6 +628,82 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
       ...context,
     };
   });
+}
+
+// Allowlist-only on purpose (see autoExpandOptionsSchema): only click something whose
+// name clearly reads as "reveal/open X", never anything unrecognized. AUTO_EXPAND_DENY
+// is checked FIRST and wins even over an allow match (e.g. "Xóa & tạo mới" stays
+// unclicked) - it exists only to make the intent explicit for reviewers, not as the
+// primary safety mechanism; the allowlist is.
+const AUTO_EXPAND_ALLOW =
+  /(^|[\s(])(\+|new|create|add|edit|show|expand|open|view more|tạo|thêm|mới|sửa|xem thêm|mở rộng)([\s)]|$)/i;
+const AUTO_EXPAND_DENY =
+  /(delete|remove|xóa|xoá|log\s?out|sign\s?out|đăng\s?xuất|pay|payment|thanh toán|submit|confirm|xác nhận|archive|lưu trữ|reset|khôi phục|hủy|huỷ|cancel)/i;
+
+// Tries clicking a bounded, allowlist-filtered set of buttons from `baseMap` (the page's
+// CURRENT state) that look like they'd reveal something - a "New project" button opening
+// a dialog with fields that don't exist in the DOM until then, a "+" row-add control, an
+// accordion "Show more" - then re-snapshots and keeps whatever's genuinely new. Escape is
+// pressed between candidates as a best-effort revert; a candidate that fails to click,
+// reveals nothing new, or can't be reverted is reported as a warning and skipped - never
+// throws, since one bad trigger shouldn't sink the rest of the inspection.
+async function autoExpandTriggers(
+  page: any,
+  baseMap: ElementMap,
+  options: AutoExpandOptions,
+): Promise<{ discovered: ElementMap; warnings: string[] }> {
+  const warnings: string[] = [];
+  const discovered: ElementMap = [];
+  const seenNames = new Set<string>();
+
+  const identity = (e: { role: string; accessible_name: string; tag: string; id?: string }) =>
+    `${e.role}|${e.accessible_name}|${e.tag}|${e.id ?? ''}`;
+
+  const candidates = baseMap
+    .filter((el) => {
+      if (!el.is_visible) return false;
+      if (el.tag === 'a') return false; // real navigation - crawl's job, not auto-expand's
+      if (el.role !== 'button' && el.role !== 'link') return false;
+      const name = el.accessible_name.trim();
+      if (!name || seenNames.has(name)) return false;
+      if (AUTO_EXPAND_DENY.test(name)) return false;
+      if (!AUTO_EXPAND_ALLOW.test(name)) return false;
+      seenNames.add(name);
+      return true;
+    })
+    .slice(0, options.max_triggers);
+
+  const beforeIdentities = new Set(baseMap.map(identity));
+
+  for (const candidate of candidates) {
+    try {
+      const locator = candidate.test_id
+        ? page.getByTestId(candidate.test_id)
+        : page.getByRole(candidate.role, { name: candidate.accessible_name, exact: false });
+      await locator.first().click({ timeout: 5000 });
+      // Same real-wait rationale as elsewhere in this file - a modal mounting or a
+      // dropdown's options fetching is itself often async.
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+
+      const after = await extractElementMap(page, `Sau khi click "${candidate.accessible_name}"`);
+      const newOnes = after.filter((e) => !beforeIdentities.has(identity(e)));
+      if (newOnes.length === 0) {
+        warnings.push(`Auto-expand: click "${candidate.accessible_name}" không lộ ra phần tử mới nào.`);
+      } else {
+        discovered.push(...newOnes);
+        newOnes.forEach((e) => beforeIdentities.add(identity(e)));
+      }
+    } catch (err: any) {
+      warnings.push(`Auto-expand: không thể mở "${candidate.accessible_name}" (${String(err?.message ?? err)}).`);
+    } finally {
+      // Best-effort revert to base state before the next candidate - Escape is what
+      // closes the vast majority of modals/dropdowns/popovers. If it doesn't, the next
+      // candidate's click may fail (element obscured) - caught above, reported, skipped.
+      await page.keyboard.press('Escape').catch(() => {});
+    }
+  }
+
+  return { discovered, warnings };
 }
 
 // Drives the page one step further (click / fill / press Enter / goto) so the next
@@ -750,6 +842,7 @@ export async function inspectEnvironment(
   env: EnvironmentConfig,
   inspectionSteps: InspectionStep[] = [],
   crawlOptions?: CrawlOptions,
+  autoExpandOptions?: AutoExpandOptions,
 ): Promise<{
   page_title: string;
   element_map: ElementMap;
@@ -800,6 +893,20 @@ export async function inspectEnvironment(
           `Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau bước "${step.label}" - một số phần tử đã bị cắt bớt, selector cho các bước sau có thể thiếu grounding.`,
         );
       }
+    }
+
+    // Auto-expand (opt-in): reveal modal/dropdown content that only exists after a
+    // click, on whichever page inspection_steps left the browser on. Runs BEFORE crawl
+    // so crawl's own pages get the fully up-to-date `visitedUrls`/element_map state,
+    // and so a trigger discovered here can't accidentally get re-clicked mid-crawl.
+    if (autoExpandOptions?.enabled) {
+      const { discovered, warnings: expandWarnings } = await autoExpandTriggers(page, element_map, autoExpandOptions);
+      const before = element_map.length + discovered.length;
+      element_map = [...element_map, ...discovered].slice(0, MAX_TOTAL_ELEMENTS);
+      if (before > MAX_TOTAL_ELEMENTS) {
+        warnings.push(`Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau auto-expand - một số phần tử đã bị cắt bớt.`);
+      }
+      warnings.push(...expandWarnings);
     }
 
     // Whole-site crawl (opt-in): follow same-origin links breadth-first from wherever
