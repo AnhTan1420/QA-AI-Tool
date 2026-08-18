@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { runAIAgent } from '@/services/ai/provider';
-import { buildPlaywrightCodegenPrompt, groupElementMapByPage } from '@/services/ai/prompts/playwright-agent';
+import { buildPlaywrightCodegenPrompt, groupElementMapByPage, checkSelectorAttribution } from '@/services/ai/prompts/playwright-agent';
 import { buildPlaywrightResponseSchema } from '@/services/ai/prompts/playwright-response-schema';
 import { playwrightCodegenRequestSchema, playwrightScriptSchema } from '@/models/validators/playwright';
 import { createClient } from '@/services/supabase/server';
@@ -100,6 +100,13 @@ export async function POST(req: Request) {
 
     if (rosterWarnings.length > 0) {
       parsed.data.warnings = [...parsed.data.warnings, ...rosterWarnings];
+    }
+
+    // 3d) Defense-in-depth SELECTOR ATTRIBUTION check - see checkSelectorAttribution()
+    // in playwright-agent.ts (shared with the /heal variant) for what this catches.
+    const attributionWarnings = checkSelectorAttribution(parsed.data.page_objects, input.element_map);
+    if (attributionWarnings.length > 0) {
+      parsed.data.warnings = [...parsed.data.warnings, ...attributionWarnings];
     }
 
     // 4) (Best-effort) tìm test_case_id nếu client gửi kèm, để tự lưu version luôn -
