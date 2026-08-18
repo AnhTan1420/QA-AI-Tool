@@ -277,6 +277,63 @@ async function firstVisibleMatch(page: any, selectors: string[]) {
 }
 
 /**
+ * WRITE GUARD (network-level safety net for Inspect):
+ *
+ * Everything auto-expand or a manual inspection_steps click does during Inspect is
+ * exploratory - the whole point of this phase is to LOOK at what a click reveals, never
+ * to actually perform it. Until now the only protection against an exploratory click
+ * accidentally causing a REAL mutation (deleting a real project, signing the account
+ * out, etc.) was AUTO_EXPAND_DENY - a name-based blocklist. That approach has two real
+ * limits: (1) it can only ever be as complete as the word list ("delete"/"remove"/"xóa"/
+ * ... never ends - "revoke", "terminate", "deactivate", "hủy đăng ký", ...), forcing a
+ * user to notice a gap and manually add an inspection_steps entry every time an app uses
+ * a verb the list doesn't know; and (2) it never covered inspection_steps at all - a
+ * manually-configured step has always been able to click a REAL "Delete"/"Confirm"
+ * button with zero protection.
+ *
+ * This closes both gaps at the transport layer instead of the label layer: install ONCE
+ * per Inspect session (after login, so a real session-establishing POST still goes
+ * through), it lets every read (GET/HEAD/OPTIONS - page loads, data fetches, realtime
+ * subscription upgrades) through untouched, and aborts every state-changing request
+ * (POST/PUT/PATCH/DELETE, whether fired via fetch/XHR or a native <form> submission)
+ * before it reaches the server. No data can be created/changed/deleted during Inspect
+ * REGARDLESS of what gets clicked - which is what makes it safe to let auto-expand (see
+ * AUTO_EXPAND_SOFT_DENY below) and inspection_steps explore destructive-LOOKING UI (a
+ * delete icon that only opens a confirmation dialog) far more thoroughly than the old
+ * name-blocklist-only approach dared to.
+ *
+ * Real mutations only ever happen later, for real, when the user explicitly runs the
+ * GENERATED test via runGeneratedScript() below - this guard is never installed there.
+ */
+function installWriteGuard(page: any): { blocked: { method: string; url: string }[] } {
+  const blocked: { method: string; url: string }[] = [];
+  const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+  // Fire-and-forget registration - Playwright queues route handling internally, no
+  // need to await before continuing to use the page. Never throws to the caller: a
+  // request-handler exception would otherwise crash whatever navigation triggered it.
+  page
+    .route('**/*', async (route: any) => {
+      try {
+        const request = route.request();
+        const method = String(request.method() || 'GET').toUpperCase();
+        if (SAFE_METHODS.has(method)) {
+          await route.continue();
+          return;
+        }
+        blocked.push({ method, url: request.url() });
+        await route.abort('blockedbyclient');
+      } catch {
+        // Routing itself failed (torn-down page mid-navigation, etc.) - fail open on
+        // the ROUTE mechanism, not on safety: best-effort abort, never let a guard bug
+        // hang the request indefinitely.
+        await route.abort('blockedbyclient').catch(() => {});
+      }
+    })
+    .catch(() => {});
+  return { blocked };
+}
+
+/**
  * BUG FIX (Section 5 — "login credentials fail to authenticate when testing
  * custom URLs like qa-ai-tool-jordan.vercel.app"):
  *
@@ -692,8 +749,24 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
 // primary safety mechanism; the allowlist is.
 const AUTO_EXPAND_ALLOW =
   /(^|[\s(])(\+|new|create|add|edit|show|expand|open|view more|tạo|thêm|mới|sửa|xem thêm|mở rộng)([\s)]|$)/i;
-const AUTO_EXPAND_DENY =
-  /(delete|remove|xóa|xoá|log\s?out|sign\s?out|đăng\s?xuất|pay|payment|thanh toán|submit|confirm|xác nhận|archive|lưu trữ|reset|khôi phục|hủy|huỷ|cancel)/i;
+// HARD: never auto-clicked, guard or no guard. Two different reasons bucketed
+// together: (a) logout/sign-out typically clears session state CLIENT-SIDE
+// (redirect to /login, drop an in-memory auth flag) as an optimistic UI update that
+// doesn't wait for - and so isn't prevented by blocking - the network call; clicking
+// it would derail the rest of inspection onto a logged-out page even though no real
+// server-side mutation happened. (b) pay/submit/confirm/xác nhận are TERMINAL action
+// verbs, not reveal-triggers - unlike "delete" (which conventionally opens a
+// confirmation step first), a button already named "Confirm"/"Pay now"/"Submit" on
+// the CURRENT page is very likely the action itself, not a trigger for one.
+const AUTO_EXPAND_HARD_DENY =
+  /(log\s?out|sign\s?out|đăng\s?xuất|pay|payment|thanh toán|submit|confirm|xác nhận)/i;
+// SOFT: skipped by the ALLOW-list check entirely (these verbs don't read as "reveal
+// something new" on their own), but explicitly re-admitted as candidates BECAUSE
+// installWriteGuard() is active for the whole Inspect session - any request these
+// trigger beyond opening a confirmation UI gets aborted before it reaches the
+// server, so it's safe to actually click them and see what they reveal.
+const AUTO_EXPAND_SOFT_DENY =
+  /(delete|remove|xóa|xoá|archive|lưu trữ|reset|khôi phục|hủy|huỷ|cancel)/i;
 
 // Tries clicking a bounded, allowlist-filtered set of buttons from `baseMap` (the page's
 // CURRENT state) that look like they'd reveal something - a "New project" button opening
@@ -706,6 +779,7 @@ async function autoExpandTriggers(
   page: any,
   baseMap: ElementMap,
   options: AutoExpandOptions,
+  writeGuardBlocked: { method: string; url: string }[],
 ): Promise<{ discovered: ElementMap; warnings: string[] }> {
   const warnings: string[] = [];
   const discovered: ElementMap = [];
@@ -714,13 +788,14 @@ async function autoExpandTriggers(
   const identity = (e: { role: string; accessible_name: string; tag: string; id?: string }) =>
     `${e.role}|${e.accessible_name}|${e.tag}|${e.id ?? ''}`;
 
-  // Names skipped specifically because they matched AUTO_EXPAND_DENY (as opposed to
-  // simply not matching AUTO_EXPAND_ALLOW) - tracked separately because this is a much
-  // more actionable case: the button/link almost certainly reveals SOMETHING (a
-  // dropdown, a confirmation dialog) that will now be silently absent from element_map,
-  // and the fix isn't "wait, it's just not a recognized trigger" - it's "add this exact
-  // one as a manual inspection_steps entry", see warning below.
-  const denySkipped = new Set<string>();
+  // HARD_DENY matches - never even considered as candidates, guard or no guard (see
+  // AUTO_EXPAND_HARD_DENY comment for why these two specifically can't be made safe by
+  // a network guard alone).
+  const hardDenySkipped = new Set<string>();
+  // SOFT_DENY matches that got included as real candidates below, purely because
+  // installWriteGuard is active - tracked separately so the summary warning can be
+  // explicit about WHICH clicks were only safe because of that guard.
+  const softDenyIncluded = new Set<string>();
 
   const candidates = baseMap
     .filter((el) => {
@@ -729,9 +804,14 @@ async function autoExpandTriggers(
       if (el.role !== 'button' && el.role !== 'link') return false;
       const name = el.accessible_name.trim();
       if (!name || seenNames.has(name)) return false;
-      if (AUTO_EXPAND_DENY.test(name)) {
-        denySkipped.add(name);
+      if (AUTO_EXPAND_HARD_DENY.test(name)) {
+        hardDenySkipped.add(name);
         return false;
+      }
+      if (AUTO_EXPAND_SOFT_DENY.test(name)) {
+        softDenyIncluded.add(name);
+        seenNames.add(name);
+        return true; // admitted WITHOUT needing an ALLOW match - see AUTO_EXPAND_SOFT_DENY
       }
       if (!AUTO_EXPAND_ALLOW.test(name)) return false;
       seenNames.add(name);
@@ -746,21 +826,17 @@ async function autoExpandTriggers(
   const buttonLikeTotal = baseMap.filter((el) => el.is_visible && el.tag !== 'a' && (el.role === 'button' || el.role === 'link')).length;
   warnings.push(
     candidates.length > 0
-      ? `Auto-expand: sẽ thử click ${candidates.length}/${buttonLikeTotal} button/link khớp allowlist: ${candidates.map((c) => `"${c.accessible_name}"`).join(', ')}.`
+      ? `Auto-expand: sẽ thử click ${candidates.length}/${buttonLikeTotal} button/link: ${candidates.map((c) => `"${c.accessible_name}"${softDenyIncluded.has(c.accessible_name.trim()) ? ' [guarded]' : ''}`).join(', ')}.`
       : `Auto-expand: 0/${buttonLikeTotal} button/link trong element_map khớp allowlist ("new/create/add/+/tạo/thêm/mới/..."), không có gì để thử click. Nếu nút mở form của bạn có tên khác, cho mình biết tên chính xác để mở rộng allowlist.`,
   );
-  // Surfaced separately from the allowlist summary above on purpose - this is the
-  // exact gap that silently starves codegen of grounding for anything gated behind a
-  // "destructive-looking" trigger (a delete icon that reveals a confirm dialog, a
-  // "Log out" menu, ...): the trigger itself IS in element_map (so codegen can click
-  // it), but whatever it reveals never got a chance to be captured, so the model has
-  // nothing to ground the next step on and correctly refuses to invent one (see
-  // GROUNDING RULE) - which then shows up downstream as a confusing "not found in
-  // inspected element map" warning with no obvious cause. Naming it here, at inspect
-  // time, is the fix: skip it on purpose, but say so and say how to override it.
-  if (denySkipped.size > 0) {
+  if (softDenyIncluded.size > 0) {
     warnings.push(
-      `Auto-expand: bỏ qua ${denySkipped.size} button/link trông có vẻ mang tính phá hủy/nhạy cảm (khớp "delete/remove/xóa/logout/pay/submit/confirm/..."): ${Array.from(denySkipped).map((n) => `"${n}"`).join(', ')}. Đây là chủ đích an toàn - auto-expand sẽ KHÔNG tự click các nút này (kể cả chỉ để "mở ra xem"), nên bất kỳ dialog/menu nào chúng hé lộ (VD: dialog xác nhận xoá) sẽ KHÔNG có trong element_map, và bước test case dùng tới nó sẽ bị codegen báo "not found in inspected element map". Nếu một bước thực sự cần thao tác này, hãy thêm nó làm 1 bước "inspection_steps" thủ công (action "click", selector lấy từ chính accessible_name/selector của nút này trong element_map) - đó là hành động CHỦ ĐÍCH của bạn, không phải auto-expand tự đoán.`,
+      `Auto-expand: ${softDenyIncluded.size} nút được đánh dấu "[guarded]" ở trên trông có vẻ mang tính phá hủy (khớp "delete/remove/xóa/archive/reset/..."), nhưng VẪN được click thật vì toàn bộ phiên Inspect này đang chạy dưới network write-guard - mọi request ghi dữ liệu (POST/PUT/PATCH/DELETE) đều bị chặn trước khi tới server, nên việc click chỉ có thể lộ ra UI (VD: dialog xác nhận), không thể thực sự xóa/thay đổi gì. Nhờ vậy dialog xác nhận (Cancel/Delete...) giờ sẽ có mặt trong element_map mà không cần bạn tự thêm inspection_steps thủ công nữa.`,
+    );
+  }
+  if (hardDenySkipped.size > 0) {
+    warnings.push(
+      `Auto-expand: bỏ qua ${hardDenySkipped.size} button/link luôn được coi là KHÔNG an toàn để tự click dù có guard (khớp "logout/pay/submit/confirm/..."): ${Array.from(hardDenySkipped).map((n) => `"${n}"`).join(', ')}. Những nút này thường là hành động CUỐI CÙNG (không mở thêm dialog xác nhận nào nữa) hoặc tự thay đổi trạng thái đăng nhập phía client mà việc chặn network không ngăn được - nếu 1 bước test case thực sự cần thao tác này, hãy thêm nó làm 1 bước "inspection_steps" thủ công.`,
     );
   }
 
@@ -768,6 +844,7 @@ async function autoExpandTriggers(
 
   for (const candidate of candidates) {
     let newOnes: ElementMap = [];
+    const blockedCountBefore = writeGuardBlocked.length;
     try {
       const locator = candidate.test_id
         ? page.getByTestId(candidate.test_id)
@@ -784,6 +861,15 @@ async function autoExpandTriggers(
       } else {
         discovered.push(...newOnes);
         newOnes.forEach((e) => beforeIdentities.add(identity(e)));
+      }
+      // Transparency for the guarded (soft-deny) path specifically: if clicking THIS
+      // candidate attempted a real write, say exactly what was blocked, so it's never
+      // a silent thing that "just happened" during Inspect.
+      if (writeGuardBlocked.length > blockedCountBefore) {
+        const newlyBlocked = writeGuardBlocked.slice(blockedCountBefore);
+        warnings.push(
+          `Auto-expand: click "${candidate.accessible_name}" đã kích hoạt ${newlyBlocked.length} request ghi dữ liệu và bị write-guard chặn (không có gì bị thay đổi thật): ${newlyBlocked.map((b) => `${b.method} ${b.url}`).join(', ')}.`,
+        );
       }
     } catch (err: any) {
       warnings.push(`Auto-expand: không thể mở "${candidate.accessible_name}" (${String(err?.message ?? err)}).`);
