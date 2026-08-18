@@ -714,6 +714,14 @@ async function autoExpandTriggers(
   const identity = (e: { role: string; accessible_name: string; tag: string; id?: string }) =>
     `${e.role}|${e.accessible_name}|${e.tag}|${e.id ?? ''}`;
 
+  // Names skipped specifically because they matched AUTO_EXPAND_DENY (as opposed to
+  // simply not matching AUTO_EXPAND_ALLOW) - tracked separately because this is a much
+  // more actionable case: the button/link almost certainly reveals SOMETHING (a
+  // dropdown, a confirmation dialog) that will now be silently absent from element_map,
+  // and the fix isn't "wait, it's just not a recognized trigger" - it's "add this exact
+  // one as a manual inspection_steps entry", see warning below.
+  const denySkipped = new Set<string>();
+
   const candidates = baseMap
     .filter((el) => {
       if (!el.is_visible) return false;
@@ -721,7 +729,10 @@ async function autoExpandTriggers(
       if (el.role !== 'button' && el.role !== 'link') return false;
       const name = el.accessible_name.trim();
       if (!name || seenNames.has(name)) return false;
-      if (AUTO_EXPAND_DENY.test(name)) return false;
+      if (AUTO_EXPAND_DENY.test(name)) {
+        denySkipped.add(name);
+        return false;
+      }
       if (!AUTO_EXPAND_ALLOW.test(name)) return false;
       seenNames.add(name);
       return true;
@@ -738,6 +749,20 @@ async function autoExpandTriggers(
       ? `Auto-expand: sẽ thử click ${candidates.length}/${buttonLikeTotal} button/link khớp allowlist: ${candidates.map((c) => `"${c.accessible_name}"`).join(', ')}.`
       : `Auto-expand: 0/${buttonLikeTotal} button/link trong element_map khớp allowlist ("new/create/add/+/tạo/thêm/mới/..."), không có gì để thử click. Nếu nút mở form của bạn có tên khác, cho mình biết tên chính xác để mở rộng allowlist.`,
   );
+  // Surfaced separately from the allowlist summary above on purpose - this is the
+  // exact gap that silently starves codegen of grounding for anything gated behind a
+  // "destructive-looking" trigger (a delete icon that reveals a confirm dialog, a
+  // "Log out" menu, ...): the trigger itself IS in element_map (so codegen can click
+  // it), but whatever it reveals never got a chance to be captured, so the model has
+  // nothing to ground the next step on and correctly refuses to invent one (see
+  // GROUNDING RULE) - which then shows up downstream as a confusing "not found in
+  // inspected element map" warning with no obvious cause. Naming it here, at inspect
+  // time, is the fix: skip it on purpose, but say so and say how to override it.
+  if (denySkipped.size > 0) {
+    warnings.push(
+      `Auto-expand: bỏ qua ${denySkipped.size} button/link trông có vẻ mang tính phá hủy/nhạy cảm (khớp "delete/remove/xóa/logout/pay/submit/confirm/..."): ${Array.from(denySkipped).map((n) => `"${n}"`).join(', ')}. Đây là chủ đích an toàn - auto-expand sẽ KHÔNG tự click các nút này (kể cả chỉ để "mở ra xem"), nên bất kỳ dialog/menu nào chúng hé lộ (VD: dialog xác nhận xoá) sẽ KHÔNG có trong element_map, và bước test case dùng tới nó sẽ bị codegen báo "not found in inspected element map". Nếu một bước thực sự cần thao tác này, hãy thêm nó làm 1 bước "inspection_steps" thủ công (action "click", selector lấy từ chính accessible_name/selector của nút này trong element_map) - đó là hành động CHỦ ĐÍCH của bạn, không phải auto-expand tự đoán.`,
+    );
+  }
 
   const beforeIdentities = new Set(baseMap.map(identity));
 
@@ -791,6 +816,48 @@ async function autoExpandTriggers(
   }
 
   return { discovered, warnings };
+}
+
+// Merges duplicate captures of the SAME physical element across multiple snapshots of
+// the same page. extractElementMap() computes its getByRole(...) `exact: true`
+// disambiguation from ONLY the elements visible in that single page.evaluate() call, so
+// an element whose accessible_name is a substring of another's can legitimately come
+// back as `exact:false` in an earlier snapshot (no colliding name existed on the page
+// yet) and `exact:true` in a later one of the SAME page (a colliding name appeared
+// after some action - e.g. a delete-trigger button "Delete project Mock test" vs. the
+// confirmation dialog's own "Delete project" button it reveals, see autoExpandTriggers'
+// AUTO_EXPAND_DENY comment). The trigger button itself never leaves the DOM between
+// those two snapshots, so it would otherwise show up TWICE in the final element_map
+// with two different selector strings for what is really one element - handing codegen
+// an ambiguous choice instead of one authoritative grounding. Scoped to same page_url
+// only: the same accessible_name/role legitimately reappearing on a DIFFERENT page is
+// not a duplicate, it's two distinct elements.
+function dedupeElementMap(map: ElementMap): ElementMap {
+  const order: string[] = [];
+  const merged = new Map<string, InspectedElement>();
+  for (const el of map) {
+    const key = [el.page_url ?? '', el.role, el.accessible_name, el.tag, el.selector_strategy, el.test_id ?? ''].join(
+      '\u0000',
+    );
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, el);
+      order.push(key);
+      continue;
+    }
+    // Prefer whichever capture opted into `exact: true` (the safer/more specific
+    // selector) - it means SOME snapshot saw a same-role colliding name for real, so
+    // that disambiguation is genuinely needed regardless of which snapshot codegen
+    // would otherwise have picked. OR the visibility flags rather than overwrite it,
+    // so a page state where the element was momentarily not visible doesn't shadow one
+    // where it was.
+    const preferExisting = existing.selector.includes('exact: true') || !el.selector.includes('exact: true');
+    merged.set(key, {
+      ...(preferExisting ? existing : el),
+      is_visible: existing.is_visible || el.is_visible,
+    });
+  }
+  return order.map((key) => merged.get(key)!);
 }
 
 // Drives the page one step further (click / fill / press Enter / goto) so the next
@@ -1013,6 +1080,18 @@ export async function inspectEnvironment(
         warnings.push(`Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau crawl - một số phần tử đã bị cắt bớt.`);
       }
       warnings.push(...crawlWarnings);
+    }
+
+    // Final pass: collapse duplicate captures of the same physical element across
+    // snapshots (see dedupeElementMap) so codegen always sees exactly one authoritative
+    // selector per element instead of picking between two candidates that may disagree
+    // on exact:true.
+    const beforeDedupe = element_map.length;
+    element_map = dedupeElementMap(element_map);
+    if (element_map.length < beforeDedupe) {
+      warnings.push(
+        `Đã gộp ${beforeDedupe - element_map.length} phần tử trùng lặp (cùng 1 element thật xuất hiện ở nhiều snapshot, VD: nút vẫn còn trên trang sau khi click) thành 1 dòng duy nhất trong element_map.`,
+      );
     }
 
     return { page_title, element_map, warnings };
