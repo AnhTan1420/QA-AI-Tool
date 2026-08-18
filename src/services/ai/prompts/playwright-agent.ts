@@ -116,6 +116,88 @@ export function groupElementMapByPage(elementMap: ElementMap): PageGroup[] {
   });
 }
 
+// Defense-in-depth SELECTOR ATTRIBUTION check, shared by /api/ai/playwright and its
+// /heal variant. Two failure modes, checked separately - both bypass the GROUNDING
+// RULE's "copy verbatim, else warn" contract:
+//   (i)  a selector string that doesn't exist verbatim in element_map at all - the
+//        model re-derived/invented one despite the instruction not to.
+//   (ii) a selector that DOES exist verbatim but for the WRONG element - e.g. a
+//        confirmDelete() method using the real "Create project" button's selector,
+//        because that was the only real button around and the model "adapted" it
+//        instead of admitting no match exists. This is the more dangerous failure:
+//        the code runs, it just clicks the wrong thing.
+// (i) is an exact-match check. (ii) is a best-effort heuristic - it only compares
+// ACTION VERBS (delete/confirm/create/...), never full text, specifically to avoid
+// false positives from nouns every element in a given app tends to share (e.g. nearly
+// everything in a project-management UI says "project"). Both only ever ADD a warning
+// for human review; neither blocks or rewrites the caller's response - a heuristic
+// false positive should never cost an otherwise-good generation.
+const ACTION_VERBS = [
+  'create', 'delete', 'remove', 'confirm', 'cancel', 'submit', 'save', 'update',
+  'edit', 'close', 'open', 'toggle', 'signin', 'signout', 'login', 'logout',
+  'search', 'filter', 'sort', 'add', 'new', 'clear', 'reset', 'archive', 'publish',
+  'send', 'upload', 'download', 'select', 'expand', 'collapse',
+];
+
+function verbTokens(s: string): Set<string> {
+  return new Set(
+    s
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => ACTION_VERBS.includes(w)),
+  );
+}
+
+export function checkSelectorAttribution(pageObjects: PageObject[], elementMap: ElementMap): string[] {
+  const selectorCallRegex =
+    /(?:getByRole|getByTestId|getByText|getByLabel|getByPlaceholder|getByTitle|getByAltText|locator)\([^)]*\)/g;
+  const methodStartRegex = /(?:async\s+)?(\w+)\s*\([^)]*\)\s*(?::\s*Promise<[^>]*>)?\s*\{/g;
+
+  const warnings: string[] = [];
+  for (const po of pageObjects) {
+    const code = po.code;
+    methodStartRegex.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = methodStartRegex.exec(code))) {
+      const methodName = m[1];
+      if (methodName === 'constructor') continue;
+      // Brace-count from just after the opening `{` to find this method's own body, so a
+      // selector call inside a DIFFERENT method never gets attributed to this one.
+      let depth = 1;
+      let i = methodStartRegex.lastIndex;
+      const start = i;
+      while (i < code.length && depth > 0) {
+        if (code[i] === '{') depth++;
+        else if (code[i] === '}') depth--;
+        i++;
+      }
+      const body = code.slice(start, i - 1);
+      const methodVerbs = verbTokens(methodName);
+
+      selectorCallRegex.lastIndex = 0;
+      let call: RegExpExecArray | null;
+      while ((call = selectorCallRegex.exec(body))) {
+        const rawCall = call[0];
+        const matchedEntry = elementMap.find((el) => rawCall.startsWith(el.selector));
+        if (!matchedEntry) {
+          warnings.push(
+            `${po.class_name}.${methodName}(): selector "${rawCall}" không khớp verbatim với bất kỳ phần tử nào trong element_map - có thể bị AI tự chế, cần soát lại thủ công.`,
+          );
+          continue;
+        }
+        const nameVerbs = verbTokens(matchedEntry.accessible_name);
+        if (methodVerbs.size > 0 && nameVerbs.size > 0 && ![...methodVerbs].some((v) => nameVerbs.has(v))) {
+          warnings.push(
+            `${po.class_name}.${methodName}(): dùng selector của phần tử "${matchedEntry.accessible_name}" (${matchedEntry.selector}) - tên method (${[...methodVerbs].join('/')}) và tên phần tử không cùng hành động, nghi ngờ AI gán nhầm selector. Kiểm tra lại thủ công trước khi chạy.`,
+          );
+        }
+      }
+    }
+  }
+  return warnings;
+}
+
 export function buildPlaywrightCodegenPrompt(input: PlaywrightCodegenPromptInput) {
   const pageGroups = groupElementMapByPage(input.element_map);
 
@@ -194,6 +276,7 @@ GROUNDING RULE (MANDATORY — INSTANT REJECTION IF VIOLATED)
 • Each element's "selector" was chosen by the inspector using this EXACT priority, so you will only ever see one of these four literal shapes per element — there is no ambiguity to resolve, only a value to copy: (1) \`getByTestId('...')\` when a \`data-testid\`/\`data-test-id\`/\`data-test\` attribute exists, (2) \`locator('#id')\` when a stable \`id\` attribute exists, (3) \`getByRole('role', { name: '...' })\` when an accessible name (aria-label, associated \`<label>\`, placeholder, or visible text) exists, (4) \`locator('tag')\` as the last resort when none of the above apply — treat any (4) selector as inherently fragile (it may match multiple elements) and say so in "warnings" if you must use one.
 • Never fabricate a \`data-testid\`, \`id\`, role, or accessible name that is not printed in the map. A selector you cannot find verbatim in the map does not exist for the purposes of this task.
 • If a step in the test case has NO matching element in the map, do NOT hallucinate one — instead add a clear entry to "warnings" (e.g. "Step 4 references a 'Remember me' checkbox not found in the inspected element map — selector omitted, needs manual fix") and still emit a best-effort \`// TODO:\` comment at that point in the spec rather than silently skipping the step. A skipped, un-flagged step is a worse failure than an honest gap.
+• NEVER "adapt" or substitute a DIFFERENT real element's selector for one that doesn't exist, even if it looks similar (same button style, same modal, nearby in the DOM) — e.g. a step needing a delete-confirmation's primary button must NOT be given the "Create project" button's selector just because both are primary-styled buttons in a dialog. A real selector attached to the wrong step is worse than an honest "not found": the code silently runs and clicks/asserts the wrong thing instead of failing loudly. If the step's own action genuinely has no matching element (wrong action verb: delete/confirm/cancel/submit/etc. don't appear anywhere in a candidate element's accessible_name), treat it exactly like "no matching element" above — warn and \`// TODO:\`, never substitute.
 • The ELEMENT MAP below is split into "--- Page: ... ---" sections whenever inspection walked through more than one page/state (e.g. clicking "Sign in" navigated to a login provider). Sections are in the order they were captured. A selector from a LATER section's page object only becomes usable in the spec AFTER the action that reaches that page has already been performed — never call a later page's method before the navigation/action that produces that page has executed.
 • The ELEMENT MAP may be truncated if inspection produced more than 400 elements across all pages — if a section header is present but its element list looks unexpectedly short or is missing entirely for a page a step needs, do NOT assume the page has no matching elements: add a warning saying grounding may be incomplete for that step, rather than treating the absence as confirmed.
 
