@@ -747,8 +747,13 @@ async function extractElementMap(page: any, pageLabel?: string): Promise<Element
 // is checked FIRST and wins even over an allow match (e.g. "Xóa & tạo mới" stays
 // unclicked) - it exists only to make the intent explicit for reviewers, not as the
 // primary safety mechanism; the allowlist is.
+// Includes generic menu-trigger words/glyphs (more/options/menu/actions/⋮/…) alongside
+// the original "reveal a form" verbs: icon-only kebab/"..." buttons on a card/row are
+// one of the most common reveal-triggers in real apps and previously fell through this
+// list entirely (their accessible_name is "More options"/"Actions", not "new"/"add"/...),
+// so auto-expand silently never even tried them.
 const AUTO_EXPAND_ALLOW =
-  /(^|[\s(])(\+|new|create|add|edit|show|expand|open|view more|tạo|thêm|mới|sửa|xem thêm|mở rộng)([\s)]|$)/i;
+  /(^|[\s(])(\+|new|create|add|edit|show|expand|open|view more|more|options?|menu|actions?|⋮|⋯|•••|\.\.\.|tạo|thêm|mới|sửa|xem thêm|mở rộng|tùy chọn|hành động)([\s)]|$)/i;
 // HARD: never auto-clicked, guard or no guard. Two different reasons bucketed
 // together: (a) logout/sign-out typically clears session state CLIENT-SIDE
 // (redirect to /login, drop an in-memory auth flag) as an optimistic UI update that
@@ -768,13 +773,60 @@ const AUTO_EXPAND_HARD_DENY =
 const AUTO_EXPAND_SOFT_DENY =
   /(delete|remove|xóa|xoá|archive|lưu trữ|reset|khôi phục|hủy|huỷ|cancel)/i;
 
+// Picks the allowlist-filtered click candidates out of `pool` (either the base
+// snapshot at depth 1, or whatever a PREVIOUS depth's clicks just revealed at depth
+// 2+). `seenNames` is shared/mutated ACROSS depths so the same accessible_name is
+// never queued twice even if it reappears at a later depth. Hard-deny names are
+// still recorded into `hardDenySkipped` at whichever depth they're first seen, so
+// e.g. a "Confirm Delete" that only exists once a depth-1 click reveals it still
+// gets explained in the summary warning instead of just silently never being tried.
+function selectAutoExpandCandidates(
+  pool: ElementMap,
+  seenNames: Set<string>,
+  hardDenySkipped: Set<string>,
+  softDenyIncluded: Set<string>,
+  remainingBudget: number,
+): ElementMap {
+  return pool
+    .filter((el) => {
+      if (!el.is_visible) return false;
+      if (el.tag === 'a') return false; // real navigation - crawl's job, not auto-expand's
+      if (el.role !== 'button' && el.role !== 'link') return false;
+      const name = el.accessible_name.trim();
+      if (!name || seenNames.has(name)) return false;
+      if (AUTO_EXPAND_HARD_DENY.test(name)) {
+        hardDenySkipped.add(name);
+        return false;
+      }
+      if (AUTO_EXPAND_SOFT_DENY.test(name)) {
+        softDenyIncluded.add(name);
+        seenNames.add(name);
+        return true; // admitted WITHOUT needing an ALLOW match - see AUTO_EXPAND_SOFT_DENY
+      }
+      if (!AUTO_EXPAND_ALLOW.test(name)) return false;
+      seenNames.add(name);
+      return true;
+    })
+    .slice(0, remainingBudget);
+}
+
 // Tries clicking a bounded, allowlist-filtered set of buttons from `baseMap` (the page's
 // CURRENT state) that look like they'd reveal something - a "New project" button opening
-// a dialog with fields that don't exist in the DOM until then, a "+" row-add control, an
-// accordion "Show more" - then re-snapshots and keeps whatever's genuinely new. Escape is
-// pressed between candidates as a best-effort revert; a candidate that fails to click,
-// reveals nothing new, or can't be reverted is reported as a warning and skipped - never
-// throws, since one bad trigger shouldn't sink the rest of the inspection.
+// a dialog with fields that don't exist in the DOM until then, a "+" row-add control, a
+// card's "..." menu, an accordion "Show more" - then re-snapshots and keeps whatever's
+// genuinely new. Runs up to `options.max_depth` LEVELS: depth 1 clicks triggers already
+// in `baseMap`; each subsequent depth clicks triggers that FIRST appeared as a result of
+// the previous depth's clicks (not the accumulated map so far) - e.g. depth 1 opens a
+// card's "..." menu, revealing a "Delete" item that didn't exist before; depth 2 clicks
+// THAT "Delete" item, which reveals a confirm dialog's "Confirm Delete" button. That
+// final button is still HARD_DENY (see AUTO_EXPAND_HARD_DENY) so it's never itself
+// clicked - it only needs to be captured by the re-snapshot after "Delete" was clicked.
+// `options.max_triggers` bounds the TOTAL number of real clicks across all depths
+// combined, not per-depth, so a wide/shallow allowlist match can't multiply out just
+// because more depth is available. Escape is pressed between candidates as a
+// best-effort revert; a candidate that fails to click, reveals nothing new, or can't be
+// reverted is reported as a warning and skipped - never throws, since one bad trigger
+// shouldn't sink the rest of the inspection.
 async function autoExpandTriggers(
   page: any,
   baseMap: ElementMap,
@@ -797,38 +849,106 @@ async function autoExpandTriggers(
   // explicit about WHICH clicks were only safe because of that guard.
   const softDenyIncluded = new Set<string>();
 
-  const candidates = baseMap
-    .filter((el) => {
-      if (!el.is_visible) return false;
-      if (el.tag === 'a') return false; // real navigation - crawl's job, not auto-expand's
-      if (el.role !== 'button' && el.role !== 'link') return false;
-      const name = el.accessible_name.trim();
-      if (!name || seenNames.has(name)) return false;
-      if (AUTO_EXPAND_HARD_DENY.test(name)) {
-        hardDenySkipped.add(name);
-        return false;
+  const buttonLikeTotal = baseMap.filter((el) => el.is_visible && el.tag !== 'a' && (el.role === 'button' || el.role === 'link')).length;
+  const beforeIdentities = new Set(baseMap.map(identity));
+  const maxDepth = options.max_depth ?? 2;
+
+  let pool: ElementMap = baseMap;
+  let totalClicked = 0;
+  let anyCandidateEver = false;
+
+  for (let depth = 1; depth <= maxDepth && totalClicked < options.max_triggers; depth++) {
+    const candidates = selectAutoExpandCandidates(
+      pool,
+      seenNames,
+      hardDenySkipped,
+      softDenyIncluded,
+      options.max_triggers - totalClicked,
+    );
+    if (candidates.length === 0) break; // nothing new to chase at this depth - stop, don't burn remaining depths
+    anyCandidateEver = true;
+
+    warnings.push(
+      `Auto-expand (cấp ${depth}): sẽ thử click ${candidates.length} button/link${depth === 1 ? `/${buttonLikeTotal} tổng` : ' vừa lộ ra từ cấp trước'}: ${candidates.map((c) => `"${c.accessible_name}"${softDenyIncluded.has(c.accessible_name.trim()) ? ' [guarded]' : ''}`).join(', ')}.`,
+    );
+
+    const levelDiscovered: ElementMap = [];
+    for (const candidate of candidates) {
+      totalClicked += 1;
+      let newOnes: ElementMap = [];
+      const blockedCountBefore = writeGuardBlocked.length;
+      try {
+        const locator = candidate.test_id
+          ? page.getByTestId(candidate.test_id)
+          : page.getByRole(candidate.role, { name: candidate.accessible_name, exact: false });
+        await locator.first().click({ timeout: 5000 });
+        // Same real-wait rationale as elsewhere in this file - a modal mounting or a
+        // dropdown's options fetching is itself often async.
+        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
+
+        const after = await extractElementMap(page, `Sau khi click "${candidate.accessible_name}"`);
+        newOnes = after.filter((e) => !beforeIdentities.has(identity(e)));
+        if (newOnes.length === 0) {
+          warnings.push(`Auto-expand: click "${candidate.accessible_name}" không lộ ra phần tử mới nào.`);
+        } else {
+          discovered.push(...newOnes);
+          levelDiscovered.push(...newOnes);
+          newOnes.forEach((e) => beforeIdentities.add(identity(e)));
+        }
+        // Transparency for the guarded (soft-deny) path specifically: if clicking THIS
+        // candidate attempted a real write, say exactly what was blocked, so it's never
+        // a silent thing that "just happened" during Inspect.
+        if (writeGuardBlocked.length > blockedCountBefore) {
+          const newlyBlocked = writeGuardBlocked.slice(blockedCountBefore);
+          warnings.push(
+            `Auto-expand: click "${candidate.accessible_name}" đã kích hoạt ${newlyBlocked.length} request ghi dữ liệu và bị write-guard chặn (không có gì bị thay đổi thật): ${newlyBlocked.map((b) => `${b.method} ${b.url}`).join(', ')}.`,
+          );
+        }
+      } catch (err: any) {
+        warnings.push(`Auto-expand: không thể mở "${candidate.accessible_name}" (${String(err?.message ?? err)}).`);
+      } finally {
+        // Best-effort revert to base state before the next candidate. Escape closes most
+        // real <dialog>/role="dialog" overlays, but plenty of apps reveal content as a
+        // plain conditional-render toggle instead (a "New project" button that flips a
+        // boolean and mounts a <form> inline, closed by its own "Close"/X button, not
+        // Esc - exactly this app's pattern). Checking whether any of THIS candidate's own
+        // newly-revealed elements are still present tells us whether Escape actually
+        // closed anything; only then try re-clicking the same trigger (the common
+        // toggle-button idiom) as a second attempt - never blind, so a real modal that
+        // Escape DID close doesn't get accidentally reopened by this second click.
+        await page.keyboard.press('Escape').catch(() => {});
+        if (newOnes.length > 0) {
+          const stillPresent = await extractElementMap(page);
+          const stillPresentIds = new Set(stillPresent.map(identity));
+          const escapeWorked = !newOnes.some((e) => stillPresentIds.has(identity(e)));
+          if (!escapeWorked) {
+            const locator = candidate.test_id
+              ? page.getByTestId(candidate.test_id)
+              : page.getByRole(candidate.role, { name: candidate.accessible_name, exact: false });
+            await locator
+              .first()
+              .click({ timeout: 3000 })
+              .catch(() => {});
+          }
+        }
       }
-      if (AUTO_EXPAND_SOFT_DENY.test(name)) {
-        softDenyIncluded.add(name);
-        seenNames.add(name);
-        return true; // admitted WITHOUT needing an ALLOW match - see AUTO_EXPAND_SOFT_DENY
-      }
-      if (!AUTO_EXPAND_ALLOW.test(name)) return false;
-      seenNames.add(name);
-      return true;
-    })
-    .slice(0, options.max_triggers);
+    }
+
+    // Next depth only chases what THIS depth's clicks newly revealed - never the whole
+    // accumulated map - so depth 2+ stays targeted at "things behind what we just
+    // opened" (a menu's items, a dialog's own buttons) instead of re-trying depth 1's
+    // own candidates or anything already dismissed as hard/soft-deny.
+    pool = levelDiscovered;
+  }
 
   // Always-emitted, unconditional on outcome: without this, "no candidate matched the
-  // allowlist" and "auto_expand wasn't even enabled" look identical from the outside -
-  // both just produce zero new elements with zero explanation. This line alone answers
-  // "did auto-expand even try anything, and on what" every time it runs.
-  const buttonLikeTotal = baseMap.filter((el) => el.is_visible && el.tag !== 'a' && (el.role === 'button' || el.role === 'link')).length;
-  warnings.push(
-    candidates.length > 0
-      ? `Auto-expand: sẽ thử click ${candidates.length}/${buttonLikeTotal} button/link: ${candidates.map((c) => `"${c.accessible_name}"${softDenyIncluded.has(c.accessible_name.trim()) ? ' [guarded]' : ''}`).join(', ')}.`
-      : `Auto-expand: 0/${buttonLikeTotal} button/link trong element_map khớp allowlist ("new/create/add/+/tạo/thêm/mới/..."), không có gì để thử click. Nếu nút mở form của bạn có tên khác, cho mình biết tên chính xác để mở rộng allowlist.`,
-  );
+  // allowlist at any depth" and "auto_expand wasn't even enabled" look identical from
+  // the outside - both just produce zero new elements with zero explanation.
+  if (!anyCandidateEver) {
+    warnings.push(
+      `Auto-expand: 0/${buttonLikeTotal} button/link trong element_map khớp allowlist ("new/create/add/+/more/options/menu/tạo/thêm/mới/..."), không có gì để thử click. Nếu nút mở form/menu của bạn có tên khác, cho mình biết tên chính xác để mở rộng allowlist.`,
+    );
+  }
   if (softDenyIncluded.size > 0) {
     warnings.push(
       `Auto-expand: ${softDenyIncluded.size} nút được đánh dấu "[guarded]" ở trên trông có vẻ mang tính phá hủy (khớp "delete/remove/xóa/archive/reset/..."), nhưng VẪN được click thật vì toàn bộ phiên Inspect này đang chạy dưới network write-guard - mọi request ghi dữ liệu (POST/PUT/PATCH/DELETE) đều bị chặn trước khi tới server, nên việc click chỉ có thể lộ ra UI (VD: dialog xác nhận), không thể thực sự xóa/thay đổi gì. Nhờ vậy dialog xác nhận (Cancel/Delete...) giờ sẽ có mặt trong element_map mà không cần bạn tự thêm inspection_steps thủ công nữa.`,
@@ -836,69 +956,8 @@ async function autoExpandTriggers(
   }
   if (hardDenySkipped.size > 0) {
     warnings.push(
-      `Auto-expand: bỏ qua ${hardDenySkipped.size} button/link luôn được coi là KHÔNG an toàn để tự click dù có guard (khớp "logout/pay/submit/confirm/..."): ${Array.from(hardDenySkipped).map((n) => `"${n}"`).join(', ')}. Những nút này thường là hành động CUỐI CÙNG (không mở thêm dialog xác nhận nào nữa) hoặc tự thay đổi trạng thái đăng nhập phía client mà việc chặn network không ngăn được - nếu 1 bước test case thực sự cần thao tác này, hãy thêm nó làm 1 bước "inspection_steps" thủ công.`,
+      `Auto-expand: bỏ qua ${hardDenySkipped.size} button/link luôn được coi là KHÔNG an toàn để tự click dù có guard (khớp "logout/pay/submit/confirm/..."): ${Array.from(hardDenySkipped).map((n) => `"${n}"`).join(', ')}. Những nút này thường là hành động CUỐI CÙNG (không mở thêm dialog xác nhận nào nữa) hoặc tự thay đổi trạng thái đăng nhập phía client mà việc chặn network không ngăn được - nếu 1 bước test case thực sự cần thao tác này, hãy thêm nó làm 1 bước "inspection_steps" thủ công. Lưu ý: nếu nút này CHỈ xuất hiện sau khi click 1 trigger khác (VD: "Confirm Delete" bên trong dialog xác nhận), bản thân nó vẫn được CHỤP LẠI vào element_map miễn là trigger mở ra nó đã được click - không cần click chính nút hard-deny này.`,
     );
-  }
-
-  const beforeIdentities = new Set(baseMap.map(identity));
-
-  for (const candidate of candidates) {
-    let newOnes: ElementMap = [];
-    const blockedCountBefore = writeGuardBlocked.length;
-    try {
-      const locator = candidate.test_id
-        ? page.getByTestId(candidate.test_id)
-        : page.getByRole(candidate.role, { name: candidate.accessible_name, exact: false });
-      await locator.first().click({ timeout: 5000 });
-      // Same real-wait rationale as elsewhere in this file - a modal mounting or a
-      // dropdown's options fetching is itself often async.
-      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
-
-      const after = await extractElementMap(page, `Sau khi click "${candidate.accessible_name}"`);
-      newOnes = after.filter((e) => !beforeIdentities.has(identity(e)));
-      if (newOnes.length === 0) {
-        warnings.push(`Auto-expand: click "${candidate.accessible_name}" không lộ ra phần tử mới nào.`);
-      } else {
-        discovered.push(...newOnes);
-        newOnes.forEach((e) => beforeIdentities.add(identity(e)));
-      }
-      // Transparency for the guarded (soft-deny) path specifically: if clicking THIS
-      // candidate attempted a real write, say exactly what was blocked, so it's never
-      // a silent thing that "just happened" during Inspect.
-      if (writeGuardBlocked.length > blockedCountBefore) {
-        const newlyBlocked = writeGuardBlocked.slice(blockedCountBefore);
-        warnings.push(
-          `Auto-expand: click "${candidate.accessible_name}" đã kích hoạt ${newlyBlocked.length} request ghi dữ liệu và bị write-guard chặn (không có gì bị thay đổi thật): ${newlyBlocked.map((b) => `${b.method} ${b.url}`).join(', ')}.`,
-        );
-      }
-    } catch (err: any) {
-      warnings.push(`Auto-expand: không thể mở "${candidate.accessible_name}" (${String(err?.message ?? err)}).`);
-    } finally {
-      // Best-effort revert to base state before the next candidate. Escape closes most
-      // real <dialog>/role="dialog" overlays, but plenty of apps reveal content as a
-      // plain conditional-render toggle instead (a "New project" button that flips a
-      // boolean and mounts a <form> inline, closed by its own "Close"/X button, not
-      // Esc - exactly this app's pattern). Checking whether any of THIS candidate's own
-      // newly-revealed elements are still present tells us whether Escape actually
-      // closed anything; only then try re-clicking the same trigger (the common
-      // toggle-button idiom) as a second attempt - never blind, so a real modal that
-      // Escape DID close doesn't get accidentally reopened by this second click.
-      await page.keyboard.press('Escape').catch(() => {});
-      if (newOnes.length > 0) {
-        const stillPresent = await extractElementMap(page);
-        const stillPresentIds = new Set(stillPresent.map(identity));
-        const escapeWorked = !newOnes.some((e) => stillPresentIds.has(identity(e)));
-        if (!escapeWorked) {
-          const locator = candidate.test_id
-            ? page.getByTestId(candidate.test_id)
-            : page.getByRole(candidate.role, { name: candidate.accessible_name, exact: false });
-          await locator
-            .first()
-            .click({ timeout: 3000 })
-            .catch(() => {});
-        }
-      }
-    }
   }
 
   return { discovered, warnings };
