@@ -121,6 +121,14 @@ export type CrawlOptions = z.infer<typeof crawlOptionsSchema>;
 export const autoExpandOptionsSchema = z.object({
   enabled: z.boolean().default(false),
   max_triggers: z.coerce.number().int().min(1).max(10).default(5),
+  // How many CLICK LEVELS deep auto-expand will chase reveals: depth 1 only clicks
+  // triggers present in the base snapshot; depth 2 also clicks triggers that FIRST
+  // appeared as a result of a depth-1 click (e.g. a card's "..." menu revealing a
+  // "Delete" item, which itself then needs clicking to reveal a "Confirm Delete"
+  // dialog) - see autoExpandTriggers() in browser-runner.ts. Kept shallow by default:
+  // each extra level multiplies how many real clicks happen in the caller's own
+  // authenticated session.
+  max_depth: z.coerce.number().int().min(1).max(3).default(2),
 });
 export type AutoExpandOptions = z.infer<typeof autoExpandOptionsSchema>;
 
