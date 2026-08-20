@@ -61,9 +61,16 @@ create table if not exists test_case_embeddings (
   id uuid primary key default gen_random_uuid(),
   test_case_import_id uuid references test_case_imports(id) on delete cascade,
   content_snippet text,
+  -- Cau truc GeneratedTestCase day du (code/title/category/steps/...) cua chinh
+  -- case duoc embed - luu lai de RAG retrieval (match_test_case_embeddings ben
+  -- duoi) tra thang ve duoc object test case, khong can parse lai content_snippet.
+  raw_case jsonb,
   embedding vector(768),
   created_at timestamptz default now()
 );
+
+-- Idempotent cho DB da chay schema.sql tu truoc khi co cot raw_case.
+alter table test_case_embeddings add column if not exists raw_case jsonb;
 
 create table if not exists test_case_sets (
   id uuid primary key default gen_random_uuid(),
@@ -173,6 +180,48 @@ create index if not exists idx_project_members_user_id on project_members(user_i
 create index if not exists idx_test_case_sets_project_id on test_case_sets(project_id);
 create index if not exists idx_test_cases_set_id on test_cases(set_id);
 create index if not exists idx_test_case_embeddings_vector on test_case_embeddings using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+create index if not exists idx_test_case_imports_project_id on test_case_imports(project_id);
+
+-- ----------------------------------------------------------------------------
+-- RAG retrieval: semantic search over previously-embedded old test cases,
+-- scoped to a single project. Called from services/rag/test-case-rag.ts
+-- (POST /api/ai/retrieve) with the embedding of the current requirement
+-- description as query_embedding. NOT security definer - runs with the
+-- caller's privileges so the existing test_case_embeddings_member_select /
+-- test_case_imports_member_access RLS policies apply exactly as if the join
+-- were run directly by the client; match_project_id only narrows which of the
+-- caller's own projects to search within.
+-- ----------------------------------------------------------------------------
+create or replace function public.match_test_case_embeddings(
+  query_embedding vector(768),
+  match_project_id uuid,
+  match_count int default 5,
+  match_threshold float default 0.5
+)
+returns table (
+  id uuid,
+  test_case_import_id uuid,
+  content_snippet text,
+  raw_case jsonb,
+  similarity float
+)
+language sql
+stable
+as $$
+  select
+    tce.id,
+    tce.test_case_import_id,
+    tce.content_snippet,
+    tce.raw_case,
+    1 - (tce.embedding <=> query_embedding) as similarity
+  from test_case_embeddings tce
+  join test_case_imports tci on tci.id = tce.test_case_import_id
+  where tci.project_id = match_project_id
+    and tce.embedding is not null
+    and 1 - (tce.embedding <=> query_embedding) > match_threshold
+  order by tce.embedding <=> query_embedding
+  limit match_count;
+$$;
 
 alter table profiles enable row level security;
 alter table projects enable row level security;
@@ -533,6 +582,29 @@ alter table automation_scripts add column if not exists element_map jsonb;
 alter table automation_scripts add column if not exists model_used text;
 alter table automation_scripts add column if not exists generated_by uuid references profiles(id);
 alter table automation_scripts add column if not exists created_at timestamptz default now();
+-- CRITICAL FIX: soft-delete column referenced everywhere (GET .../scripts,
+-- DELETE .../scripts/[scriptId]) but never actually added by any prior
+-- migration - every read/delete of automation_scripts was failing at the DB
+-- level with "column automation_scripts.deleted_at does not exist" until this
+-- line existed. NULL = active/visible; set = soft-deleted (see DELETE handler
+-- in app/api/test-cases/[id]/automation/scripts/[scriptId]/route.ts). Kept as
+-- a soft delete (not a hard DELETE) so automation_runs.script_id references
+-- and each run's code_snapshot/page_objects_snapshot audit trail stay intact.
+alter table automation_scripts add column if not exists deleted_at timestamptz;
+-- "Review Gate" state machine (Architectural Pattern): a freshly generated
+-- script always lands 'pending_review' - it must be explicitly reviewed,
+-- either "Approve & Run" (PATCH .../scripts/[scriptId], approve as-is) or
+-- "Edit / Tweak" (POST .../scripts, self-approves on save) - before the Run
+-- button will execute it. Enforced both client-side (RunResultPanel /
+-- useAutomation.runTest) and server-side (app/api/automation/run/route.ts),
+-- so it can't be bypassed by calling the run API directly. Batch Automation
+-- (lib/automation/batch-runner.ts) deliberately runs through a different,
+-- lower-level code path (runGeneratedScript directly, not this HTTP route) -
+-- it stays unattended by design and is unaffected by this gate.
+alter table automation_scripts add column if not exists status text not null default 'pending_review'
+  check (status in ('pending_review', 'approved'));
+alter table automation_scripts add column if not exists approved_by uuid references profiles(id);
+alter table automation_scripts add column if not exists approved_at timestamptz;
 -- code was added as nullable above (ADD COLUMN can't add a NOT NULL column to
 -- a table that may already have rows without a default); enforce NOT NULL now
 -- that any pre-existing rows would already have a value or this is a fresh table.
@@ -573,6 +645,9 @@ end $$;
 
 create index if not exists idx_automation_scripts_test_case_id on automation_scripts(test_case_id);
 create index if not exists idx_automation_runs_test_case_id on automation_runs(test_case_id);
+-- Covers the run-history query (WHERE test_case_id = ? ORDER BY started_at DESC LIMIT 20):
+-- without this, Postgres scans+sorts every run for the test case on each page load.
+create index if not exists idx_automation_runs_test_case_started_at on automation_runs(test_case_id, started_at desc);
 
 alter table automation_scripts enable row level security;
 alter table automation_runs enable row level security;
@@ -839,3 +914,218 @@ end;
 $$;
 
 grant execute on function public.claim_next_batch_item(uuid) to authenticated;
+
+-- ============================================================================
+-- Automation Agent Rebuild (xem docs/automation-agent-rebuild.md cho thiết kế
+-- đầy đủ) - Pha 1: Schema + Page Object Registry. KHONG doi hanh vi chay hien
+-- tai - moi cot/bang moi deu co default an toan, execution_mode mac dinh
+-- 'serverless' cho toan bo environment cu, nen khong ai bi anh huong ngay khi
+-- migration nay chay.
+--
+-- Van de duoc giai quyet: truoc day moi lan "Generate" tren 1 test case sinh
+-- LAI TU DAU toan bo Page Object cho moi trang no cham toi - 2 test case cung
+-- cham trang Login se tao ra 2 ban LoginPage doc lap, co the lech nhau (khac
+-- selector neu DOM doi giua 2 lan generate, khac method set). Vi pham nguyen
+-- tac DRY cua Page Object Model va la rao can truc tiep cho tinh nang export
+-- ra git (se tao duplicate file). Gio Page Object la 1 ENTITY SONG O CAP
+-- PROJECT (automation_page_objects), duoc MO RONG dan qua cac lan generate
+-- (them method moi), khong bao gio bi regenerate/ghi de tu dau.
+--
+-- automation_scripts.page_objects (jsonb, da co) KHONG bi xoa - van la SNAPSHOT
+-- "tai thoi diem generate", dung lam nguon cho RUN (dam bao chay dung ban da
+-- duoc review/approve, khong am tham chay code registry moi hon chua duoc
+-- duyet). Registry la nguon cho GENERATE LAN SAU va cho EXPORT.
+-- ============================================================================
+
+-- automation_page_objects: 1 class Page Object = 1 hang, duy nhat theo
+-- (project_id, class_name). "code" la noi dung file .ts day du, "method_signatures"
+-- la audit trail nhe (khong phai AST) cho biet method nao duoc ai/khi nao them -
+-- dung de hien thi lich su tren UI Registry va lam input cho Merge Engine
+-- (xem lib/automation/page-object-merge.ts) khi so sanh voi 1 ban AI moi de xuat.
+create table if not exists automation_page_objects (
+  id uuid primary key default gen_random_uuid()
+);
+alter table automation_page_objects add column if not exists project_id uuid references projects(id) on delete cascade;
+alter table automation_page_objects add column if not exists class_name text;
+alter table automation_page_objects add column if not exists file_name text;
+alter table automation_page_objects add column if not exists page_label text;
+-- URL da chuan hoa (bo query string, thay UUID/id so nguyen dai bang ':id') de
+-- lan inspect sau match duoc "day la cung 1 trang" du query string khac nhau -
+-- xem normalizePageUrlPattern() trong lib/automation/page-object-registry.ts.
+alter table automation_page_objects add column if not exists page_url_pattern text;
+alter table automation_page_objects add column if not exists code text;
+alter table automation_page_objects add column if not exists method_signatures jsonb not null default '[]'::jsonb;
+alter table automation_page_objects add column if not exists version int not null default 1;
+alter table automation_page_objects add column if not exists updated_by uuid references profiles(id);
+alter table automation_page_objects add column if not exists updated_at timestamptz default now();
+alter table automation_page_objects add column if not exists created_at timestamptz default now();
+
+do $$
+begin
+  if not exists (select 1 from automation_page_objects where class_name is null or file_name is null or code is null) then
+    alter table automation_page_objects alter column class_name set not null;
+    alter table automation_page_objects alter column file_name set not null;
+    alter table automation_page_objects alter column code set not null;
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'automation_page_objects_project_class_unique'
+  ) then
+    alter table automation_page_objects
+      add constraint automation_page_objects_project_class_unique unique (project_id, class_name);
+  end if;
+end $$;
+
+create index if not exists idx_automation_page_objects_project_id on automation_page_objects(project_id);
+
+-- automation_script_page_object_refs: ghi lai 1 script (1 lan Generate cho 1 test
+-- case) da dung registry entry nao O PHIEN BAN NAO tai thoi diem generate - can
+-- cho traceability + export (Exporter biet chinh xac phai lay dung version nao,
+-- khong am tham keo 1 thay doi registry moi hon vao ban export cua 1 script cu).
+create table if not exists automation_script_page_object_refs (
+  script_id uuid references automation_scripts(id) on delete cascade,
+  page_object_id uuid references automation_page_objects(id) on delete cascade,
+  page_object_version_used int not null,
+  created_at timestamptz default now(),
+  primary key (script_id, page_object_id)
+);
+
+-- automation_registry_conflicts: hang doi review khi Merge Engine phat hien 1
+-- method AI de xuat TRUNG TEN voi 1 method da co trong registry nhung NOI DUNG
+-- khac nhau - khong bao gio tu dong ghi de (P3 trong tai lieu thiet ke), luon
+-- can con nguoi doi chieu. Luu ca 2 ban (proposed/existing) de reviewer thay
+-- diff ngay tren UI ma khong can doi chieu code thu cong.
+create table if not exists automation_registry_conflicts (
+  id uuid primary key default gen_random_uuid()
+);
+alter table automation_registry_conflicts add column if not exists project_id uuid references projects(id) on delete cascade;
+alter table automation_registry_conflicts add column if not exists page_object_id uuid references automation_page_objects(id) on delete cascade;
+alter table automation_registry_conflicts add column if not exists method_name text;
+alter table automation_registry_conflicts add column if not exists reason text;
+alter table automation_registry_conflicts add column if not exists proposed_code text;
+alter table automation_registry_conflicts add column if not exists existing_code text;
+alter table automation_registry_conflicts add column if not exists source_test_case_id uuid references test_cases(id) on delete set null;
+alter table automation_registry_conflicts add column if not exists source_script_id uuid references automation_scripts(id) on delete set null;
+alter table automation_registry_conflicts add column if not exists status text not null default 'pending'
+  check (status in ('pending', 'resolved_keep_existing', 'resolved_use_proposed', 'resolved_manual'));
+alter table automation_registry_conflicts add column if not exists resolved_by uuid references profiles(id);
+alter table automation_registry_conflicts add column if not exists resolved_at timestamptz;
+alter table automation_registry_conflicts add column if not exists created_at timestamptz default now();
+
+do $$
+begin
+  if not exists (select 1 from automation_registry_conflicts where method_name is null or reason is null) then
+    alter table automation_registry_conflicts alter column method_name set not null;
+    alter table automation_registry_conflicts alter column reason set not null;
+  end if;
+end $$;
+
+create index if not exists idx_automation_registry_conflicts_project_status
+  on automation_registry_conflicts(project_id, status);
+
+-- automation_suite_exports: audit trail cho tinh nang "Export to Git" (Pha 5 -
+-- xem docs/automation-agent-rebuild.md#4.4). Bang nay bat dau vo dung ngay tu
+-- Pha 1 vi khong co gi phu thuoc vao no de hoat dong - tao truoc de khoi phai
+-- migrate them lan nua khi Exporter duoc xay. TUYET DOI KHONG co cot luu git
+-- token - chi luu KET QUA cua viec dung token (commit_sha), giong het cach
+-- cookie_token/login o project_environments khong bao gio duoc ben nay dot cham.
+create table if not exists automation_suite_exports (
+  id uuid primary key default gen_random_uuid()
+);
+alter table automation_suite_exports add column if not exists project_id uuid references projects(id) on delete cascade;
+alter table automation_suite_exports add column if not exists scope jsonb not null default '{}'::jsonb;
+alter table automation_suite_exports add column if not exists script_versions jsonb not null default '[]'::jsonb;
+alter table automation_suite_exports add column if not exists target text;
+alter table automation_suite_exports add column if not exists commit_sha text;
+alter table automation_suite_exports add column if not exists pr_url text;
+alter table automation_suite_exports add column if not exists exported_by uuid references profiles(id);
+alter table automation_suite_exports add column if not exists exported_at timestamptz default now();
+
+create index if not exists idx_automation_suite_exports_project_id on automation_suite_exports(project_id);
+
+-- ── execution_mode: chon Preview (serverless, eval-based, nhu hien tai) hay ──
+-- Full run (self-hosted, @playwright/test that voi trace/video/retry/report) -
+-- xem lib/automation/runner.ts. Mac dinh 'serverless' cho MOI environment cu/moi
+-- - self_hosted chi thuc su chay duoc khi AUTOMATION_RUNTIME=local (validator
+-- server-side tu choi chon self_hosted tren Vercel, giong cach assertBrowserAllowed
+-- da chan firefox/edge tren serverless tu truoc).
+alter table project_environments add column if not exists execution_mode text not null default 'serverless'
+  check (execution_mode in ('serverless', 'self_hosted'));
+
+-- automation_runs: them cot cho ket qua "Full run" (self-hosted) - trace/video/
+-- report chi self-hosted moi dien, serverless de null. is_flaky = true khi lan
+-- retry-1 (self-hosted, xem P4 trong tai lieu thiet ke) cho ket qua KHAC lan dau
+-- (fail roi pass) - khong bao gio am tham bao xanh, luon danh dau ro flaky != passed.
+alter table automation_runs add column if not exists trace_url text;
+alter table automation_runs add column if not exists video_url text;
+alter table automation_runs add column if not exists html_report_url text;
+alter table automation_runs add column if not exists attempts int not null default 1;
+alter table automation_runs add column if not exists is_flaky boolean not null default false;
+alter table automation_runs add column if not exists execution_mode text not null default 'serverless_preview'
+  check (execution_mode in ('serverless_preview', 'self_hosted'));
+
+alter table automation_page_objects enable row level security;
+alter table automation_script_page_object_refs enable row level security;
+alter table automation_registry_conflicts enable row level security;
+alter table automation_suite_exports enable row level security;
+
+drop policy if exists automation_page_objects_member_access on automation_page_objects;
+create policy automation_page_objects_member_access on automation_page_objects for all using (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_page_objects.project_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_page_objects.project_id and pm.user_id = auth.uid()
+  )
+);
+
+-- Khong co project_id truc tiep tren bang ref - join qua page_object_id (da du
+-- de xac dinh quyen truy cap; script_id luon thuoc cung project voi page_object_id
+-- no tro toi vi day la invariant ung dung tao ra, khong phai constraint DB rieng -
+-- xem lib/automation/page-object-registry-orchestrator.ts).
+drop policy if exists automation_script_page_object_refs_member_access on automation_script_page_object_refs;
+create policy automation_script_page_object_refs_member_access on automation_script_page_object_refs for all using (
+  exists (
+    select 1 from automation_page_objects po
+    join project_members pm on pm.project_id = po.project_id
+    where po.id = automation_script_page_object_refs.page_object_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from automation_page_objects po
+    join project_members pm on pm.project_id = po.project_id
+    where po.id = automation_script_page_object_refs.page_object_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_registry_conflicts_member_access on automation_registry_conflicts;
+create policy automation_registry_conflicts_member_access on automation_registry_conflicts for all using (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_registry_conflicts.project_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_registry_conflicts.project_id and pm.user_id = auth.uid()
+  )
+);
+
+drop policy if exists automation_suite_exports_member_access on automation_suite_exports;
+create policy automation_suite_exports_member_access on automation_suite_exports for all using (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_suite_exports.project_id and pm.user_id = auth.uid()
+  )
+) with check (
+  exists (
+    select 1 from project_members pm
+    where pm.project_id = automation_suite_exports.project_id and pm.user_id = auth.uid()
+  )
+);
