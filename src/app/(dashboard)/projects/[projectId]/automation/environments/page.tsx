@@ -1,7 +1,8 @@
 'use client';
 
 import { use } from 'react';
-import { Plus, X, Globe, Trash2 } from 'lucide-react';
+import { Plus, X, Globe, Trash2, Boxes } from 'lucide-react';
+import Link from 'next/link';
 import { useEnvironments } from '@/hooks/automation/use-environments';
 import { BackLink } from '@/views/layout/back-link';
 
@@ -32,6 +33,16 @@ export default function EnvironmentsPage({ params }: { params: Promise<{ project
           {env.showCreate ? t.common.close : e.createButton}
         </button>
       </div>
+
+      <Link href={`/projects/${projectId}/automation/registry`} className="surface-card-interactive flex items-center gap-3 p-4">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink-100 text-ink-700">
+          <Boxes className="h-4 w-4" strokeWidth={2.25} />
+        </span>
+        <div>
+          <p className="text-sm font-semibold text-ink-900">{t.batchAutomation.registry.title}</p>
+          <p className="text-caption">{t.batchAutomation.registry.subtitle}</p>
+        </div>
+      </Link>
 
       {env.error && <div className="alert-danger">{env.error}</div>}
 
@@ -91,6 +102,34 @@ export default function EnvironmentsPage({ params }: { params: Promise<{ project
             <p className="text-caption mt-2 italic">{e.authModeNote}</p>
           </div>
 
+          <div>
+            <label className="field-label">{e.executionModeLabel}</label>
+            <div className="flex flex-wrap gap-2">
+              {(['serverless', 'self_hosted'] as const).map((mode) => {
+                const disabled = mode === 'self_hosted' && !env.selfHostedAvailable;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={disabled}
+                    title={disabled ? e.executionModeDisabledHint : undefined}
+                    onClick={() => env.setExecutionMode(mode)}
+                    className={`rounded-[var(--radius-control)] border px-3 py-1.5 text-xs font-semibold transition ${
+                      disabled
+                        ? 'cursor-not-allowed border-ink-100 text-ink-300'
+                        : env.executionMode === mode
+                        ? 'border-brand-500 bg-brand-50 text-brand-700'
+                        : 'border-ink-200 text-ink-600 hover:bg-ink-50'
+                    }`}
+                  >
+                    {mode === 'serverless' ? e.executionModePreview : e.executionModeFullRun}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-caption mt-2 italic">{e.executionModeNote}</p>
+          </div>
+
           {env.saveError && <p className="text-sm font-semibold text-danger-600">{env.saveError}</p>}
 
           <div className="flex items-center gap-3 border-t border-ink-100 pt-4">
@@ -135,6 +174,9 @@ export default function EnvironmentsPage({ params }: { params: Promise<{ project
                 <span className="badge-neutral">{item.browser}</span>
                 <span className={AUTH_MODE_BADGE[item.auth_mode]}>
                   {item.auth_mode === 'none' ? e.authNone : item.auth_mode === 'cookie' ? e.authCookie : e.authLogin}
+                </span>
+                <span className={item.execution_mode === 'self_hosted' ? 'badge-brand' : 'badge-neutral'}>
+                  {item.execution_mode === 'self_hosted' ? e.executionModeFullRun : e.executionModePreview}
                 </span>
               </div>
             </div>

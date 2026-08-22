@@ -29,7 +29,21 @@ export type AutomationBrowser = z.infer<typeof automationBrowserSchema>;
 export const executionModeSchema = z.enum(['serverless', 'self_hosted']);
 export type ExecutionMode = z.infer<typeof executionModeSchema>;
 
-const IS_SERVERLESS_RUNTIME = Boolean(process.env.VERCEL) || process.env.AUTOMATION_RUNTIME === 'serverless';
+/** Reads fresh on every call (not cached at module load) — negligible cost, and it
+ * means (a) a test can flip process.env.AUTOMATION_RUNTIME and immediately observe
+ * the change, and (b) we're never stuck with whatever env happened to be set the
+ * instant this module was first imported. */
+function isServerlessRuntime(): boolean {
+  return Boolean(process.env.VERCEL) || process.env.AUTOMATION_RUNTIME === 'serverless';
+}
+
+/** Single source of truth for "can this deployment actually run self-hosted Full
+ * runs" — used both by assertExecutionModeAllowed (server-side enforcement) and by
+ * GET /api/automation/runtime-info (so the client can grey out the option instead
+ * of letting someone pick it and only find out it's rejected on submit). */
+export function isSelfHostedRuntimeAvailable(): boolean {
+  return !isServerlessRuntime();
+}
 
 /**
  * Server-side guard mirroring assertBrowserAllowed() in browser-runner.ts - a client
@@ -37,7 +51,7 @@ const IS_SERVERLESS_RUNTIME = Boolean(process.env.VERCEL) || process.env.AUTOMAT
  * direct API call), so this must be re-checked here, not just disabled in the form.
  */
 export function assertExecutionModeAllowed(mode: ExecutionMode): void {
-  if (IS_SERVERLESS_RUNTIME && mode === 'self_hosted') {
+  if (isServerlessRuntime() && mode === 'self_hosted') {
     throw new Error(
       'Chế độ "Full run (self-hosted)" chỉ khả dụng khi tự host QAJD (AUTOMATION_RUNTIME=local, đã ' +
         "chạy 'npx playwright install'). Trên môi trường serverless (Vercel) chỉ có Preview.",

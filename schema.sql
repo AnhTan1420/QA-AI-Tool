@@ -1067,6 +1067,17 @@ alter table automation_runs add column if not exists is_flaky boolean not null d
 alter table automation_runs add column if not exists execution_mode text not null default 'serverless_preview'
   check (execution_mode in ('serverless_preview', 'self_hosted'));
 
+-- BUG FIX: the original 'status' check constraint (further up this file, when
+-- automation_runs was first created) only allows ('passed','failed','error') - it
+-- predates 'flaky' (self-hosted retry-then-pass, see comment above). Without this,
+-- every self-hosted run whose outcome is 'flaky' would be REJECTED at insert time by
+-- Postgres, not just mis-displayed - this must run, not just be a nice-to-have.
+-- Postgres names an inline column-level check constraint '<table>_<column>_check' by
+-- default, which is what the original `add column ... check (...)` above produced.
+alter table automation_runs drop constraint if exists automation_runs_status_check;
+alter table automation_runs add constraint automation_runs_status_check
+  check (status in ('passed', 'failed', 'error', 'flaky'));
+
 alter table automation_page_objects enable row level security;
 alter table automation_script_page_object_refs enable row level security;
 alter table automation_registry_conflicts enable row level security;
@@ -1128,4 +1139,50 @@ create policy automation_suite_exports_member_access on automation_suite_exports
     select 1 from project_members pm
     where pm.project_id = automation_suite_exports.project_id and pm.user_id = auth.uid()
   )
+);
+
+-- ----------------------------------------------------------------------------
+-- Storage: bucket cho artifact cua SELF-HOSTED "Full run" (trace.zip, video.webm,
+-- HTML report zip - xem lib/automation/playwright-test-runner.ts +
+-- lib/automation/run-artifact-storage.ts). PRIVATE, object name convention giong
+-- het automation-screenshots: '<test_case_id>/<run_id>/<kind>.<ext>', nen policy
+-- dung chung logic tach test_case_id tu segment dau tien cua object name.
+-- ----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public)
+values ('automation-run-artifacts', 'automation-run-artifacts', false)
+on conflict (id) do nothing;
+
+create or replace function public.can_access_automation_run_artifact(object_name text)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from test_cases tc
+    join test_case_sets s on s.id = tc.set_id
+    join project_members pm on pm.project_id = s.project_id
+    where tc.id::text = split_part(object_name, '/', 1) and pm.user_id = auth.uid()
+  );
+$$;
+
+drop policy if exists automation_run_artifacts_select on storage.objects;
+create policy automation_run_artifacts_select on storage.objects for select using (
+  bucket_id = 'automation-run-artifacts' and can_access_automation_run_artifact(name)
+);
+
+drop policy if exists automation_run_artifacts_insert on storage.objects;
+create policy automation_run_artifacts_insert on storage.objects for insert with check (
+  bucket_id = 'automation-run-artifacts' and can_access_automation_run_artifact(name)
+);
+
+drop policy if exists automation_run_artifacts_update on storage.objects;
+create policy automation_run_artifacts_update on storage.objects for update using (
+  bucket_id = 'automation-run-artifacts' and can_access_automation_run_artifact(name)
+);
+
+drop policy if exists automation_run_artifacts_delete on storage.objects;
+create policy automation_run_artifacts_delete on storage.objects for delete using (
+  bucket_id = 'automation-run-artifacts' and can_access_automation_run_artifact(name)
 );

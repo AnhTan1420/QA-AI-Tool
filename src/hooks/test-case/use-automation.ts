@@ -7,6 +7,7 @@ import type { ProjectEnvironment } from '@/hooks/automation/use-environments';
 
 export type AutomationBrowser = 'chromium' | 'firefox' | 'edge';
 export type AuthMode = 'none' | 'cookie' | 'login';
+export type ExecutionMode = 'serverless' | 'self_hosted';
 
 export type InspectedElement = {
   role: string;
@@ -46,10 +47,16 @@ export type PlaywrightScript = {
 
 export type RunResult = {
   run_id: string;
-  status: 'passed' | 'failed' | 'error';
+  status: 'passed' | 'failed' | 'error' | 'flaky';
   duration_ms: number;
+  attempts: number;
+  execution_mode: 'serverless' | 'self_hosted';
   screenshot_url: string | null;
+  trace_url: string | null;
+  video_url: string | null;
+  html_report_url: string | null;
   failure_details: { error_message: string; selector?: string } | null;
+  warnings: string[];
 };
 
 export type InspectionStepAction = 'click' | 'fill' | 'press_enter' | 'goto';
@@ -113,6 +120,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
   const [browser, setBrowser] = useState<AutomationBrowser>('chromium');
   const [targetUrl, setTargetUrl] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode>('none');
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('serverless');
   const [cookieToken, setCookieToken] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -170,6 +178,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     setBrowser(env.browser);
     setTargetUrl(env.target_url);
     setAuthMode(env.auth_mode);
+    setExecutionMode(env.execution_mode);
     setCookieToken('');
     setUsername('');
     setPassword('');
@@ -371,6 +380,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     return {
       browser,
       target_url: targetUrl,
+      execution_mode: executionMode,
       cookie_token: authMode === 'cookie' ? cookieToken : undefined,
       login: authMode === 'login' ? { username, password } : undefined,
     };
@@ -420,7 +430,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
           test_case_id: testCaseId,
           test_case: testCase,
           element_map: elementMap,
-          environment: { browser, target_url: targetUrl, auth_mode: authMode },
+          environment: { browser, target_url: targetUrl, auth_mode: authMode, execution_mode: executionMode },
           language: locale === 'vi' ? 'Tiếng Việt' : 'English',
         }),
       });
@@ -531,7 +541,7 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
           test_case_id: testCaseId,
           test_case: testCase,
           element_map: freshMap,
-          environment: { browser, target_url: targetUrl, auth_mode: authMode },
+          environment: { browser, target_url: targetUrl, auth_mode: authMode, execution_mode: executionMode },
           language: locale === 'vi' ? 'Tiếng Việt' : 'English',
           previous_code: script.code,
           previous_page_objects: script.page_objects,
@@ -578,6 +588,8 @@ export function useAutomation(testCaseId: string, testCase: TestCaseForCodegen, 
     setTargetUrl,
     authMode,
     setAuthMode,
+    executionMode,
+    setExecutionMode,
     cookieToken,
     setCookieToken,
     username,

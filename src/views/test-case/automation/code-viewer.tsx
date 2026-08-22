@@ -7,7 +7,7 @@ import type { useAutomation } from '@/hooks/test-case/use-automation';
 
 const TS_KEYWORDS = /\b(import|from|export|const|let|var|async|await|function|return|if|else|new|type|interface|class|private|constructor)\b/g;
 
-function highlight(code: string): string {
+export function highlight(code: string): string {
   const escaped = code
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

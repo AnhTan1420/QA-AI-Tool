@@ -21,6 +21,8 @@ export type ParsedMethod = {
   paramsRaw: string; // raw text between ( and ) — display only, not a real AST
   body: string; // method body, braces stripped
   fullText: string; // signature + `{ body }`, used when appending to a class
+  start: number; // index in the source `code` where this method's signature begins
+  end: number; // index right after this method's closing brace
 };
 
 const METHOD_START_RE = /(?:async\s+)?(\w+)\s*\(([^)]*)\)\s*(?::\s*Promise<[^>]*>)?\s*\{/g;
@@ -51,7 +53,7 @@ export function parseClassMethods(code: string): ParsedMethod[] {
     }
     const body = code.slice(bodyStart, i - 1);
     const fullText = code.slice(m.index, i);
-    methods.push({ name, paramsRaw, body, fullText });
+    methods.push({ name, paramsRaw, body, fullText, start: m.index, end: i });
     METHOD_START_RE.lastIndex = i;
   }
   return methods;
@@ -62,6 +64,25 @@ export function parseClassMethods(code: string): ParsedMethod[] {
  * breaks) without pretending to be a real AST diff. */
 export function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Replaces ONE existing method's text in-place, by exact source position (not a
+ * string `.replace()` on the method text — that could ambiguously match an
+ * identical duplicate elsewhere; position from parseClassMethods is unambiguous).
+ * Used ONLY by the human-driven conflict resolution flow (see
+ * app/api/projects/[projectId]/registry/conflicts/[conflictId]/route.ts) when a QA
+ * lead explicitly chooses "use the proposed version" for a flagged conflict — this
+ * is the ONE place in the whole Registry system that an existing method's body is
+ * allowed to change, and it always requires a human decision, never an AI/merge
+ * auto-decision (Principle P3). Returns the ORIGINAL code unchanged (never throws)
+ * if `methodName` isn't found — fail safe rather than corrupt the class file.
+ */
+export function replaceMethodInClass(classCode: string, methodName: string, newMethodFullText: string): string {
+  const methods = parseClassMethods(classCode);
+  const target = methods.find((m) => m.name === methodName);
+  if (!target) return classCode;
+  return classCode.slice(0, target.start) + newMethodFullText.trim() + classCode.slice(target.end);
 }
 
 /**

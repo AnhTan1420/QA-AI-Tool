@@ -62,6 +62,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ pro
         browser: payload.browser,
         target_url: payload.target_url,
         auth_mode: payload.auth_mode,
+        execution_mode: payload.execution_mode,
         created_by: user.id,
       })
       .select('*')

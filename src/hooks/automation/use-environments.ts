@@ -5,6 +5,7 @@ import { useLanguage } from '@/lib/i18n/language-context';
 
 export type AutomationBrowser = 'chromium' | 'firefox' | 'edge';
 export type AuthMode = 'none' | 'cookie' | 'login';
+export type ExecutionMode = 'serverless' | 'self_hosted';
 
 export type ProjectEnvironment = {
   id: string;
@@ -13,6 +14,7 @@ export type ProjectEnvironment = {
   browser: AutomationBrowser;
   target_url: string;
   auth_mode: AuthMode;
+  execution_mode: ExecutionMode;
   created_at: string;
 };
 
@@ -30,10 +32,24 @@ export function useEnvironments(projectId: string) {
   const [browser, setBrowser] = useState<AutomationBrowser>('chromium');
   const [targetUrl, setTargetUrl] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode>('none');
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('serverless');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Whether THIS deployment can run self-hosted "Full run" automation at all (see
+  // GET /api/automation/runtime-info) — used to disable the option in the form
+  // rather than let someone pick it and find out only on submit that the server
+  // rejects it (assertExecutionModeAllowed in models/validators/playwright.ts).
+  const [selfHostedAvailable, setSelfHostedAvailable] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/automation/runtime-info')
+      .then((res) => res.json())
+      .then((json) => setSelfHostedAvailable(Boolean(json?.data?.self_hosted_available)))
+      .catch(() => setSelfHostedAvailable(false));
+  }, []);
 
   async function load() {
     setLoading(true);
@@ -60,6 +76,7 @@ export function useEnvironments(projectId: string) {
     setBrowser('chromium');
     setTargetUrl('');
     setAuthMode('none');
+    setExecutionMode('serverless');
     setSaveError('');
   }
 
@@ -71,7 +88,7 @@ export function useEnvironments(projectId: string) {
       const res = await fetch(`/api/projects/${projectId}/environments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, browser, target_url: targetUrl, auth_mode: authMode }),
+        body: JSON.stringify({ name, browser, target_url: targetUrl, auth_mode: authMode, execution_mode: executionMode }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error ?? e.createFailed);
@@ -106,6 +123,7 @@ export function useEnvironments(projectId: string) {
     environments, loading, error, reload: load,
     showCreate, setShowCreate,
     name, setName, browser, setBrowser, targetUrl, setTargetUrl, authMode, setAuthMode,
+    executionMode, setExecutionMode, selfHostedAvailable,
     saving, saveError, createEnvironment,
     deletingId, deleteEnvironment,
   };

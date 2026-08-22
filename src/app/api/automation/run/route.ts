@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
-import { runRequestSchema, type PageObject } from '@/models/validators/playwright';
+import { runRequestSchema, type PageObject, type FailureDetails, assertExecutionModeAllowed } from '@/models/validators/playwright';
 import { runGeneratedScript } from '@/services/automation/browser-runner';
+import { runGeneratedScriptSelfHosted } from '@/services/automation/playwright-test-runner';
 import { uploadRunScreenshot } from '@/services/automation/screenshot-storage';
+import { uploadRunArtifact } from '@/services/automation/run-artifact-storage';
 import { createClient } from '@/services/supabase/server';
 import { checkRunRateLimit } from '@/services/automation/rate-limit';
 
@@ -95,10 +97,59 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: 'Test case không tồn tại hoặc bạn không có quyền truy cập.' }, { status: 404 });
     }
 
-    const outcome = await runGeneratedScript({ code: codeToRun, page_objects: pageObjectsToRun }, input.environment);
+    // Dual-mode execution (Automation Agent Rebuild §4.2/§4.3): 'serverless' keeps the
+    // existing eval-based runner exactly as-is (repositioned as "Preview" in the UI -
+    // fast, works on Vercel Hobby, but not a real @playwright/test execution). 'self_hosted'
+    // spawns a REAL `npx playwright test` child process with trace/video/retry/HTML
+    // report - only reachable when assertExecutionModeAllowed('self_hosted') doesn't
+    // throw. runRequestSchema's environmentConfigSchema already re-checks this via its
+    // own .refine() at the parse step above; this second call is defense-in-depth
+    // (same posture as the rest of this route re-checking things Zod already checked),
+    // never the ONLY enforcement point.
+    assertExecutionModeAllowed(input.environment.execution_mode);
+    const isSelfHosted = input.environment.execution_mode === 'self_hosted';
 
-    // Insert the run row first (without screenshot_url) so we always have a
-    // run_id to key the screenshot's storage path on.
+    type UnifiedOutcome = {
+      status: 'passed' | 'failed' | 'error' | 'flaky';
+      duration_ms: number;
+      attempts: number;
+      screenshotBuffer?: Buffer;
+      traceBuffer?: Buffer;
+      videoBuffer?: Buffer;
+      htmlReportBuffer?: Buffer;
+      failure_details?: FailureDetails;
+      extraWarnings: string[];
+    };
+
+    const outcome: UnifiedOutcome = isSelfHosted
+      ? await (async () => {
+          const r = await runGeneratedScriptSelfHosted({ code: codeToRun!, page_objects: pageObjectsToRun }, input.environment);
+          return {
+            status: r.status,
+            duration_ms: r.duration_ms,
+            attempts: r.attempts,
+            screenshotBuffer: r.screenshotBuffer,
+            traceBuffer: r.traceBuffer,
+            videoBuffer: r.videoBuffer,
+            htmlReportBuffer: r.htmlReportBuffer,
+            failure_details: r.failure_details,
+            extraWarnings: r.warnings,
+          };
+        })()
+      : await (async () => {
+          const r = await runGeneratedScript({ code: codeToRun!, page_objects: pageObjectsToRun }, input.environment);
+          return {
+            status: r.status,
+            duration_ms: r.duration_ms,
+            attempts: 1,
+            screenshotBuffer: r.screenshotBuffer,
+            failure_details: r.failure_details,
+            extraWarnings: [] as string[],
+          };
+        })();
+
+    // Insert the run row first (without artifact URLs) so we always have a run_id to
+    // key each artifact's storage path on.
     const { data: runRow, error: insertError } = await supabase
       .from('automation_runs')
       .insert({
@@ -111,6 +162,9 @@ export async function POST(req: Request) {
         page_objects_snapshot: pageObjectsToRun,
         run_by: user.id,
         finished_at: new Date().toISOString(),
+        attempts: outcome.attempts,
+        is_flaky: outcome.status === 'flaky',
+        execution_mode: input.environment.execution_mode,
       })
       .select('id')
       .single();
@@ -130,10 +184,48 @@ export async function POST(req: Request) {
       }
     }
 
-    // Badge trên library list: passed/failed thắng thế so với "generated" cũ; một
-    // run 'error' (không chạy được, không phải fail nghiệp vụ) vẫn hiển thị "failed"
-    // để nhắc QA quay lại xử lý, nhưng chi tiết thật (status='error') vẫn giữ nguyên trong automation_runs.
-    const badgeStatus = outcome.status === 'passed' ? 'passed' : 'failed';
+    // Self-hosted-only artifacts. Each upload is independent/best-effort - a failure on
+    // one (e.g. video) must never block the trace or the run result itself from being
+    // usable, so each gets its own try/catch rather than one wrapping all three.
+    let traceUrl: string | null = null;
+    let videoUrl: string | null = null;
+    let htmlReportUrl: string | null = null;
+
+    if (outcome.traceBuffer) {
+      try {
+        const uploaded = await uploadRunArtifact(supabase, input.test_case_id, runRow.id, 'trace', outcome.traceBuffer);
+        traceUrl = uploaded.signedUrl;
+        await supabase.from('automation_runs').update({ trace_url: uploaded.path }).eq('id', runRow.id);
+      } catch (uploadErr) {
+        console.error('[automation/run] Lỗi upload trace:', uploadErr);
+      }
+    }
+    if (outcome.videoBuffer) {
+      try {
+        const uploaded = await uploadRunArtifact(supabase, input.test_case_id, runRow.id, 'video', outcome.videoBuffer);
+        videoUrl = uploaded.signedUrl;
+        await supabase.from('automation_runs').update({ video_url: uploaded.path }).eq('id', runRow.id);
+      } catch (uploadErr) {
+        console.error('[automation/run] Lỗi upload video:', uploadErr);
+      }
+    }
+    if (outcome.htmlReportBuffer) {
+      try {
+        const uploaded = await uploadRunArtifact(supabase, input.test_case_id, runRow.id, 'html_report', outcome.htmlReportBuffer);
+        htmlReportUrl = uploaded.signedUrl;
+        await supabase.from('automation_runs').update({ html_report_url: uploaded.path }).eq('id', runRow.id);
+      } catch (uploadErr) {
+        console.error('[automation/run] Lỗi upload HTML report:', uploadErr);
+      }
+    }
+
+    // Badge trên library list: passed/failed thắng thế so với "generated" cũ. 'flaky'
+    // được coi là "passed" ở mức badge tổng quan (automation_status không có giá trị
+    // 'flaky' - xem CHECK constraint trong schema.sql) - test RỐT CUỘC đã pass, nhưng
+    // sự bất ổn định vẫn được giữ nguyên và hiển thị rõ ở automation_runs.is_flaky/status
+    // cho ai xem chi tiết run. Một run 'error' (không chạy được, không phải fail nghiệp
+    // vụ) vẫn hiển thị "failed" để nhắc QA quay lại xử lý.
+    const badgeStatus = outcome.status === 'passed' || outcome.status === 'flaky' ? 'passed' : 'failed';
     await supabase.from('test_cases').update({ automation_status: badgeStatus }).eq('id', input.test_case_id);
 
     return NextResponse.json({
@@ -142,8 +234,14 @@ export async function POST(req: Request) {
         run_id: runRow.id,
         status: outcome.status,
         duration_ms: outcome.duration_ms,
+        attempts: outcome.attempts,
+        execution_mode: input.environment.execution_mode,
         screenshot_url: screenshotUrl,
+        trace_url: traceUrl,
+        video_url: videoUrl,
+        html_report_url: htmlReportUrl,
         failure_details: outcome.failure_details ?? null,
+        warnings: outcome.extraWarnings,
       },
     });
   } catch (error: unknown) {

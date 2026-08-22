@@ -13,6 +13,12 @@
 # testing
 /coverage
 
+# playwright e2e suite (tests/ — see docs/e2e-agents.md)
+/test-results/
+/playwright-report/
+/blob-report/
+/.playwright/
+
 # next.js
 /.next/
 /out/
@@ -39,3 +45,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Ephemeral self-hosted Playwright run directories (Automation Agent Rebuild §4.2) — one per Full run, always deleted immediately after, but ignored defensively in case a crash ever skips cleanup.
+.qajd-runs/

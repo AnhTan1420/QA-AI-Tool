@@ -7,7 +7,13 @@
  * guarantee — nothing here calls the AI, only pure string/regex logic.
  */
 import { describe, it, expect } from 'vitest';
-import { appendMethodsToClass, mergeProposedPageObject, normalizeWhitespace, parseClassMethods } from '@/services/automation/page-object-merge';
+import {
+  appendMethodsToClass,
+  mergeProposedPageObject,
+  normalizeWhitespace,
+  parseClassMethods,
+  replaceMethodInClass,
+} from '@/services/automation/page-object-merge';
 import type { PageObject, RegistryEntry } from '@/models/validators/playwright';
 
 const loginPageCode = `import type { Page } from '@playwright/test';

@@ -188,9 +188,9 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
 //     contains ';' and whitespace - invalid characters inside a single cookie value)
 //     got shoved into one cookie's value, which Chrome's CDP layer rejects with
 //     "Protocol error (Storage.setCookies): Invalid cookie fields".
-type RawCookieEntry = { name: string; value: string; domain?: string; path?: string };
+export type RawCookieEntry = { name: string; value: string; domain?: string; path?: string };
 
-function parseCookieToken(token: string): RawCookieEntry[] | null {
+export function parseCookieToken(token: string): RawCookieEntry[] | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(token);
@@ -216,7 +216,7 @@ function parseCookieToken(token: string): RawCookieEntry[] | null {
 // Only triggers on an actual 'name=value; name2=value2' header string (requires a
 // semicolon separator), so it never misfires on a legacy single opaque token - even
 // one that happens to contain '=' (e.g. base64/JWT padding).
-function parseCookieHeaderString(token: string): RawCookieEntry[] | null {
+export function parseCookieHeaderString(token: string): RawCookieEntry[] | null {
   if (!token.includes(';') || !token.includes('=')) return null;
   const parts = token
     .split(';')
@@ -362,7 +362,7 @@ function installWriteGuard(page: any): { blocked: { method: string; url: string 
  *     networkidle wait, whichever resolves first, so we don't return before the
  *     redirect completes.
  */
-async function performLoginFlow(page: any, login: { username: string; password: string }): Promise<string[]> {
+export async function performLoginFlow(page: any, login: { username: string; password: string }): Promise<string[]> {
   const warnings: string[] = [];
   const startUrl = page.url();
 

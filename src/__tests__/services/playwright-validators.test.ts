@@ -4,13 +4,15 @@
  * the schemas the same way the real API routes do, without needing a live browser
  * or network call.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   environmentConfigSchema,
   runRequestSchema,
   playwrightScriptSchema,
   pageObjectSchema,
   playwrightHealRequestSchema,
+  executionModeSchema,
+  assertExecutionModeAllowed,
 } from '@/models/validators/playwright';
 
 describe('environmentConfigSchema', () => {
@@ -194,6 +196,51 @@ describe('playwrightHealRequestSchema', () => {
 
   it('rejects an invalid test_case_id (must be a UUID)', () => {
     const result = playwrightHealRequestSchema.safeParse({ ...baseHealRequest, test_case_id: 'not-a-uuid' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('execution_mode (Automation Agent Rebuild)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('accepts only the two known modes', () => {
+    expect(executionModeSchema.safeParse('serverless').success).toBe(true);
+    expect(executionModeSchema.safeParse('self_hosted').success).toBe(true);
+    expect(executionModeSchema.safeParse('local').success).toBe(false);
+  });
+
+  it('never blocks "serverless", regardless of runtime', () => {
+    vi.stubEnv('VERCEL', '1');
+    expect(() => assertExecutionModeAllowed('serverless')).not.toThrow();
+  });
+
+  it('blocks "self_hosted" when running on Vercel', () => {
+    vi.stubEnv('VERCEL', '1');
+    vi.stubEnv('AUTOMATION_RUNTIME', '');
+    expect(() => assertExecutionModeAllowed('self_hosted')).toThrow();
+  });
+
+  it('blocks "self_hosted" when AUTOMATION_RUNTIME=serverless, even without VERCEL set', () => {
+    vi.stubEnv('VERCEL', '');
+    vi.stubEnv('AUTOMATION_RUNTIME', 'serverless');
+    expect(() => assertExecutionModeAllowed('self_hosted')).toThrow();
+  });
+
+  it('allows "self_hosted" when neither VERCEL nor AUTOMATION_RUNTIME=serverless is set', () => {
+    vi.stubEnv('VERCEL', '');
+    vi.stubEnv('AUTOMATION_RUNTIME', 'local');
+    expect(() => assertExecutionModeAllowed('self_hosted')).not.toThrow();
+  });
+
+  it('environmentConfigSchema rejects self_hosted on a serverless runtime via its own refine', () => {
+    vi.stubEnv('VERCEL', '1');
+    const result = environmentConfigSchema.safeParse({
+      browser: 'chromium',
+      target_url: 'https://example.com',
+      execution_mode: 'self_hosted',
+    });
     expect(result.success).toBe(false);
   });
 });

@@ -84,6 +84,16 @@ export function EnvironmentForm({ automation }: { automation: ReturnType<typeof 
         </div>
       </div>
 
+      {/* Execution mode indicator — decided by the selected saved environment (see
+          applySavedEnvironment), not editable here; just makes it unmissable whether
+          Run will be a real @playwright/test execution or only a serverless preview. */}
+      <div className="mt-3 flex items-center gap-2">
+        <span className={automation.executionMode === 'self_hosted' ? 'badge-brand' : 'badge-neutral'}>
+          {automation.executionMode === 'self_hosted' ? e.executionModeBadgeFullRun : e.executionModeBadgePreview}
+        </span>
+        <span className="text-caption">{e.executionModeBadgeHint}</span>
+      </div>
+
       {/* Authentication mode — card-style selection */}
       <div className="mt-5">
         <label className="field-label">{e.authMode}</label>

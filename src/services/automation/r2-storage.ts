@@ -124,6 +124,24 @@ export async function uploadScreenshotToR2(
 }
 
 /**
+ * Upload a self-hosted "Full run" artifact (trace/video/HTML report zip) to R2.
+ * Key convention: run-artifacts/<test_case_id>/<run_id>/<kind>.<ext> — same
+ * "<test_case_id>/..." first-segment convention as screenshots, so RLS on the
+ * Supabase Storage fallback bucket can reuse the identical split_part() check.
+ */
+export async function uploadRunArtifactToR2(
+  testCaseId: string,
+  runId: string,
+  kind: 'trace' | 'video' | 'html_report',
+  buffer: Buffer,
+): Promise<R2UploadResult | null> {
+  const ext = kind === 'video' ? 'webm' : 'zip'; // trace and html_report are both zipped by playwright-test-runner.ts
+  const contentType = kind === 'video' ? 'video/webm' : 'application/zip';
+  const key = `run-artifacts/${testCaseId}/${runId}/${kind}.${ext}`;
+  return uploadToR2(key, buffer, contentType);
+}
+
+/**
  * Generate a fresh signed URL for an existing R2 object.
  * Returns null if R2 is not configured or the key doesn't exist.
  */

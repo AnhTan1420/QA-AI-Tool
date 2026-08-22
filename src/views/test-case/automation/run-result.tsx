@@ -1,6 +1,6 @@
 'use client';
 
-import { PlayCircle, ShieldCheck, Loader2, CircleCheck, CircleX, ZoomIn, Download, Wrench } from 'lucide-react';
+import { PlayCircle, ShieldCheck, Loader2, CircleCheck, CircleX, AlertTriangle, ZoomIn, Download, Wrench, ExternalLink } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/language-context';
 import type { useAutomation } from '@/hooks/test-case/use-automation';
 
@@ -68,17 +68,68 @@ export function RunResultPanel({ automation }: { automation: ReturnType<typeof u
 
       {automation.runResult && (
         <div className="space-y-3 border-t border-ink-100 pt-4">
-          <div className="flex items-center gap-3">
-            <span className={automation.runResult.status === 'passed' ? 'badge-success' : 'badge-danger'}>
-              {automation.runResult.status === 'passed' ? (
-                <CircleCheck className="h-3.5 w-3.5" />
-              ) : (
+          <div className="flex flex-wrap items-center gap-3">
+            <span
+              className={
+                automation.runResult.status === 'passed'
+                  ? 'badge-success'
+                  : automation.runResult.status === 'flaky'
+                  ? 'badge-warning'
+                  : 'badge-danger'
+              }
+            >
+              {automation.runResult.status === 'passed' && <CircleCheck className="h-3.5 w-3.5" />}
+              {automation.runResult.status === 'flaky' && <AlertTriangle className="h-3.5 w-3.5" />}
+              {(automation.runResult.status === 'failed' || automation.runResult.status === 'error') && (
                 <CircleX className="h-3.5 w-3.5" />
               )}
               {r.status[automation.runResult.status]}
             </span>
             <span className="text-caption">{r.durationLabel(automation.runResult.duration_ms)}</span>
+            {automation.runResult.attempts > 1 && (
+              <span className="text-caption">{r.attemptsLabel(automation.runResult.attempts)}</span>
+            )}
+            <span className={automation.runResult.execution_mode === 'self_hosted' ? 'badge-brand' : 'badge-neutral'}>
+              {automation.runResult.execution_mode === 'self_hosted' ? r.executionModeBadgeFullRun : r.executionModeBadgePreview}
+            </span>
           </div>
+
+          {automation.runResult.warnings.length > 0 && (
+            <ul className="list-disc list-inside space-y-0.5 rounded-[var(--radius-control)] border border-warning-600/20 bg-warning-50 p-3 text-xs text-warning-600/90">
+              {automation.runResult.warnings.map((w, i) => (
+                <li key={i}>{w}</li>
+              ))}
+            </ul>
+          )}
+
+          {(automation.runResult.trace_url || automation.runResult.video_url || automation.runResult.html_report_url) && (
+            <div className="flex flex-wrap gap-2">
+              {automation.runResult.trace_url && (
+                <a
+                  href={`https://trace.playwright.dev/?trace=${encodeURIComponent(automation.runResult.trace_url)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-secondary btn-sm"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" /> {r.openTrace}
+                </a>
+              )}
+              {automation.runResult.video_url && (
+                <a href={automation.runResult.video_url} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
+                  <ExternalLink className="h-3.5 w-3.5" /> {r.openVideo}
+                </a>
+              )}
+              {automation.runResult.html_report_url && (
+                // A zip of the whole playwright-report/ static site, not a single
+                // viewable page — a direct link can only download it (open in a new tab
+                // would just show the browser's binary-download prompt), so this is
+                // deliberately a download link, not an "open" one like trace/video above.
+                <a href={automation.runResult.html_report_url} download="playwright-report.zip" className="btn-secondary btn-sm">
+                  <Download className="h-3.5 w-3.5" /> {r.downloadHtmlReport}
+                </a>
+              )}
+            </div>
+          )}
 
           {automation.runResult.failure_details && (
             <div className="space-y-2 rounded-[var(--radius-control)] border border-danger-600/20 bg-danger-50 p-3">
