@@ -127,9 +127,53 @@ create table if not exists requirement_traceability (
   id uuid primary key default gen_random_uuid(),
   set_id uuid references test_case_sets(id) on delete cascade,
   requirement_clause text not null,
-  test_case_id uuid references test_cases(id),
+  -- on delete set null (khong phai cascade): xoa 1 test case khong duoc lam mat
+  -- luon requirement_clause khoi ma tran traceability, chi lam clause do quay ve
+  -- trang thai "chua duoc cover". Xem migration idempotent ngay ben duoi de fix
+  -- cac DB da tao truoc khi co on delete action nay.
+  test_case_id uuid references test_cases(id) on delete set null,
   is_covered boolean default false
 );
+
+-- Migration idempotent: cac DB da chay "create table if not exists" tu truoc khi
+-- co "on delete set null" o tren se van con constraint cu (NO ACTION), gay loi
+-- "update or delete on table test_cases violates foreign key constraint
+-- requirement_traceability_test_case_id_fkey" khi xoa test case. Doi lai constraint
+-- de an toan xoa test case ma khong mat dong requirement_traceability.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.table_constraints
+    where constraint_name = 'requirement_traceability_test_case_id_fkey'
+      and table_name = 'requirement_traceability'
+  ) then
+    alter table requirement_traceability
+      drop constraint requirement_traceability_test_case_id_fkey;
+  end if;
+
+  alter table requirement_traceability
+    add constraint requirement_traceability_test_case_id_fkey
+    foreign key (test_case_id) references test_cases(id) on delete set null;
+end $$;
+
+-- Khi test_case_id bi set null do test case bi xoa, tu dong dua is_covered ve
+-- false thay vi de app phai tu xu ly rieng.
+create or replace function set_traceability_uncovered()
+returns trigger as $$
+begin
+  if new.test_case_id is null then
+    new.is_covered := false;
+  end if;
+  return new;
+end;
+$$ language plpgsql;
+
+drop trigger if exists trg_traceability_uncovered on requirement_traceability;
+create trigger trg_traceability_uncovered
+  before update on requirement_traceability
+  for each row
+  when (old.test_case_id is not null and new.test_case_id is null)
+  execute function set_traceability_uncovered();
 
 create table if not exists comments (
   id uuid primary key default gen_random_uuid(),
