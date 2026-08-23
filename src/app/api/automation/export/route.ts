@@ -10,6 +10,12 @@ const exportScopeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('test_cases'), projectId: z.string().uuid(), testCaseIds: z.array(z.string().uuid()).min(1) }),
 ]);
 
+// Body thuc te tu client (use-suite-export.ts) luon boc scope ben trong mot object
+// { scope: {...} } — giong het cach export/github/route.ts parse. Truoc day route nay
+// parse thang rawBody bang exportScopeSchema (khong bo qua lop { scope }), nen
+// rawBody.kind luon la undefined va Zod discriminated union bao "invalid_union_discriminator".
+const requestSchema = z.object({ scope: exportScopeSchema });
+
 /**
  * Git-backed Suite Exporter — download path (Automation Agent Rebuild §4.4). Always
  * available (no external service/token needed, unlike the GitHub push variant),
@@ -20,7 +26,7 @@ const exportScopeSchema = z.discriminatedUnion('kind', [
 export async function POST(req: Request) {
   try {
     const rawBody = await req.json();
-    const scope = exportScopeSchema.parse(rawBody) as ExportScope;
+    const { scope } = requestSchema.parse(rawBody) as { scope: ExportScope };
 
     const supabase = await createClient();
     const {
