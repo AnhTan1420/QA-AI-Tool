@@ -88,6 +88,23 @@ export async function PATCH(
         replacementMethodText = input.manual_method_code!;
       }
 
+      // Guard against a silent no-op: replaceMethodInClass() returns the code
+      // UNCHANGED (not an error) when it can't find conflict.method_name in the
+      // registry entry's CURRENT code — e.g. the entry was edited/renamed by
+      // something else between when this conflict was created and now. Without this
+      // check the route would report success (200, status updated to resolved_*)
+      // while the registry entry's code silently never actually changed — exactly
+      // the kind of "looks resolved but wasn't" bug Principle P3 exists to prevent.
+      if (!parseClassMethods(entry.code).some((m) => m.name === conflict.method_name)) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Method "${conflict.method_name}" không còn tồn tại trong Page Object hiện tại - có thể đã bị thay đổi bởi một thao tác khác. Vui lòng tải lại trang Registry.`,
+          },
+          { status: 409 },
+        );
+      }
+
       const newCode = replaceMethodInClass(entry.code, conflict.method_name, replacementMethodText);
       const reparsedMethod = parseClassMethods(newCode).find((m) => m.name === conflict.method_name);
       const newMethodSignatures = (entry.method_signatures as { name: string; params: string; added_by_test_case_id: string | null; added_at: string }[]).map(

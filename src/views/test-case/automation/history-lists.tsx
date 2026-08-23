@@ -1,19 +1,26 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { History, CircleCheck, CircleX, ZoomIn, Download, X } from 'lucide-react';
+import { History, CircleCheck, CircleX, AlertTriangle, ZoomIn, Download, X, ExternalLink } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/language-context';
 
 type RunEntry = {
   id: string;
-  status: 'passed' | 'failed' | 'error';
+  status: 'passed' | 'failed' | 'error' | 'flaky';
   duration_ms: number;
+  attempts: number;
+  execution_mode: 'serverless' | 'self_hosted';
   screenshot_url: string | null; // raw storage path; resolved lazily via /screenshot route
+  video_url: string | null; // raw storage path; resolved lazily via /video route
+  html_report_url: string | null; // raw storage path; resolved lazily via /html-report route
+  trace_playwright_dev_url: string | null; // already a ready-to-open trace.playwright.dev link (see the runs route)
   failure_details: { error_message: string; selector?: string } | null;
   started_at: string;
   profiles: { full_name: string | null } | null;
 };
 
+const videoSrc = (runId: string) => `/api/automation/runs/${runId}/video`;
+const htmlReportSrc = (runId: string) => `/api/automation/runs/${runId}/html-report`;
 const screenshotSrc = (runId: string) => `/api/automation/runs/${runId}/screenshot`;
 
 export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: string; refreshKey?: number }) {
@@ -97,13 +104,43 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
         {runs.map((run) => (
           <li key={run.id} className="space-y-2 rounded-[var(--radius-control)] border border-ink-100 bg-ink-50/60 p-3 text-xs">
             <div className="flex flex-wrap items-center gap-3">
-              <span className={run.status === 'passed' ? 'badge-success' : 'badge-danger'}>
-                {run.status === 'passed' ? <CircleCheck className="h-3.5 w-3.5" /> : <CircleX className="h-3.5 w-3.5" />}
+              <span
+                className={
+                  run.status === 'passed' ? 'badge-success' : run.status === 'flaky' ? 'badge-warning' : 'badge-danger'
+                }
+              >
+                {run.status === 'passed' && <CircleCheck className="h-3.5 w-3.5" />}
+                {run.status === 'flaky' && <AlertTriangle className="h-3.5 w-3.5" />}
+                {(run.status === 'failed' || run.status === 'error') && <CircleX className="h-3.5 w-3.5" />}
                 {t.automation.run.status[run.status]}
               </span>
               <span className="text-caption">{t.automation.run.durationLabel(run.duration_ms)}</span>
+              {run.attempts > 1 && <span className="text-caption">{t.automation.run.attemptsLabel(run.attempts)}</span>}
+              {run.execution_mode === 'self_hosted' && (
+                <span className="badge-brand">{t.automation.run.executionModeBadgeFullRun}</span>
+              )}
               <span className="ml-auto text-caption">{new Date(run.started_at).toLocaleString()}</span>
             </div>
+
+            {(run.trace_playwright_dev_url || run.video_url || run.html_report_url) && (
+              <div className="flex flex-wrap gap-2">
+                {run.trace_playwright_dev_url && (
+                  <a href={run.trace_playwright_dev_url} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
+                    <ExternalLink className="h-3.5 w-3.5" /> {t.automation.run.openTrace}
+                  </a>
+                )}
+                {run.video_url && (
+                  <a href={videoSrc(run.id)} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
+                    <ExternalLink className="h-3.5 w-3.5" /> {t.automation.run.openVideo}
+                  </a>
+                )}
+                {run.html_report_url && (
+                  <a href={htmlReportSrc(run.id)} download="playwright-report.zip" className="btn-secondary btn-sm">
+                    <Download className="h-3.5 w-3.5" /> {t.automation.run.downloadHtmlReport}
+                  </a>
+                )}
+              </div>
+            )}
 
             {run.screenshot_url && (
               <div className="flex items-start gap-2">

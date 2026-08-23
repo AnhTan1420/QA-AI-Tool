@@ -113,6 +113,41 @@ describe('appendMethodsToClass', () => {
   });
 });
 
+describe('replaceMethodInClass', () => {
+  it('replaces only the target method, leaving other methods untouched', () => {
+    const result = replaceMethodInClass(
+      loginPageCode,
+      'fillEmail',
+      "async fillEmail(value: string) {\n    await this.page.getByTestId('email-input').fill(value);\n  }",
+    );
+    expect(result).toContain("getByTestId('email-input')");
+    expect(result).not.toContain("this.page.locator('#email')");
+    // Untouched methods must survive verbatim.
+    expect(result).toContain('clickSignIn');
+    expect(result).toContain("this.page.goto('https://example.com/login')");
+    // No duplication - fillEmail must appear exactly once in the result.
+    expect((result.match(/fillEmail/g) ?? []).length).toBe(1);
+  });
+
+  it('produces code that still parses correctly (round-trips through parseClassMethods)', () => {
+    const result = replaceMethodInClass(loginPageCode, 'clickSignIn', 'async clickSignIn() {\n    await this.page.getByTestId("sign-in-btn").click();\n  }');
+    const methods = parseClassMethods(result);
+    expect(methods.map((m) => m.name).sort()).toEqual(['clickSignIn', 'fillEmail', 'goto']);
+    expect(methods.find((m) => m.name === 'clickSignIn')?.body).toContain('sign-in-btn');
+  });
+
+  it('is a safe no-op (returns the original code unchanged) when the method name does not exist', () => {
+    // This is the important edge case a caller MUST guard against: silently
+    // returning the original code means the caller cannot tell "nothing needed to
+    // change" apart from "the method name was wrong and nothing was actually
+    // applied" just from the return value alone - see the conflict-resolution route,
+    // which must re-parse and verify the target method's body actually changed
+    // before treating a resolution as successful.
+    const result = replaceMethodInClass(loginPageCode, 'thisMethodDoesNotExist', 'async thisMethodDoesNotExist() {}');
+    expect(result).toBe(loginPageCode);
+  });
+});
+
 describe('mergeProposedPageObject', () => {
   it('returns new_entry with no conflicts when no registry match exists', () => {
     const outcome = mergeProposedPageObject(makeProposed(), null, '/login', 'tc-1');

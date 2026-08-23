@@ -116,6 +116,10 @@ export function RunAutomationModal({
             )}
             {selectedEnv && selectedEnv.auth_mode !== 'none' && <p className="text-caption italic">{m.secretNote}</p>}
 
+            {selectedEnv?.execution_mode === 'self_hosted' && (
+              <div className="alert-info text-sm">{m.batchAlwaysServerlessNotice}</div>
+            )}
+
             <p className="text-caption">{m.hobbyNotice}</p>
 
             {automation.error && <div className="alert-danger">{automation.error}</div>}

@@ -463,6 +463,7 @@ const vi = {
       cancelButton: 'Hủy',
       createFailed: 'Không thể tạo batch automation',
       hobbyNotice: 'Đang chạy tuần tự từng test case — giữ tab này mở để hoàn tất nhanh nhất. Bạn có thể đóng và Resume lại sau.',
+      batchAlwaysServerlessNotice: 'Environment này đánh dấu "Full run (self-hosted)", nhưng Batch Automation hiện tại LUÔN chạy ở chế độ Preview (serverless) — chưa hỗ trợ Full run cho batch. Dùng nút Run trên từng test case riêng lẻ nếu cần trace/video thật.',
     },
     progress: {
       title: 'Đang chạy Automation',

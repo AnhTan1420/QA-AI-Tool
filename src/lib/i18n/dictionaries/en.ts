@@ -465,6 +465,7 @@ const en: Dictionary = {
       cancelButton: 'Cancel',
       createFailed: 'Unable to create the batch run',
       hobbyNotice: 'Processing one test case at a time — keep this tab open to finish fastest. You can close it and Resume later.',
+      batchAlwaysServerlessNotice: 'This environment is marked "Full run (self-hosted)", but Batch Automation currently ALWAYS runs in Preview (serverless) mode — Full run isn\u2019t supported for batches yet. Use the Run button on an individual test case if you need a real trace/video.',
     },
     progress: {
       title: 'Running Automation',
