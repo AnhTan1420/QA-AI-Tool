@@ -1,7 +1,7 @@
 'use client';
 
 import { use } from 'react';
-import { Plus, X, Globe, Trash2, Boxes } from 'lucide-react';
+import { Plus, X, Globe, Trash2, Boxes, GitBranch } from 'lucide-react';
 import Link from 'next/link';
 import { useEnvironments } from '@/hooks/automation/use-environments';
 import { BackLink } from '@/views/layout/back-link';
@@ -41,6 +41,16 @@ export default function EnvironmentsPage({ params }: { params: Promise<{ project
         <div>
           <p className="text-sm font-semibold text-ink-900">{t.batchAutomation.registry.title}</p>
           <p className="text-caption">{t.batchAutomation.registry.subtitle}</p>
+        </div>
+      </Link>
+
+      <Link href={`/projects/${projectId}/automation/export`} className="surface-card-interactive flex items-center gap-3 p-4">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-ink-100 text-ink-700">
+          <GitBranch className="h-4 w-4" strokeWidth={2.25} />
+        </span>
+        <div>
+          <p className="text-sm font-semibold text-ink-900">{t.batchAutomation.export.title}</p>
+          <p className="text-caption">{t.batchAutomation.export.subtitle}</p>
         </div>
       </Link>
 
