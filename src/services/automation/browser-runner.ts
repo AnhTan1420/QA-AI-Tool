@@ -436,13 +436,38 @@ export async function performLoginFlow(page: any, login: { username: string; pas
     await passwordField.press('Enter');
   }
 
-  // Wait for EITHER a URL change (SPA client-side routing or full navigation)
-  // OR the network settling, whichever happens first - covers both classic
-  // server-redirect logins and client-side-routed logins (Next.js/Supabase).
+  // BUG FIX (Section 6 — "element map captures the login page mid-submit
+  // instead of the destination page, e.g. qa-ai-tool-jordan.vercel.app"):
+  //
+  // The previous wait raced a URL change against `waitForLoadState('networkidle')`.
+  // That race is a false-positive trap for exactly the apps this flow targets
+  // (Next.js/Supabase Auth, etc.): the submit handler flips the button into a
+  // loading state (e.g. "Đang đăng nhập...") SYNCHRONOUSLY, then calls the auth
+  // API asynchronously a moment later. In the gap between "click resolves" and
+  // "the auth fetch actually leaves the browser", there are 0 in-flight network
+  // connections - if that gap holds for Playwright's ~500ms quiet window,
+  // `networkidle` resolves immediately, the race is won before the real
+  // login request has even been sent, and everything downstream
+  // (installWriteGuard, extractElementMap) samples the DOM while the submit
+  // button still reads "Đang đăng nhập..." - i.e. the login page, not the
+  // authenticated destination. This is exactly the element map reported: only
+  // login-page elements, with the submit button frozen in its loading label.
+  //
+  // Fix: replace the networkidle branch with a real completion signal - the
+  // password field (captured before fill(), so its identity doesn't depend on
+  // the DOM staying stable) actually leaving the page. `state: 'hidden'`
+  // covers both a full navigation (element detaches) and a client-side route
+  // swap (element unmounts/hides) without ever being satisfied by a mid-flight
+  // loading state, since the form is still on-screen throughout that state.
+  // Only once the race resolves - real navigation OR the form provably gone -
+  // do we do a SEPARATE networkidle wait, now purely to let the destination
+  // page's own client-side data fetch (project list, dashboard, etc.) settle,
+  // not to detect whether login itself finished.
   await Promise.race([
-    page.waitForURL((url: URL) => url.toString() !== startUrl, { timeout: 15000 }).catch(() => {}),
-    page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {}),
+    page.waitForURL((url: URL) => url.toString() !== startUrl, { timeout: 20000 }).catch(() => {}),
+    passwordField.waitFor({ state: 'hidden', timeout: 20000 }).catch(() => {}),
   ]);
+  await page.waitForLoadState('networkidle', { timeout: 8000 }).catch(() => {});
   await page.waitForLoadState('domcontentloaded').catch(() => {});
 
   // Post-login sanity check: if we're still on what looks like a login page
