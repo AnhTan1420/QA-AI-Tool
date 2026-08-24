@@ -5,6 +5,8 @@ import { buildTextDocumentExtractionPrompt, buildVisualDocumentExtractionPrompt 
 import { parseDocumentRequestSchema, documentExtractionResultSchema, type ParsedDocument } from '@/models/validators/document';
 import { extractDocxText, extractPdfText, capText } from '@/services/documents/text-extractors';
 import { fetchAndParseFigmaFile } from '@/services/documents/figma-client';
+import { createClient } from '@/services/supabase/server';
+import { DOCUMENT_SOURCE_UPLOADS_BUCKET } from '@/lib/constants/document-storage';
 
 export const maxDuration = 120;
 export const runtime = 'nodejs';
@@ -15,14 +17,45 @@ export const runtime = 'nodejs';
 // Vision thay vi bao loi "khong trich xuat duoc noi dung".
 const MIN_PDF_TEXT_CHARS = 40;
 
+type SupabaseServerClient = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * Tai buffer nguon cho 1 file .docx/.pdf/anh, uu tien `storage_path` (file da
+ * duoc client upload THANG len Supabase Storage qua /api/ai/documents/upload-url
+ * — xem chu thich trong models/validators/document.ts) roi moi fallback ve
+ * `data_base64` (nhet thang trong JSON body, chi con danh cho file rat nho /
+ * tuong thich nguoc).
+ *
+ * Sau khi tai xong tu storage, XOA luon object do (best-effort, khong block
+ * response) — bucket `document-source-uploads` chi la vung dem tam thoi, file
+ * chi can dung DUY NHAT 1 LAN de extract text.
+ */
+async function loadSourceBuffer(
+  supabase: SupabaseServerClient,
+  dataBase64: string | undefined,
+  storagePath: string | undefined,
+  missingMessage: string,
+): Promise<Buffer> {
+  if (storagePath) {
+    const { data, error } = await supabase.storage.from(DOCUMENT_SOURCE_UPLOADS_BUCKET).download(storagePath);
+    if (error || !data) {
+      console.error('[ai/documents/parse] Tải file từ storage thất bại:', error);
+      throw new Error('Không tải được file đã upload (có thể đã hết hạn hoặc bạn không có quyền truy cập). Vui lòng thử tải lên lại.');
+    }
+    const buffer = Buffer.from(await data.arrayBuffer());
+    void supabase.storage
+      .from(DOCUMENT_SOURCE_UPLOADS_BUCKET)
+      .remove([storagePath])
+      .catch((err) => console.warn('[ai/documents/parse] Dọn dẹp file tạm thất bại (bỏ qua):', err));
+    return buffer;
+  }
+  if (dataBase64) return Buffer.from(dataBase64, 'base64');
+  throw new Error(missingMessage);
+}
+
 /** Doc 1 anh/PDF-thuan-hinh qua Gemini Vision va tra ve ParsedDocument, hoac null
  * neu AI khong tra ve JSON dung schema (nguoi goi tu quyet dinh response loi). */
-async function parseVisualDocument(
-  fileName: string,
-  mimeType: string,
-  base64Data?: string,
-): Promise<ParsedDocument | null> {
-  if (!base64Data) throw new Error('Thiếu dữ liệu file.');
+async function parseVisualDocument(fileName: string, mimeType: string, base64Data: string): Promise<ParsedDocument | null> {
   const prompt = buildVisualDocumentExtractionPrompt({ fileName });
   const aiRawResult = await runDocumentVisionAgent(prompt, [{ mimeType, base64Data }]);
 
@@ -51,6 +84,12 @@ async function parseVisualDocument(
  * cua test case (xem lib/ai/prompts/generation-agent.ts PHASE 0.5 va
  * lib/documents/coverage.ts).
  *
+ * File .docx/.pdf/anh: client upload THANG len Supabase Storage truoc (xem
+ * /api/ai/documents/upload-url) roi gui kem `storage_path` o day — tranh gioi
+ * han cung 4.5MB request body cua Vercel Serverless Function (`data_base64`
+ * trong JSON body van con duoc chap nhan cho file rat nho / tuong thich nguoc,
+ * xem loadSourceBuffer() o tren).
+ *
  * BAT BUOC: validate ca input tu client lan output tu AI bang Zod - khong tin
  * bat ky JSON nao chua qua validate (giong nguyen tac o /api/ai/generate).
  */
@@ -58,6 +97,7 @@ export async function POST(req: Request) {
   try {
     const rawBody = await req.json();
     const input = parseDocumentRequestSchema.parse(rawBody);
+    const supabase = await createClient();
 
     // ── Nhanh 1: Figma (doc truc tiep qua REST API, atomize tat dinh - khong
     // qua AI nen khong the "doan sai", day la nguon chinh xac nhat) ──
@@ -77,7 +117,8 @@ export async function POST(req: Request) {
 
     // ── Nhanh 2: anh diagram/ERD/UI mockup — doc qua Gemini Vision ──
     if (input.source_type === 'diagram_image') {
-      const parsedDocument = await parseVisualDocument(input.file_name, input.mime_type, input.data_base64);
+      const buffer = await loadSourceBuffer(supabase, input.data_base64, input.storage_path, 'Thiếu dữ liệu file ảnh.');
+      const parsedDocument = await parseVisualDocument(input.file_name, input.mime_type, buffer.toString('base64'));
       if (!parsedDocument) {
         return NextResponse.json(
           { success: false, error: 'AI không phân tích được ảnh này. Vui lòng thử ảnh rõ nét hơn hoặc thử lại.' },
@@ -91,7 +132,7 @@ export async function POST(req: Request) {
     // .pdf/.docx can server tu extract text truoc) ──
     let rawText: string;
     if (input.file_format === 'pdf') {
-      if (!input.data_base64) throw new Error('Thiếu dữ liệu file PDF.');
+      const buffer = await loadSourceBuffer(supabase, input.data_base64, input.storage_path, 'Thiếu dữ liệu file PDF.');
       // pdf-parse chi doc duoc text layer that su co trong file - mot PDF export
       // ra tu Figma (hoac bat ky cong cu design nao) thuong la vector/hinh anh
       // thuan tuy, KHONG co text layer, nen se tra ve chuoi rong hoac gan nhu
@@ -99,12 +140,12 @@ export async function POST(req: Request) {
       // vi bao loi ngay - nguoi dung khong can phai biet truoc "PDF cua minh la
       // van ban hay la thiet ke" va chon dung o upload, MOT o duy nhat xu ly ca hai.
       try {
-        rawText = await extractPdfText(Buffer.from(input.data_base64, 'base64'));
+        rawText = await extractPdfText(buffer);
       } catch {
         rawText = '';
       }
       if (rawText.trim().length < MIN_PDF_TEXT_CHARS) {
-        const parsedDocument = await parseVisualDocument(input.file_name, 'application/pdf', input.data_base64);
+        const parsedDocument = await parseVisualDocument(input.file_name, 'application/pdf', buffer.toString('base64'));
         if (!parsedDocument) {
           return NextResponse.json(
             { success: false, error: 'AI không phân tích được file PDF này (không trích xuất được văn bản, và AI Vision cũng không đọc được như ảnh thiết kế). Vui lòng thử lại.' },
@@ -114,8 +155,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: true, data: parsedDocument });
       }
     } else if (input.file_format === 'docx') {
-      if (!input.data_base64) throw new Error('Thiếu dữ liệu file DOCX.');
-      rawText = await extractDocxText(Buffer.from(input.data_base64, 'base64'));
+      const buffer = await loadSourceBuffer(supabase, input.data_base64, input.storage_path, 'Thiếu dữ liệu file DOCX.');
+      rawText = await extractDocxText(buffer);
     } else {
       if (!input.content) throw new Error('Thiếu nội dung file.');
       rawText = input.content;

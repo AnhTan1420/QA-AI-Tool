@@ -624,6 +624,8 @@ const en: Dictionary = {
       embedFailed: 'Loaded for this generation, but saving it for future RAG retrieval failed.',
       embedPartialFailure: (count: number) => `Saved for RAG, but ${count} case(s) failed to embed.`,
       documentParseFailed: 'Document analysis failed',
+      documentTooLarge: (maxMb: number) => `File is too large (max ${maxMb}MB). Please choose a smaller file.`,
+      documentUploadFailed: 'Could not upload the file. Please check your connection and try again.',
       figmaImportFailed: 'Figma import failed',
       figmaFileImportFailed: 'Could not read the Figma export file',
       importReviewFileFailed: 'File import failed',

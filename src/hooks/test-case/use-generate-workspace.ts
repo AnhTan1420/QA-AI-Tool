@@ -9,10 +9,11 @@ import type { DocumentCoverageResult } from '@/services/documents/coverage';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { postJson } from '@/lib/api/client';
 import { exportCasesToExcel, downloadOldCasesTemplate as downloadTemplate, parseXlsxFile } from '@/lib/utils/test-case-excel';
-import { fileToBase64 } from '@/lib/utils/file-to-base64';
 import { findPotentialDuplicates } from '@/services/test-case-similarity';
 import { diffTestCaseSets, type TestCaseDiffEntry } from '@/services/test-case-diff';
 import { VALID_CATEGORY_VALUES } from '@/views/test-case/generate-workspace/shared';
+import { createClient as createBrowserSupabaseClient } from '@/services/supabase/client';
+import { DOCUMENT_SOURCE_UPLOADS_BUCKET, MAX_DOCUMENT_SOURCE_FILE_BYTES } from '@/lib/constants/document-storage';
 
 /**
  * All state and business logic for the Generate Workspace screen: generating test cases,
@@ -439,13 +440,41 @@ export function useGenerateWorkspace(projectId: string) {
     }
   }
 
+  /**
+   * Uploads a binary source file (.pdf/.docx or a diagram/ERD/UI-mockup image) directly to
+   * the private `document-source-uploads` Supabase Storage bucket via a signed upload URL
+   * (see app/api/ai/documents/upload-url/route.ts), and returns the storage path.
+   *
+   * WHY: the file used to be base64-encoded and sent inside the JSON body of
+   * /api/ai/documents/parse. Vercel Serverless Functions have a hard 4.5MB request-body
+   * limit that cannot be raised via config, and base64 inflates a file by ~33% — so a
+   * perfectly ordinary multi-MB .docx/.pdf would trip it, producing a platform-level 413
+   * ("Request Entity Too Large" / "FUNCTION_PAYLOAD_TOO_LARGE") before our route code ever
+   * ran. Uploading straight from the browser to storage bypasses that limit entirely; the
+   * parse route then downloads the file server-side (see loadSourceBuffer() there).
+   */
+  async function uploadDocumentSourceFile(file: File): Promise<string> {
+    const { path, token } = await postJson<{ path: string; token: string }>(
+      '/api/ai/documents/upload-url',
+      { project_id: projectId, file_name: file.name },
+      t.generateWorkspace.errors.requestFailed,
+    );
+
+    const supabase = createBrowserSupabaseClient();
+    const { error } = await supabase.storage.from(DOCUMENT_SOURCE_UPLOADS_BUCKET).uploadToSignedUrl(path, token, file);
+    if (error) throw new Error(t.generateWorkspace.errors.documentUploadFailed);
+
+    return path;
+  }
+
   /** Uploads a document (.md/.txt/.pdf/.docx, a diagram/ERD/UI-mockup image, or a design
    * EXPORTED out of Figma via its own "Export" panel — PDF/PNG/JPEG/WebP, since that's
    * indistinguishable from any other diagram image once exported) to /api/ai/documents/parse,
    * which atomizes it and returns a ParsedDocument. Text files are read client-side
-   * (File.text()); binary files (pdf/docx/images) are base64-encoded and extracted/analyzed
-   * server-side — for PDFs specifically, the server tries text extraction first and falls
-   * back to Vision automatically if the PDF turns out to be visual-only (see
+   * (File.text()); binary files (pdf/docx/images) are uploaded straight to storage via
+   * uploadDocumentSourceFile() above and referenced by `storage_path` — for PDFs
+   * specifically, the server tries text extraction first and falls back to Vision
+   * automatically if the PDF turns out to be visual-only (see
    * app/api/ai/documents/parse/route.ts), so this ONE handler covers both a text FS/PDF and
    * a Figma-exported PDF without the UI needing to ask which kind it is. */
   async function handleDocumentFile(file: File) {
@@ -454,29 +483,28 @@ export function useGenerateWorkspace(projectId: string) {
     try {
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
       const isImage = file.type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'webp'].includes(ext);
+      const isBinarySource = isImage || ext === 'pdf' || ext === 'docx';
 
       let payload: Record<string, unknown>;
-      if (isImage) {
-        payload = {
-          source_type: 'diagram_image',
-          file_name: file.name,
-          mime_type: file.type || 'image/png',
-          data_base64: await fileToBase64(file),
-        };
-      } else if (ext === 'pdf') {
-        payload = {
-          source_type: 'document',
-          file_name: file.name,
-          file_format: 'pdf',
-          data_base64: await fileToBase64(file),
-        };
-      } else if (ext === 'docx') {
-        payload = {
-          source_type: 'document',
-          file_name: file.name,
-          file_format: 'docx',
-          data_base64: await fileToBase64(file),
-        };
+      if (isBinarySource) {
+        if (file.size > MAX_DOCUMENT_SOURCE_FILE_BYTES) {
+          throw new Error(t.generateWorkspace.errors.documentTooLarge(Math.floor(MAX_DOCUMENT_SOURCE_FILE_BYTES / (1024 * 1024))));
+        }
+        const storagePath = await uploadDocumentSourceFile(file);
+
+        payload = isImage
+          ? {
+              source_type: 'diagram_image',
+              file_name: file.name,
+              mime_type: file.type || 'image/png',
+              storage_path: storagePath,
+            }
+          : {
+              source_type: 'document',
+              file_name: file.name,
+              file_format: ext === 'pdf' ? 'pdf' : 'docx',
+              storage_path: storagePath,
+            };
       } else {
         payload = {
           source_type: 'document',

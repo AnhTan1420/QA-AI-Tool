@@ -1230,3 +1230,57 @@ drop policy if exists automation_run_artifacts_delete on storage.objects;
 create policy automation_run_artifacts_delete on storage.objects for delete using (
   bucket_id = 'automation-run-artifacts' and can_access_automation_run_artifact(name)
 );
+
+-- ----------------------------------------------------------------------------
+-- Storage: bucket TAM cho AI Document Reader — file nguon (.docx/.pdf/anh)
+-- duoc client upload TRUC TIEP tu browser vao day (xem
+-- app/api/ai/documents/upload-url/route.ts), TRUOC KHI goi
+-- /api/ai/documents/parse, de tranh gioi han CUNG 4.5MB request body cua Vercel
+-- Serverless Function (loi "FUNCTION_PAYLOAD_TOO_LARGE" khi base64-encode ca
+-- file nhet vao JSON body). Server tai file ve tu bucket nay va XOA ngay sau
+-- khi doc xong (xem loadSourceBuffer() trong app/api/ai/documents/parse/route.ts)
+-- — day CHI la vung dem tam thoi, khong phai luu tru lau dai.
+--
+-- Object name convention: '<project_id>/<uuid>.<ext>' — KHONG gan voi
+-- test_case_id nhu automation-screenshots/automation-run-artifacts o tren, vi
+-- buoc nay xay ra TRUOC KHI test case duoc generate (AI Document Reader la
+-- Buoc 2 cua wizard, truoc Buoc "Generate"). Policy duoi day tach project_id ra
+-- tu object name va doi chieu truc tiep voi project_members (khong can join
+-- qua test_cases/test_case_sets nhu 2 bucket automation o tren).
+-- ----------------------------------------------------------------------------
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('document-source-uploads', 'document-source-uploads', false, 26214400) -- 25MB, khop MAX_DOCUMENT_SOURCE_FILE_BYTES
+on conflict (id) do nothing;
+
+create or replace function public.can_access_project_document_upload(object_name text)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1 from project_members pm
+    where pm.project_id::text = split_part(object_name, '/', 1) and pm.user_id = auth.uid()
+  );
+$$;
+
+drop policy if exists document_source_uploads_select on storage.objects;
+create policy document_source_uploads_select on storage.objects for select using (
+  bucket_id = 'document-source-uploads' and can_access_project_document_upload(name)
+);
+
+drop policy if exists document_source_uploads_insert on storage.objects;
+create policy document_source_uploads_insert on storage.objects for insert with check (
+  bucket_id = 'document-source-uploads' and can_access_project_document_upload(name)
+);
+
+drop policy if exists document_source_uploads_update on storage.objects;
+create policy document_source_uploads_update on storage.objects for update using (
+  bucket_id = 'document-source-uploads' and can_access_project_document_upload(name)
+);
+
+drop policy if exists document_source_uploads_delete on storage.objects;
+create policy document_source_uploads_delete on storage.objects for delete using (
+  bucket_id = 'document-source-uploads' and can_access_project_document_upload(name)
+);

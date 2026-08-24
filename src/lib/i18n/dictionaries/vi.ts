@@ -622,6 +622,8 @@ const vi = {
       embedFailed: 'Đã nạp file để dùng ngay, nhưng lưu lại cho RAG (dùng lại lần sau) thất bại.',
       embedPartialFailure: (count: number) => `Đã lưu cho RAG, nhưng ${count} case bị lỗi khi tạo embedding.`,
       documentParseFailed: 'Phân tích tài liệu thất bại',
+      documentTooLarge: (maxMb: number) => `File quá lớn (tối đa ${maxMb}MB). Vui lòng chọn file nhỏ hơn.`,
+      documentUploadFailed: 'Không tải file lên được. Vui lòng kiểm tra kết nối mạng và thử lại.',
       figmaImportFailed: 'Import Figma thất bại',
       figmaFileImportFailed: 'Đọc file Figma export thất bại',
       importReviewFileFailed: 'Import file thất bại',

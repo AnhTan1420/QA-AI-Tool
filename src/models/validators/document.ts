@@ -118,11 +118,18 @@ export const parseTextDocumentRequestSchema = z.object({
   source_type: z.literal('document'),
   file_name: z.string().min(1),
   // 'text' | 'markdown': client da doc file bang File.text() -> field `content`.
-  // 'pdf' | 'docx': client doc file bang base64 -> field `data_base64`, server
-  // tu extract text bang lib/documents/text-extractors.ts.
+  // 'pdf' | 'docx': server can bytes goc de extract text bang
+  // lib/documents/text-extractors.ts — client gui MOT trong hai:
+  //   - `storage_path`: file da duoc upload THANG len Supabase Storage truoc do
+  //     (xem app/api/ai/documents/upload-url/route.ts) — CACH MAC DINH, tranh
+  //     gioi han cung 4.5MB request body cua Vercel Serverless Function.
+  //   - `data_base64`: file duoc base64-encode nhet thang vao JSON body — chi
+  //     con giu de tuong thich nguoc / file rat nho, KHONG dung cho file lon vi
+  //     se bi loi "FUNCTION_PAYLOAD_TOO_LARGE".
   file_format: z.enum(['text', 'markdown', 'pdf', 'docx']),
   content: z.string().min(1).optional(),
   data_base64: z.string().min(1).optional(),
+  storage_path: z.string().min(1).optional(),
 });
 export type ParseTextDocumentRequest = z.infer<typeof parseTextDocumentRequestSchema>;
 
@@ -130,7 +137,10 @@ export const parseImageDocumentRequestSchema = z.object({
   source_type: z.literal('diagram_image'),
   file_name: z.string().min(1),
   mime_type: z.string().min(1),
-  data_base64: z.string().min(1),
+  // Xem chu thich `storage_path` / `data_base64` o parseTextDocumentRequestSchema
+  // phia tren — cung 2 lua chon, cung ly do.
+  data_base64: z.string().min(1).optional(),
+  storage_path: z.string().min(1).optional(),
 });
 export type ParseImageDocumentRequest = z.infer<typeof parseImageDocumentRequestSchema>;
 
