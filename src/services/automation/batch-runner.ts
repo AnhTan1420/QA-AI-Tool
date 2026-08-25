@@ -7,6 +7,7 @@ import { buildPlaywrightResponseSchema } from '@/services/ai/prompts/playwright-
 import { playwrightScriptSchema, type EnvironmentConfig, type PageObject } from '@/models/validators/playwright';
 import { loadRegistryForProject, toRegistryContext } from '@/services/automation/page-object-registry';
 import { applyRegistryMergePlan, computeRegistryMergePlan, resolveProjectIdForTestCase } from '@/services/automation/page-object-registry-orchestrator';
+import { dedupeNamedImports } from '@/services/automation/page-object-merge';
 
 /**
  * Wall-clock budget for a single process-next call. Deliberately well under
@@ -193,6 +194,13 @@ export async function processClaimedBatchItem(
         // would surface as `Identifier already declared` the moment the spec is run for real.
         rosterWarnings.push(
           `AI trả về trùng lặp Page Object "${mergePlan.duplicateClassNames.join(', ')}" trong cùng 1 lần generate — đã loại bỏ bản trùng, chỉ giữ 1 class/1 file để tránh lỗi "Identifier already declared" khi chạy code thật.`,
+        );
+      }
+      const importDedupe = dedupeNamedImports(parsed.data.code);
+      if (importDedupe.removedIdentifiers.length > 0) {
+        parsed.data.code = importDedupe.code;
+        rosterWarnings.push(
+          `Đã tự động xoá dòng import trùng lặp cho: ${[...new Set(importDedupe.removedIdentifiers)].join(', ')} — import trùng tên gây lỗi "Identifier already declared" khi chạy code thật.`,
         );
       }
       if (expectedRoster.length > 0 && parsed.data.page_objects.length === 0) {
