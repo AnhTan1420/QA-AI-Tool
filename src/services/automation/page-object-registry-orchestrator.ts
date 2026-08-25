@@ -67,18 +67,35 @@ export async function loadRegistryContextForProject(
 }
 
 export type PageObjectMergePlanItem = {
-  proposedIndex: number; // index into the ORIGINAL proposed page_objects array
+  // Index into `finalPageObjects` (NOT the original proposed array — a duplicate
+  // class_name can cause the two to diverge now that duplicates are dropped, see
+  // computeRegistryMergePlan). items[] and finalPageObjects[] are always pushed together
+  // in the same iteration, so this index is valid into either array.
+  proposedIndex: number;
   outcome: MergeOutcome;
 };
 
 export type PageObjectMergePlan = {
   /** The page_objects array to actually persist to automation_scripts — same length/order
-   * as the AI's proposal, but with `code` replaced by the full merged class for any entry
-   * that matched an existing registry row. Use THIS, never the AI's raw output, when saving. */
+   * as the AI's proposal (minus any dropped duplicates, see duplicateClassNames below), but
+   * with `code` replaced by the full merged class for any entry that matched an existing
+   * registry row. Use THIS, never the AI's raw output, when saving. */
   finalPageObjects: PageObject[];
-  /** One item per proposed page object, carrying the merge decision — fed into
+  /** One item per proposed page object THAT WAS KEPT, carrying the merge decision — fed into
    * applyRegistryMergePlan() after the script row has been saved. */
   items: PageObjectMergePlanItem[];
+  /** class_name values the AI proposed more than once in the SAME response (e.g. a page
+   * touched by more than one test step, re-emitted per step instead of once). Only the
+   * FIRST occurrence of each is kept in finalPageObjects — a raw duplicate class_name/
+   * file_name pair reaching automation_scripts.page_objects (and, typically, the spec's
+   * own duplicated `import { X } from './x'` line) is exactly what produces a
+   * `SyntaxError: Identifier 'X' has already been declared` the moment the self-hosted
+   * runner or Suite Exporter writes the spec + its page objects out as real sibling .ts
+   * files and Playwright actually parses them. Silently deduping here (rather than
+   * throwing) keeps a single AI hiccup from failing an otherwise-good generation — same
+   * posture as the rest of this module — but callers should surface this list as a
+   * warning so it doesn't go unnoticed. Empty when the AI didn't repeat itself. */
+  duplicateClassNames: string[];
 };
 
 /**
@@ -93,18 +110,35 @@ export function computeRegistryMergePlan(
 ): PageObjectMergePlan {
   const finalPageObjects: PageObject[] = [];
   const items: PageObjectMergePlanItem[] = [];
+  const seenClassNames = new Set<string>();
+  const duplicateClassNames: string[] = [];
 
-  proposedPageObjects.forEach((proposed, proposedIndex) => {
+  proposedPageObjects.forEach((proposed) => {
+    if (seenClassNames.has(proposed.class_name)) {
+      // AI returned the same page object more than once in this response — keeping both
+      // would write the same file twice and, worse, typically leaves TWO
+      // `import { X } from './x'` lines in the AI's own spec code, which is a duplicate-
+      // identifier SyntaxError the instant the spec runs as a real file (self-hosted run
+      // or export). Drop the repeat, keep the first occurrence.
+      duplicateClassNames.push(proposed.class_name);
+      return;
+    }
+    seenClassNames.add(proposed.class_name);
+
     const pageUrlPattern = proposed.page_url ? normalizePageUrlPattern(proposed.page_url) : null;
     const existing = matchRegistryEntry(registry, { label: proposed.page_label, url: proposed.page_url });
     const outcome = mergeProposedPageObject(proposed, existing, pageUrlPattern, testCaseId);
 
     const mergedCode = outcome.kind === 'new_entry' ? proposed.code : outcome.updatedCode;
+    // Index this item will have in finalPageObjects — computed BEFORE the push, and
+    // always equal to items.length at this point too, since the two arrays are only
+    // ever grown together (see the comment on PageObjectMergePlanItem.proposedIndex).
+    const finalIndex = finalPageObjects.length;
     finalPageObjects.push({ ...proposed, code: mergedCode });
-    items.push({ proposedIndex, outcome });
+    items.push({ proposedIndex: finalIndex, outcome });
   });
 
-  return { finalPageObjects, items };
+  return { finalPageObjects, items, duplicateClassNames };
 }
 
 export type ReconcileSummary = {
