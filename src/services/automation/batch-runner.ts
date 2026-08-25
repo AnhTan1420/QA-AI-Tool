@@ -187,6 +187,14 @@ export async function processClaimedBatchItem(
       const expectedNames = new Set(expectedRoster.map((g) => g.class_name));
       const actualNames = new Set(parsed.data.page_objects.map((po) => po.class_name));
       const rosterWarnings: string[] = [];
+      if (mergePlan && mergePlan.duplicateClassNames.length > 0) {
+        // AI returned the same Page Object more than once in this batch generation — kept
+        // only the first, dropped the rest (see computeRegistryMergePlan). Left as-is, this
+        // would surface as `Identifier already declared` the moment the spec is run for real.
+        rosterWarnings.push(
+          `AI trả về trùng lặp Page Object "${mergePlan.duplicateClassNames.join(', ')}" trong cùng 1 lần generate — đã loại bỏ bản trùng, chỉ giữ 1 class/1 file để tránh lỗi "Identifier already declared" khi chạy code thật.`,
+        );
+      }
       if (expectedRoster.length > 0 && parsed.data.page_objects.length === 0) {
         rosterWarnings.push('AI không trả về Page Object nào dù element map có dữ liệu.');
       }
