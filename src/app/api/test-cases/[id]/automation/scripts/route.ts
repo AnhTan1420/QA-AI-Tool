@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/services/supabase/server';
+import { dedupePageObjectsByClassName } from '@/services/automation/page-object-merge';
+import type { PageObject } from '@/models/validators/playwright';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id: testCaseId } = await params;
@@ -52,6 +54,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: false, error: 'Missing code' }, { status: 400 });
   }
 
+  // Unlike /api/ai/playwright (generate) and /heal, this "Edit / Tweak → Save" path
+  // never went through the Registry Merge Engine's dedup (computeRegistryMergePlan),
+  // so a page_objects[] payload with a repeated class_name (e.g. two page objects the
+  // user/AI-enhance left with the same class name) could be saved as-is. That's
+  // exactly what produces `SyntaxError: Identifier 'X' has already been declared`
+  // the next time this script runs (browser-runner.ts concatenates every page
+  // object's class declaration into one shared scope). Apply the same
+  // dedupe-by-class_name safety net here too, keeping the first occurrence.
+  const dedupedPageObjects: PageObject[] = Array.isArray(page_objects)
+    ? dedupePageObjectsByClassName(page_objects as PageObject[]).deduped
+    : [];
+
   const now = new Date().toISOString();
 
   // If script_id provided, update existing; otherwise insert new
@@ -60,7 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       .from('automation_scripts')
       .update({
         code,
-        page_objects: page_objects ?? [],
+        page_objects: dedupedPageObjects,
         imports_used: imports_used ?? [],
         selectors_used: selectors_used ?? [],
         warnings: warnings ?? [],
@@ -109,7 +123,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       test_case_id: testCaseId,
       version: nextVersion,
       code,
-      page_objects: page_objects ?? [],
+      page_objects: dedupedPageObjects,
       imports_used: imports_used ?? [],
       selectors_used: selectors_used ?? [],
       warnings: warnings ?? [],
