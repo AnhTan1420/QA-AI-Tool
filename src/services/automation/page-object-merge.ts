@@ -66,6 +66,53 @@ export function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+const IMPORT_LINE_RE = /^import\s*\{([^}]+)\}\s*from\s*(['"])([^'"]+)\2;?[ \t]*$/gm;
+
+/**
+ * Strips duplicate NAMED imports from a generated spec/page-object file's source —
+ * a safety net independent of (and complementary to) computeRegistryMergePlan's
+ * page_objects[]-level dedup in page-object-registry-orchestrator.ts. That dedup only
+ * catches a repeated PageObject *entry*; it can't touch a duplicate `import { X } from
+ * '...'` line the model wrote directly into a spec's own `code` string (e.g. when a
+ * test touches the same page at two separate steps and the model re-imports it each
+ * time instead of once). TWO import lines binding the SAME identifier — even from the
+ * same path — is a hard `SyntaxError: Identifier 'X' has already been declared` the
+ * instant the file is actually parsed (self-hosted run / `npx playwright test` on an
+ * export), so this always runs, with or without a registry match.
+ *
+ * Deliberately regex-based (matching this whole file's approach, see header comment):
+ * only ever applied to code THIS system asked the AI to produce in the known
+ * `import { OneClassName } from './x'` shape (see the RUNTIME CONTRACT in
+ * lib/ai/prompts/playwright-agent.ts) — not arbitrary third-party TypeScript. Keeps the
+ * FIRST import of each identifier; later lines binding an already-seen identifier are
+ * dropped (or, for a multi-name `import { A, B }` line, have just the already-seen
+ * names removed — the line is only dropped entirely if that empties it).
+ */
+export function dedupeNamedImports(code: string): { code: string; removedIdentifiers: string[] } {
+  const seen = new Set<string>();
+  const removedIdentifiers: string[] = [];
+
+  const deduped = code.replace(IMPORT_LINE_RE, (line, namesRaw: string, _quote: string) => {
+    const names = namesRaw
+      .split(',')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    const keep = names.filter((n) => {
+      if (seen.has(n)) {
+        removedIdentifiers.push(n);
+        return false;
+      }
+      seen.add(n);
+      return true;
+    });
+    if (keep.length === 0) return ''; // whole import line was 100% duplicate — drop it
+    if (keep.length === names.length) return line; // nothing to change on this line
+    return line.replace(namesRaw, ` ${keep.join(', ')} `);
+  });
+
+  return { code: deduped, removedIdentifiers };
+}
+
 /**
  * Replaces ONE existing method's text in-place, by exact source position (not a
  * string `.replace()` on the method text — that could ambiguously match an
