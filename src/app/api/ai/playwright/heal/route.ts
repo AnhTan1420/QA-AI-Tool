@@ -8,6 +8,7 @@ import { createClient } from '@/services/supabase/server';
 import { uploadScriptToR2, isR2Configured } from '@/services/automation/r2-storage';
 import { loadRegistryForProject, toRegistryContext } from '@/services/automation/page-object-registry';
 import { applyRegistryMergePlan, computeRegistryMergePlan, resolveProjectIdForTestCase } from '@/services/automation/page-object-registry-orchestrator';
+import { dedupeNamedImports } from '@/services/automation/page-object-merge';
 
 export const maxDuration = 120;
 export const runtime = 'nodejs';
@@ -133,6 +134,16 @@ export async function POST(req: Request) {
       // surface as `Identifier already declared` the moment the spec is run as a real file.
       rosterWarnings.push(
         `AI trả về trùng lặp Page Object "${mergePlan.duplicateClassNames.join(', ')}" trong cùng 1 lần heal — đã loại bỏ bản trùng, chỉ giữ 1 class/1 file để tránh lỗi "Identifier already declared" khi chạy code thật.`,
+      );
+    }
+
+    // Belt-and-suspenders: strip duplicate `import { X } from '...'` lines left directly in
+    // the AI's own healed spec text — always runs, independent of any registry match.
+    const importDedupe = dedupeNamedImports(parsed.data.code);
+    if (importDedupe.removedIdentifiers.length > 0) {
+      parsed.data.code = importDedupe.code;
+      rosterWarnings.push(
+        `Đã tự động xoá dòng import trùng lặp cho: ${[...new Set(importDedupe.removedIdentifiers)].join(', ')} — import trùng tên gây lỗi "Identifier already declared" khi chạy code thật.`,
       );
     }
     if (expectedRoster.length > 0 && parsed.data.page_objects.length === 0) {
