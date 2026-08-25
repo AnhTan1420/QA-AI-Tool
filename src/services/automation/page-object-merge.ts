@@ -1,24 +1,50 @@
 import type { MethodSignature, PageObject, RegistryEntry } from '@/models/validators/playwright';
 
 /**
- * Drops any PageObject entry whose `class_name` repeats an earlier one in the same
- * array, keeping the first occurrence. This is the SAME protection
- * computeRegistryMergePlan() applies (page-object-registry-orchestrator.ts) for the
- * AI-generate/heal/batch-run flows — extracted here so it's exactly one
- * implementation, reusable by ANY code path that is about to persist or compile a
- * page_objects[] array, not just the ones that go through the Registry Merge Engine.
+ * Extracts the identifier actually declared by `class X { ... }` (or `export class
+ * X`) in a page object's source. This is the identifier that ends up bound in the
+ * `new Function` shared scope (browser-runner.ts) or in a real `export class X`
+ * sibling file (self-hosted run) — NOT necessarily the same as the PageObject's
+ * `class_name` metadata field. The two normally agree, but can diverge when a
+ * Registry entry gets matched/extended for a proposal whose OWN class_name differs
+ * from what that entry's stored `code` already declares (see matchRegistryEntry /
+ * mergeProposedPageObject — the merge keeps the EXISTING code's class name, it
+ * never renames it to the newly-proposed class_name). Returns null (caller falls
+ * back to the metadata field) if no `class` declaration is found — should not
+ * normally happen for code this system generated.
+ */
+const CLASS_DECLARATION_RE = /\bclass\s+(\w+)/;
+export function extractDeclaredClassName(code: string): string | null {
+  const match = CLASS_DECLARATION_RE.exec(code);
+  return match ? match[1] : null;
+}
+
+/**
+ * Drops any PageObject entry whose ACTUALLY-DECLARED class identifier (see
+ * extractDeclaredClassName — not the `class_name` metadata field, which can
+ * diverge from it) repeats an earlier one in the same array, keeping the first
+ * occurrence. This is the SAME protection computeRegistryMergePlan() applies
+ * (page-object-registry-orchestrator.ts) for the AI-generate/heal/batch-run flows —
+ * extracted here so it's exactly one implementation, reusable by ANY code path
+ * that is about to persist or compile a page_objects[] array, not just the ones
+ * that go through the Registry Merge Engine.
  *
- * Two same-class_name entries reaching automation_scripts.page_objects is exactly
- * what produces `SyntaxError: Identifier 'X' has already been declared` — either at
- * `new Function` eval time (serverless preview runner, browser-runner.ts) or at real
- * file-parse time (self-hosted run / Suite Exporter — two sibling files both
- * `export class X` and a spec that ends up importing/declaring `X` twice).
+ * Deliberately keys off the REAL declared identifier rather than `class_name`:
+ * two page objects can have DIFFERENT `class_name` metadata yet both have `code`
+ * that declares the SAME class (e.g. two different proposals both matched the same
+ * mislabeled Registry entry — see page-object-registry.ts's matchRegistryEntry —
+ * and each got "extended" with the existing entry's code, which still declares its
+ * OWN original class name regardless of what class_name the new proposal used). A
+ * `class_name`-only dedup would miss that collision entirely; this catches it,
+ * because it's the declared identifier — not the metadata label — that produces
+ * `SyntaxError: Identifier 'X' has already been declared` the moment two such
+ * blocks land in the same `new Function` scope or the same spec's sibling imports.
  *
  * Deliberately keeps FIRST occurrence and silently drops the rest (never throws) —
  * same posture as computeRegistryMergePlan: a duplicate is a data-quality hiccup to
  * route around, not a reason to fail an otherwise-good save/run.
  */
-export function dedupePageObjectsByClassName<T extends Pick<PageObject, 'class_name'>>(
+export function dedupePageObjectsByClassName<T extends Pick<PageObject, 'class_name' | 'code'>>(
   pageObjects: T[],
 ): { deduped: T[]; duplicateClassNames: string[] } {
   const seen = new Set<string>();
@@ -26,11 +52,12 @@ export function dedupePageObjectsByClassName<T extends Pick<PageObject, 'class_n
   const duplicateClassNames: string[] = [];
 
   for (const po of pageObjects) {
-    if (seen.has(po.class_name)) {
+    const declaredKey = extractDeclaredClassName(po.code) ?? po.class_name;
+    if (seen.has(declaredKey)) {
       duplicateClassNames.push(po.class_name);
       continue;
     }
-    seen.add(po.class_name);
+    seen.add(declaredKey);
     deduped.push(po);
   }
 
