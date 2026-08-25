@@ -5,6 +5,7 @@ import path from 'node:path';
 import { ZipArchive } from 'archiver';
 import type { AutomationBrowser, EnvironmentConfig, FailureDetails, PageObject } from '@/models/validators/playwright';
 import { assertPublicUrl, parseCookieHeaderString, parseCookieToken, performLoginFlow } from './browser-runner';
+import { dedupePageObjectsByClassName } from './page-object-merge';
 
 // ============================================================================
 // Self-hosted "Full run" — Automation Agent Rebuild §4.2 ("Gold Path")
@@ -263,7 +264,15 @@ export async function runGeneratedScriptSelfHosted(
     // export places page objects and their spec in the same directory"). Writing them
     // anywhere else (e.g. a nested pages/ subfolder) would make the AI's own
     // `import { X } from './x-page'` sibling-relative imports resolve to nothing.
-    for (const po of script.page_objects ?? []) {
+    // Same defense-in-depth as the serverless eval runner (browser-runner.ts's
+    // compilePageObjectsToJs): a page_objects[] snapshot with a repeated class_name
+    // would write two DIFFERENT sibling files that both `export class X { ... }` —
+    // harmless on its own, but the spec's own `import { X } from './...'` lines
+    // (one per page object) then bind the SAME identifier twice in one module,
+    // which is a hard `SyntaxError: Identifier 'X' has already been declared` the
+    // instant `npx playwright test` actually parses generated.spec.ts.
+    const { deduped: dedupedPageObjects } = dedupePageObjectsByClassName(script.page_objects ?? []);
+    for (const po of dedupedPageObjects) {
       await writeFile(path.join(testsDir, po.file_name), po.code, 'utf8');
     }
     await writeFile(path.join(testsDir, 'generated.spec.ts'), script.code, 'utf8');
