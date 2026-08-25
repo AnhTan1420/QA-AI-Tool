@@ -142,6 +142,38 @@ export async function uploadRunArtifactToR2(
 }
 
 /**
+ * Delete an object from Cloudflare R2 by key.
+ * S3-compatible DeleteObject is idempotent - it does not error when the key is
+ * already gone, so callers can safely retry a partially-failed cleanup without
+ * special-casing "not found". Returns false only when R2 isn't configured at
+ * all, or the delete call itself failed (network/credentials/etc.) - callers
+ * should treat false as "storage cleanup did not happen" and surface it.
+ */
+export async function deleteFromR2(key: string): Promise<boolean> {
+  const config = getR2Config();
+  if (!config) return false;
+
+  try {
+    const { S3Client, DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+
+    const client = new S3Client({
+      region: 'auto',
+      endpoint: config.endpoint,
+      credentials: {
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+      },
+    });
+
+    await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: key }));
+    return true;
+  } catch (err) {
+    console.error('[r2-storage] Delete failed:', err);
+    return false;
+  }
+}
+
+/**
  * Generate a fresh signed URL for an existing R2 object.
  * Returns null if R2 is not configured or the key doesn't exist.
  */
