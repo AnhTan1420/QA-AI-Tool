@@ -373,6 +373,9 @@ const en: Dictionary = {
       runsHeading: 'Run History',
       empty: 'No data yet.',
       loadMore: 'Load more',
+      deleteRun: 'Delete run',
+      deleteRunConfirm: 'Delete this run permanently? Its screenshot, video, HTML report, and trace (if any) will also be removed from storage. This cannot be undone.',
+      deleteRunFailed: 'Could not delete run',
     },
     errors: {
       inspectFailed: 'Could not inspect environment',
