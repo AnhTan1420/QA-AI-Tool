@@ -1182,6 +1182,31 @@ export async function inspectEnvironment(
 
     if (env.login) {
       warnings.push(...(await performLoginFlow(page, env.login)));
+
+      // BUG FIX (Section 7 — "login succeeds but element map is for the wrong
+      // page, e.g. Dashboard instead of the configured target_url /projects"):
+      // performLoginFlow only waits for the login FORM to disappear - it says
+      // nothing about WHERE the app lands afterwards. Many apps' auth flow
+      // redirects to a fixed post-login route (a "/dashboard" home screen)
+      // regardless of which URL was originally requested before the login
+      // redirect kicked in, instead of honoring/restoring the original
+      // destination. So a successful login can still leave the browser on the
+      // wrong page relative to what the user configured as target_url. Re-nav
+      // explicitly so the element map reflects the actual configured page.
+      if (normalizeUrlForDedupe(page.url()) !== normalizeUrlForDedupe(env.target_url)) {
+        try {
+          await page.goto(env.target_url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          if (normalizeUrlForDedupe(page.url()) !== normalizeUrlForDedupe(env.target_url)) {
+            warnings.push(
+              `Sau khi đăng nhập, điều hướng lại tới target_url (${env.target_url}) bị chuyển hướng sang ${page.url()} - element map phản ánh trang này thay vì target_url. Có thể trang yêu cầu quyền/role khác với tài khoản đăng nhập, hoặc đường dẫn target_url không còn đúng sau khi đăng nhập.`,
+            );
+          }
+        } catch (err: any) {
+          warnings.push(
+            `Đăng nhập thành công nhưng không thể điều hướng lại tới target_url (${env.target_url}) sau khi login: ${String(err?.message ?? err)} - element map có thể phản ánh trang landing sau đăng nhập (VD: /dashboard) thay vì target_url.`,
+          );
+        }
+      }
     }
 
     // Installed once per Inspect session (after login, so a real session-establishing
