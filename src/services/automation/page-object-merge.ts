@@ -1,5 +1,42 @@
 import type { MethodSignature, PageObject, RegistryEntry } from '@/models/validators/playwright';
 
+/**
+ * Drops any PageObject entry whose `class_name` repeats an earlier one in the same
+ * array, keeping the first occurrence. This is the SAME protection
+ * computeRegistryMergePlan() applies (page-object-registry-orchestrator.ts) for the
+ * AI-generate/heal/batch-run flows — extracted here so it's exactly one
+ * implementation, reusable by ANY code path that is about to persist or compile a
+ * page_objects[] array, not just the ones that go through the Registry Merge Engine.
+ *
+ * Two same-class_name entries reaching automation_scripts.page_objects is exactly
+ * what produces `SyntaxError: Identifier 'X' has already been declared` — either at
+ * `new Function` eval time (serverless preview runner, browser-runner.ts) or at real
+ * file-parse time (self-hosted run / Suite Exporter — two sibling files both
+ * `export class X` and a spec that ends up importing/declaring `X` twice).
+ *
+ * Deliberately keeps FIRST occurrence and silently drops the rest (never throws) —
+ * same posture as computeRegistryMergePlan: a duplicate is a data-quality hiccup to
+ * route around, not a reason to fail an otherwise-good save/run.
+ */
+export function dedupePageObjectsByClassName<T extends Pick<PageObject, 'class_name'>>(
+  pageObjects: T[],
+): { deduped: T[]; duplicateClassNames: string[] } {
+  const seen = new Set<string>();
+  const deduped: T[] = [];
+  const duplicateClassNames: string[] = [];
+
+  for (const po of pageObjects) {
+    if (seen.has(po.class_name)) {
+      duplicateClassNames.push(po.class_name);
+      continue;
+    }
+    seen.add(po.class_name);
+    deduped.push(po);
+  }
+
+  return { deduped, duplicateClassNames };
+}
+
 // ============================================================================
 // Page Object Merge Engine — Automation Agent Rebuild §4.1.3 / Principle P3
 // ----------------------------------------------------------------------------
