@@ -94,6 +94,16 @@ export async function POST(req: Request) {
     const mergePlan = testCaseId && projectId ? computeRegistryMergePlan(registry, parsed.data.page_objects, testCaseId) : null;
     if (mergePlan) {
       parsed.data.page_objects = mergePlan.finalPageObjects;
+      if (mergePlan.duplicateClassNames.length > 0) {
+        // AI returned the same Page Object more than once in this response — kept only the
+        // first, dropped the rest (see computeRegistryMergePlan). Left as-is, the duplicate
+        // would surface as `Identifier already declared` the moment this spec is run as a
+        // real file (self-hosted run / export), so this is surfaced now instead.
+        parsed.data.warnings = [
+          ...parsed.data.warnings,
+          `AI trả về trùng lặp Page Object "${mergePlan.duplicateClassNames.join(', ')}" trong cùng 1 lần generate — đã loại bỏ bản trùng, chỉ giữ 1 class/1 file để tránh lỗi "Identifier already declared" khi chạy code thật.`,
+        ];
+      }
     }
 
     // 3b) Defense-in-depth Page Object identity check (never trust raw AI JSON, applied
