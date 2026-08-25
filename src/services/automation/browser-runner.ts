@@ -9,6 +9,7 @@ import type {
   InspectionStep,
   PageObject,
 } from '@/models/validators/playwright';
+import { dedupePageObjectsByClassName } from './page-object-merge';
 
 const IS_SERVERLESS = Boolean(process.env.VERCEL) || process.env.AUTOMATION_RUNTIME === 'serverless';
 
@@ -1427,7 +1428,16 @@ function transpilePageObjectToJs(code: string): string {
  * a malformed page object reports a diagnosable error instead of a bare SyntaxError.
  */
 function compilePageObjectsToJs(pageObjects: PageObject[]): string {
-  return pageObjects
+  // Defense-in-depth against a page_objects[] snapshot that already has a repeated
+  // class_name — writes that predate this guard (or that reached DB through a save
+  // path that didn't dedupe) would otherwise crash `new Function` with `SyntaxError:
+  // Identifier 'X' has already been declared` the moment two `class X { ... }`
+  // declarations land in the same scope. Same dedupe-by-class_name rule the
+  // Registry Merge Engine applies at save time (page-object-merge.ts) — keeps the
+  // first occurrence, silently drops the rest, so a stale/bad snapshot degrades to
+  // "runs with the first definition" instead of failing the whole run outright.
+  const { deduped } = dedupePageObjectsByClassName(pageObjects);
+  return deduped
     .map((po) => {
       try {
         return `// ── Page Object: ${po.class_name} (${po.file_name}) ──\n${transpilePageObjectToJs(po.code)}`;
