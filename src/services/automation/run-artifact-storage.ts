@@ -47,6 +47,26 @@ export async function uploadRunArtifact(
   return { path, signedUrl: signed?.signedUrl ?? null };
 }
 
+/**
+ * Deletes a self-hosted run artifact (trace/video/html_report) from whichever
+ * backend stored it - same dispatch-by-prefix logic as resignRunArtifactUrl()
+ * below (R2 if the path carries the "run-artifacts/" prefix
+ * uploadRunArtifactToR2() uses, Supabase Storage otherwise). Same "already-
+ * gone key is not an error" contract as deleteRunScreenshot() in
+ * screenshot-storage.ts - see that doc comment for why.
+ */
+export async function deleteRunArtifact(supabase: SupabaseClient, path: string): Promise<void> {
+  if (isR2Configured() && path.startsWith('run-artifacts/')) {
+    const { deleteFromR2 } = await import('./r2-storage');
+    const ok = await deleteFromR2(path);
+    if (!ok) throw new Error(`R2 delete failed for ${path}`);
+    return;
+  }
+
+  const { error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) throw new Error(error.message);
+}
+
 export async function resignRunArtifactUrl(supabase: SupabaseClient, path: string): Promise<string | null> {
   if (isR2Configured() && path.startsWith('run-artifacts/')) {
     const { getR2SignedUrl } = await import('./r2-storage');
