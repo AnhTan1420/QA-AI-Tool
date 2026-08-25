@@ -8,6 +8,7 @@ import { createClient } from '@/services/supabase/server';
 import { uploadScriptToR2, isR2Configured } from '@/services/automation/r2-storage';
 import { loadRegistryForProject, toRegistryContext } from '@/services/automation/page-object-registry';
 import { applyRegistryMergePlan, computeRegistryMergePlan, resolveProjectIdForTestCase } from '@/services/automation/page-object-registry-orchestrator';
+import { dedupeNamedImports } from '@/services/automation/page-object-merge';
 
 // Chạy browser (inspect/run) diễn ra ở /api/automation/*, không phải ở đây -
 // route này CHỈ gọi LLM để sinh code, giữ đúng nguyên tắc mỗi route 1 trách nhiệm.
@@ -104,6 +105,20 @@ export async function POST(req: Request) {
           `AI trả về trùng lặp Page Object "${mergePlan.duplicateClassNames.join(', ')}" trong cùng 1 lần generate — đã loại bỏ bản trùng, chỉ giữ 1 class/1 file để tránh lỗi "Identifier already declared" khi chạy code thật.`,
         ];
       }
+    }
+
+    // 3a-2) Belt-and-suspenders: strip any duplicate `import { X } from '...'` line left
+    // directly in the AI's own spec text — the page_objects[]-level dedup above can't catch
+    // this (it never touches `code`), and a duplicate NAMED import is a hard SyntaxError the
+    // moment the spec is actually parsed (self-hosted run / export), independent of whether
+    // a registry match was involved at all. Always runs, mergePlan or not.
+    const importDedupe = dedupeNamedImports(parsed.data.code);
+    if (importDedupe.removedIdentifiers.length > 0) {
+      parsed.data.code = importDedupe.code;
+      parsed.data.warnings = [
+        ...parsed.data.warnings,
+        `Đã tự động xoá dòng import trùng lặp cho: ${[...new Set(importDedupe.removedIdentifiers)].join(', ')} — import trùng tên gây lỗi "Identifier already declared" khi chạy code thật.`,
+      ];
     }
 
     // 3b) Defense-in-depth Page Object identity check (never trust raw AI JSON, applied
