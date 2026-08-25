@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { PageObject, RegistryContextEntry, RegistryEntry } from '@/models/validators/playwright';
 import { loadRegistryForProject, matchRegistryEntry, normalizePageUrlPattern, toRegistryContext } from './page-object-registry';
-import { mergeProposedPageObject, type MergeOutcome } from './page-object-merge';
+import { dedupePageObjectsByClassName, mergeProposedPageObject, type MergeOutcome } from './page-object-merge';
 
 // ============================================================================
 // Page Object Registry Orchestrator — Automation Agent Rebuild §4.1
@@ -110,21 +110,15 @@ export function computeRegistryMergePlan(
 ): PageObjectMergePlan {
   const finalPageObjects: PageObject[] = [];
   const items: PageObjectMergePlanItem[] = [];
-  const seenClassNames = new Set<string>();
-  const duplicateClassNames: string[] = [];
+  // AI returned the same page object more than once in this response — keeping both
+  // would write the same file twice and, worse, typically leaves TWO
+  // `import { X } from './x'` lines in the AI's own spec code, which is a duplicate-
+  // identifier SyntaxError the instant the spec runs as a real file (self-hosted run
+  // or export). dedupePageObjectsByClassName() drops the repeat, keeps the first
+  // occurrence (see page-object-merge.ts — same helper other save paths now use too).
+  const { deduped, duplicateClassNames } = dedupePageObjectsByClassName(proposedPageObjects);
 
-  proposedPageObjects.forEach((proposed) => {
-    if (seenClassNames.has(proposed.class_name)) {
-      // AI returned the same page object more than once in this response — keeping both
-      // would write the same file twice and, worse, typically leaves TWO
-      // `import { X } from './x'` lines in the AI's own spec code, which is a duplicate-
-      // identifier SyntaxError the instant the spec runs as a real file (self-hosted run
-      // or export). Drop the repeat, keep the first occurrence.
-      duplicateClassNames.push(proposed.class_name);
-      return;
-    }
-    seenClassNames.add(proposed.class_name);
-
+  deduped.forEach((proposed) => {
     const pageUrlPattern = proposed.page_url ? normalizePageUrlPattern(proposed.page_url) : null;
     const existing = matchRegistryEntry(registry, { label: proposed.page_label, url: proposed.page_url });
     const outcome = mergeProposedPageObject(proposed, existing, pageUrlPattern, testCaseId);
