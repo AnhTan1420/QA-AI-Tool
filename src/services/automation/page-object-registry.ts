@@ -49,6 +49,35 @@ export function normalizePageUrlPattern(rawUrl: string): string | null {
 }
 
 /**
+ * True when two page labels plausibly describe the SAME logical page, just
+ * reworded across generations (the case URL-matching exists to survive) — as
+ * opposed to two genuinely DIFFERENT pages that happen to share a URL because one
+ * is a modal/dialog opened on top of the other (no navigation, same URL, but a
+ * completely different set of controls/label). Word-overlap based: PascalCase both
+ * labels into their constituent words and require at least one shared word.
+ * Absent/empty labels are treated as compatible (can't rule anything out with no
+ * label to compare) — this only ever narrows an URL match, never widens it beyond
+ * what candidate.label itself provides.
+ */
+function labelsLikelySameEntity(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return true;
+  const wordsOf = (s: string) =>
+    new Set(
+      toPascalCase(s)
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+  const wordsA = wordsOf(a);
+  const wordsB = wordsOf(b);
+  for (const w of wordsA) {
+    if (wordsB.has(w)) return true;
+  }
+  return false;
+}
+
+/**
  * Matches a candidate page (from a fresh element-map grouping — see
  * groupElementMapByPage in playwright-agent.ts) against the project's existing
  * registry. Priority: (1) URL pattern — strongest signal, survives label rewording
@@ -56,6 +85,20 @@ export function normalizePageUrlPattern(rawUrl: string): string | null {
  * prompt already uses for class names) as a fallback when no URL was captured
  * (e.g. a modal/dialog state with no distinct URL). Returns null when neither
  * matches — this is a genuinely new page for the project.
+ *
+ * GUARD (see labelsLikelySameEntity): a URL match is only trusted when the
+ * candidate's label doesn't flatly contradict the existing entry's label. Without
+ * this, a modal opened on the SAME URL as its parent page (no navigation — e.g.
+ * "Sau khi click 'Tạo project mới'" opened on top of the project list) gets
+ * silently matched to the PARENT page's registry entry, and every subsequent
+ * generate call "extends" that one entry with methods from BOTH unrelated pages —
+ * the entry ends up holding the parent page's methods (e.g. clickNewProject)
+ * inside a class still named/coded after the modal (or vice versa), which is
+ * exactly the class_name/code mismatch that produces
+ * `SyntaxError: Identifier 'X' has already been declared` once such an entry gets
+ * reused as a page object again. When the guard rejects the URL match, we fall
+ * through to the label-based match (which will typically find nothing → correctly
+ * treated as a new page).
  */
 export function matchRegistryEntry(
   registry: RegistryEntry[],
@@ -63,7 +106,9 @@ export function matchRegistryEntry(
 ): RegistryEntry | null {
   const candidatePattern = candidate.url ? normalizePageUrlPattern(candidate.url) : null;
   if (candidatePattern) {
-    const byUrl = registry.find((e) => e.page_url_pattern && e.page_url_pattern === candidatePattern);
+    const byUrl = registry.find(
+      (e) => e.page_url_pattern && e.page_url_pattern === candidatePattern && labelsLikelySameEntity(e.page_label, candidate.label),
+    );
     if (byUrl) return byUrl;
   }
 
