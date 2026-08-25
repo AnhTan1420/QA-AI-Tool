@@ -55,6 +55,28 @@ export async function uploadRunScreenshot(
   return { path, signedUrl: signed?.signedUrl ?? null };
 }
 
+/**
+ * Deletes a run screenshot from whichever backend actually stored it - same
+ * dispatch-by-prefix logic as resignScreenshotUrl() below (R2 if the path
+ * carries the "screenshots/" prefix uploadScreenshotToR2() uses, Supabase
+ * Storage otherwise). Both backends are idempotent on an already-missing key
+ * (see deleteFromR2()'s doc comment / Supabase Storage's own remove()
+ * semantics), so this only throws on a genuine backend error - callers
+ * (DELETE .../automation/runs/[runId]) can safely retry a partially-failed
+ * run deletion without this step blocking on "already deleted".
+ */
+export async function deleteRunScreenshot(supabase: SupabaseClient, path: string): Promise<void> {
+  if (isR2Configured() && path.startsWith('screenshots/')) {
+    const { deleteFromR2 } = await import('./r2-storage');
+    const ok = await deleteFromR2(path);
+    if (!ok) throw new Error(`R2 delete failed for ${path}`);
+    return;
+  }
+
+  const { error } = await supabase.storage.from(BUCKET).remove([path]);
+  if (error) throw new Error(error.message);
+}
+
 export async function resignScreenshotUrl(supabase: SupabaseClient, path: string): Promise<string | null> {
   // If the path looks like an R2 key (starts with "screenshots/"), try R2 first
   if (isR2Configured() && path.startsWith('screenshots/')) {
