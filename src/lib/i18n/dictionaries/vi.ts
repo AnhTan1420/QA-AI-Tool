@@ -371,6 +371,9 @@ const vi = {
       runsHeading: 'Lịch sử chạy',
       empty: 'Chưa có dữ liệu.',
       loadMore: 'Xem thêm',
+      deleteRun: 'Xóa lượt chạy',
+      deleteRunConfirm: 'Xóa vĩnh viễn lượt chạy này? Screenshot, video, HTML report và trace (nếu có) liên quan cũng sẽ bị xóa khỏi storage. Không thể hoàn tác.',
+      deleteRunFailed: 'Không thể xóa lượt chạy',
     },
     errors: {
       inspectFailed: 'Không thể inspect environment',
