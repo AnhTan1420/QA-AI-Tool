@@ -1,26 +1,19 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { History, CircleCheck, CircleX, AlertTriangle, ZoomIn, Download, X, ExternalLink, Trash2 } from 'lucide-react';
+import { History, CircleCheck, CircleX, ZoomIn, Download, X } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/language-context';
 
 type RunEntry = {
   id: string;
-  status: 'passed' | 'failed' | 'error' | 'flaky';
+  status: 'passed' | 'failed' | 'error';
   duration_ms: number;
-  attempts: number;
-  execution_mode: 'serverless' | 'self_hosted';
   screenshot_url: string | null; // raw storage path; resolved lazily via /screenshot route
-  video_url: string | null; // raw storage path; resolved lazily via /video route
-  html_report_url: string | null; // raw storage path; resolved lazily via /html-report route
-  trace_playwright_dev_url: string | null; // already a ready-to-open trace.playwright.dev link (see the runs route)
   failure_details: { error_message: string; selector?: string } | null;
   started_at: string;
   profiles: { full_name: string | null } | null;
 };
 
-const videoSrc = (runId: string) => `/api/automation/runs/${runId}/video`;
-const htmlReportSrc = (runId: string) => `/api/automation/runs/${runId}/html-report`;
 const screenshotSrc = (runId: string) => `/api/automation/runs/${runId}/screenshot`;
 
 export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: string; refreshKey?: number }) {
@@ -32,35 +25,6 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
   const [initialLoading, setInitialLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [zoomImage, setZoomImage] = useState<string | null>(null);
-  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-
-  /**
-   * Hard-deletes one run record via DELETE /api/automation/runs/[runId] (see
-   * that route's doc comment) - removes it from both the DB (automation_runs
-   * row) and storage (screenshot/video/report/trace, on R2 or Supabase
-   * Storage, whichever this deployment uses) in one action. Unlike
-   * deleteScript() in use-automation.ts, there is no "kept on purpose" case
-   * here - this row IS the thing being deleted, so removing it from local
-   * state on success (rather than a full refetch) is safe and immediate.
-   */
-  async function deleteRun(runId: string) {
-    const confirmed = window.confirm(h.deleteRunConfirm);
-    if (!confirmed) return;
-
-    setDeletingRunId(runId);
-    setDeleteError(null);
-    try {
-      const res = await fetch(`/api/automation/runs/${runId}`, { method: 'DELETE' });
-      const json = await res.json().catch(() => ({ success: false, error: 'Delete failed' }));
-      if (!res.ok || !json.success) throw new Error(json.error ?? 'Delete failed');
-      setRuns((prev) => prev.filter((r) => r.id !== runId));
-    } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : h.deleteRunFailed);
-    } finally {
-      setDeletingRunId(null);
-    }
-  }
 
   async function fetchPage(before?: string | null) {
     const url = before
@@ -129,62 +93,17 @@ export function AutomationHistory({ testCaseId, refreshKey = 0 }: { testCaseId: 
         <span className="badge-neutral">{runs.length}{nextCursor ? '+' : ''}</span>
       </div>
 
-      {deleteError && (
-        <div className="mb-3 rounded-[var(--radius-control)] border border-danger-600/20 bg-danger-50 p-2 text-xs text-danger-600">
-          {deleteError}
-        </div>
-      )}
-
       <ol className="space-y-3">
         {runs.map((run) => (
           <li key={run.id} className="space-y-2 rounded-[var(--radius-control)] border border-ink-100 bg-ink-50/60 p-3 text-xs">
             <div className="flex flex-wrap items-center gap-3">
-              <span
-                className={
-                  run.status === 'passed' ? 'badge-success' : run.status === 'flaky' ? 'badge-warning' : 'badge-danger'
-                }
-              >
-                {run.status === 'passed' && <CircleCheck className="h-3.5 w-3.5" />}
-                {run.status === 'flaky' && <AlertTriangle className="h-3.5 w-3.5" />}
-                {(run.status === 'failed' || run.status === 'error') && <CircleX className="h-3.5 w-3.5" />}
+              <span className={run.status === 'passed' ? 'badge-success' : 'badge-danger'}>
+                {run.status === 'passed' ? <CircleCheck className="h-3.5 w-3.5" /> : <CircleX className="h-3.5 w-3.5" />}
                 {t.automation.run.status[run.status]}
               </span>
               <span className="text-caption">{t.automation.run.durationLabel(run.duration_ms)}</span>
-              {run.attempts > 1 && <span className="text-caption">{t.automation.run.attemptsLabel(run.attempts)}</span>}
-              {run.execution_mode === 'self_hosted' && (
-                <span className="badge-brand">{t.automation.run.executionModeBadgeFullRun}</span>
-              )}
               <span className="ml-auto text-caption">{new Date(run.started_at).toLocaleString()}</span>
-              <button
-                type="button"
-                onClick={() => deleteRun(run.id)}
-                disabled={deletingRunId === run.id}
-                title={h.deleteRun}
-                className="icon-btn h-7 w-7 text-danger-600 hover:bg-danger-50 disabled:opacity-60"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
             </div>
-
-            {(run.trace_playwright_dev_url || run.video_url || run.html_report_url) && (
-              <div className="flex flex-wrap gap-2">
-                {run.trace_playwright_dev_url && (
-                  <a href={run.trace_playwright_dev_url} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
-                    <ExternalLink className="h-3.5 w-3.5" /> {t.automation.run.openTrace}
-                  </a>
-                )}
-                {run.video_url && (
-                  <a href={videoSrc(run.id)} target="_blank" rel="noreferrer" className="btn-secondary btn-sm">
-                    <ExternalLink className="h-3.5 w-3.5" /> {t.automation.run.openVideo}
-                  </a>
-                )}
-                {run.html_report_url && (
-                  <a href={htmlReportSrc(run.id)} download="playwright-report.zip" className="btn-secondary btn-sm">
-                    <Download className="h-3.5 w-3.5" /> {t.automation.run.downloadHtmlReport}
-                  </a>
-                )}
-              </div>
-            )}
 
             {run.screenshot_url && (
               <div className="flex items-start gap-2">
