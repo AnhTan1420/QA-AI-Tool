@@ -16,6 +16,19 @@ import { findPotentialDuplicates } from '@/services/test-case-similarity';
 import { diffTestCaseSets, type TestCaseDiffEntry } from '@/services/test-case-diff';
 import { VALID_CATEGORY_VALUES } from '@/views/test-case/generate-workspace/shared';
 
+/** Trang thai ket thuc cua 1 luot goi AI co rang buoc do phu tai lieu. */
+export type AIRunStatus = 'completed' | 'coverage_incomplete' | 'validation_failed';
+
+/** Hinh dang phan hoi cua /api/ai/generate va /api/ai/enhance (mode: enhance). */
+type AIGenerationResponse = {
+  status: AIRunStatus;
+  test_cases: GeneratedTestCase[];
+  document_coverage: DocumentCoverageResult | null;
+  analysis?: GenerationAnalysis | null;
+  repair_rounds?: number;
+  provider_warning?: string | null;
+};
+
 /**
  * All state and business logic for the Generate Workspace screen: generating test cases,
  * importing/reviewing/enhancing them, and exporting to Excel. Kept separate from the
@@ -48,6 +61,14 @@ export function useGenerateWorkspace(projectId: string) {
   const [figmaToken, setFigmaToken] = useState('');
   const [documentCoverage, setDocumentCoverage] = useState<DocumentCoverageResult | null>(null);
 
+  // ── Trang thai THUC cua mot luot Generate/Enhance ──
+  // Truoc day UI chi co 2 trang thai: dang chay / xong. Mot ket qua 41/126 atom
+  // van hien ra nhu "thanh cong". Gio server tra ve `status` va so vong repair
+  // da chay, UI phai phan anh dung (xem muc 46/47).
+  const [generationStatus, setGenerationStatus] = useState<AIRunStatus | null>(null);
+  const [repairRounds, setRepairRounds] = useState(0);
+  const [providerWarning, setProviderWarning] = useState('');
+
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [analysis, setAnalysis] = useState<GenerationAnalysis | null>(null);
   const [review, setReview] = useState<ReviewResult | null>(null);
@@ -78,6 +99,9 @@ export function useGenerateWorkspace(projectId: string) {
     scope: 'generated' | 'imported';
     before: GeneratedTestCase[];
     after: GeneratedTestCase[];
+    /** Do phu tinh lai SAU enhance (da qua vong repair o server). */
+    coverage: DocumentCoverageResult | null;
+    status: AIRunStatus;
   } | null>(null);
 
   // ── Right column: tab "Kết quả" vs "Review & Enhance" ──
@@ -189,6 +213,9 @@ export function useGenerateWorkspace(projectId: string) {
     setAnalysis(null);
     setPendingEnhance(null);
     setRetrievedRagCount(null);
+    setGenerationStatus(null);
+    setRepairRounds(0);
+    setProviderWarning('');
 
     const ragCases = await retrieveRagContext();
     // Gop RAG context tu dong voi file nguoi dung tu upload o Step 3 (neu co),
@@ -197,7 +224,7 @@ export function useGenerateWorkspace(projectId: string) {
     const existingCodes = new Set(oldCases.map((c) => c.code));
     const mergedOldCases = [...oldCases, ...ragCases.filter((c) => !existingCodes.has(c.code))];
 
-    const result = await postJson<{ test_cases: GeneratedTestCase[]; document_coverage: DocumentCoverageResult | null; analysis: GenerationAnalysis | null }>('/api/ai/generate', {
+    const result = await postJson<AIGenerationResponse>('/api/ai/generate', {
       requirement_description: description,
       selected_categories: selectedCategories,
       language,
@@ -209,6 +236,9 @@ export function useGenerateWorkspace(projectId: string) {
     setTestCases(result.test_cases);
     setDocumentCoverage(result.document_coverage);
     setAnalysis(result.analysis ?? null);
+    setGenerationStatus(result.status);
+    setRepairRounds(result.repair_rounds ?? 0);
+    setProviderWarning(result.provider_warning ?? '');
   }
 
   function handleGenerateClick() {
@@ -255,14 +285,24 @@ export function useGenerateWorkspace(projectId: string) {
 
     setIsReviewing(true);
     try {
-      const data = await postJson<ReviewResult>('/api/ai/enhance', {
+      // document_context la BAT BUOC o day: khong co no, Review khong nhin thay
+      // atom nao va se cham diem cao cho mot bo test case con bo sot tai lieu.
+      const data = await postJson<ReviewResult & { document_coverage: DocumentCoverageResult | null }>('/api/ai/enhance', {
         mode: 'review',
         requirement_description: getEffectiveRequirementDescription(),
         test_cases: casesToReview,
+        document_context: documents,
+        language,
+        detail_level: detailLevel,
       }, t.generateWorkspace.errors.requestFailed);
 
-      if (reviewMode === 'generated') setReview(data);
-      else setImportedReview(data);
+      if (reviewMode === 'generated') {
+        setReview(data);
+        // Do phu deterministic tinh lai theo dung bo case vua review.
+        if (data.document_coverage) setDocumentCoverage(data.document_coverage);
+      } else {
+        setImportedReview(data);
+      }
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.reviewFailed);
     } finally {
@@ -282,17 +322,28 @@ export function useGenerateWorkspace(projectId: string) {
     setIsEnhancing(true);
     setReviewError('');
     try {
-      const enhanced = await postJson<GeneratedTestCase[]>('/api/ai/enhance', {
+      const enhanced = await postJson<AIGenerationResponse>('/api/ai/enhance', {
         mode: 'enhance',
         requirement_description: getEffectiveRequirementDescription(),
         test_cases: casesToEnhance,
         review_result: reviewToUse,
+        document_context: documents,
+        language,
+        detail_level: detailLevel,
       }, t.generateWorkspace.errors.requestFailed);
 
       // KHONG ghi de testCases/importedReviewCases ngay - giu lai o pendingEnhance
       // de nguoi dung xem diff truoc/sau va tu quyet dinh Áp dụng hay Hủy (xem
       // applyEnhancement/discardEnhancement o duoi).
-      setPendingEnhance({ scope: reviewMode, before: casesToEnhance, after: enhanced });
+      setPendingEnhance({
+        scope: reviewMode,
+        before: casesToEnhance,
+        after: enhanced.test_cases,
+        coverage: enhanced.document_coverage,
+        status: enhanced.status,
+      });
+      setRepairRounds(enhanced.repair_rounds ?? 0);
+      setProviderWarning(enhanced.provider_warning ?? '');
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.enhanceFailedGeneric);
     } finally {
@@ -306,6 +357,10 @@ export function useGenerateWorkspace(projectId: string) {
     if (!pendingEnhance) return;
     if (pendingEnhance.scope === 'generated') {
       setTestCases(pendingEnhance.after);
+      // Do phu phai di kem bo case vua ap dung - neu khong, banner se hien so
+      // cu (truoc enhance) va lai noi doi nguoi dung mot lan nua.
+      setDocumentCoverage(pendingEnhance.coverage);
+      setGenerationStatus(pendingEnhance.status);
       setReview(null); // Clear review sau khi enhance - can chay lai review de co diem moi
     } else {
       setImportedReviewCases(pendingEnhance.after);
@@ -620,6 +675,7 @@ export function useGenerateWorkspace(projectId: string) {
 
     // Results
     testCases, groupedCases, safeTestCasesCount,
+    generationStatus, repairRounds, providerWarning,
     duplicateWarnings,
     analysis,
     review, coverageTone,

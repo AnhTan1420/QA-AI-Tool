@@ -107,7 +107,11 @@ function AiReasoningPanel({ analysis, t }: { analysis: NonNullable<GenerateWorks
 export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState }) {
   const { t } = workspace;
   const [showMatrix, setShowMatrix] = useState(false);
-  const coverageOk = (workspace.documentCoverage?.coverage_percent ?? 0) >= 100;
+  // `is_complete` (so sanh SO LUONG atom) chu khong phai percent >= 100: mot bo
+  // tai lieu lon co the lam tron len 100.0 trong khi van con atom bi bo sot.
+  const coverageOk = workspace.documentCoverage?.is_complete ?? false;
+  const status = workspace.generationStatus;
+  const gs = t.generateWorkspace.runStatus;
 
   return (
     <div className="surface-card p-6">
@@ -123,6 +127,35 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
           </div>
         )}
       </div>
+
+      {/* Trang thai THAT cua luot chay. KHONG bao gio hien "thanh cong" khi do
+          phu tai lieu chua day du (muc 46) — day la loi hien thi nghiem trong
+          nhat cua ban cu: 41/126 van duoc bao la xong. */}
+      {status && status !== 'completed' && (
+        <div className="mt-4 flex items-start gap-2 rounded-2xl border border-warning-600/20 bg-warning-50 p-4 text-sm text-warning-600">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-bold">
+              {status === 'coverage_incomplete' ? gs.coverageIncompleteTitle : gs.validationFailedTitle}
+            </p>
+            <p className="mt-1 text-xs">
+              {status === 'coverage_incomplete'
+                ? gs.coverageIncompleteBody(workspace.documentCoverage?.uncovered.length ?? 0)
+                : gs.validationFailedBody}
+            </p>
+            {workspace.providerWarning && (
+              <p className="mt-1 text-xs text-ink-600">{workspace.providerWarning}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {status === 'completed' && workspace.repairRounds > 0 && (
+        <div className="mt-4 flex items-start gap-2 rounded-2xl border border-success-600/20 bg-success-50 p-4 text-sm text-success-600">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <p className="font-bold">{gs.repairedTitle(workspace.repairRounds)}</p>
+        </div>
+      )}
 
       {workspace.documentCoverage && (
         <div className={`mt-4 rounded-2xl border p-4 text-sm ${coverageOk ? 'border-success-600/20 bg-success-50' : 'border-warning-600/20 bg-warning-50'}`}>
@@ -154,6 +187,11 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
                 <li className="pl-2.5 text-ink-400">+{workspace.documentCoverage.uncovered.length - 10} {t.generateWorkspace.documentReader.moreSuffix}</li>
               )}
             </ul>
+          )}
+          {(workspace.documentCoverage.invalid_atom_ids?.length ?? 0) > 0 && (
+            <p className="mt-2 text-xs font-semibold text-warning-600">
+              {t.generateWorkspace.traceabilityMatrix.invalidMappingNote(workspace.documentCoverage.invalid_atom_ids.length)}
+            </p>
           )}
           {showMatrix && <TraceabilityMatrix matrix={workspace.documentCoverage.matrix ?? []} t={t} />}
         </div>

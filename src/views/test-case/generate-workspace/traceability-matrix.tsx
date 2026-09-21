@@ -69,6 +69,7 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
               <th className="px-3 py-2">{tm.colAtom}</th>
               <th className="px-3 py-2">{tm.colType}</th>
               <th className="px-3 py-2">{tm.colContent}</th>
+              <th className="px-3 py-2">{tm.colStatus}</th>
               <th className="px-3 py-2">{tm.colCoveredBy}</th>
             </tr>
           </thead>
@@ -80,6 +81,13 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
                 <td className="px-3 py-2 text-ink-700">
                   {row.label}
                   {row.screen_or_section && <span className="ml-1 text-ink-400">({row.screen_or_section})</span>}
+                </td>
+                <td className="px-3 py-2">
+                  {row.status === 'covered' ? (
+                    <span className="rounded bg-success-50 px-1.5 py-0.5 text-[11px] font-bold text-success-600">{tm.statusCovered}</span>
+                  ) : (
+                    <span className="badge-warning">{tm.statusUncovered}</span>
+                  )}
                 </td>
                 <td className="px-3 py-2">
                   {row.covered_by.length === 0 ? (
@@ -97,7 +105,7 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={4} className="px-3 py-6 text-center text-ink-400">{tm.noMatch}</td></tr>
+              <tr><td colSpan={5} className="px-3 py-6 text-center text-ink-400">{tm.noMatch}</td></tr>
             )}
           </tbody>
         </table>

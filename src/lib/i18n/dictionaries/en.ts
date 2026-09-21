@@ -496,8 +496,20 @@ const en: Dictionary = {
       'Cross-checking attached documents & Figma...',
       'Applying selected taxonomy...',
       'Generating detailed test cases...',
+      'Checking every document requirement is covered...',
+      'Generating test cases for what is still missing...',
       'Validating & formatting results...',
     ],
+    runStatus: {
+      coverageIncompleteTitle: 'Document coverage is not yet 100%',
+      coverageIncompleteBody: (count: number) =>
+        `The AI generated test cases but could not reach full document coverage. ${count} document item(s) are still not verified by any test case — they are listed below. Re-run Generate, or use Review & Enhance to close the gaps.`,
+      validationFailedTitle: 'The result did not pass quality validation',
+      validationFailedBody:
+        'The returned suite has duplicate codes, broken step numbering, or invalid document references. Please run it again.',
+      repairedTitle: (rounds: number) =>
+        `Reached 100% document coverage after ${rounds} automatic repair round(s).`,
+    },
     generatingHint: 'This can take up to about a minute depending on how complex the requirement is.',
     generatingTitle: 'Generating test cases',
     generatingSubtitle: 'AI is analyzing and generating detailed test cases for your requirement',
@@ -616,8 +628,13 @@ const en: Dictionary = {
       colAtom: 'Atom',
       colType: 'Type',
       colContent: 'Content',
+      colStatus: 'Status',
       colCoveredBy: 'Covered by',
       notCovered: 'Not covered',
+      statusCovered: 'Covered',
+      statusUncovered: 'Uncovered',
+      invalidMappingNote: (count: number) =>
+        `${count} hallucinated atom_id(s) were removed from the mapping and are not counted as covered.`,
       noMatch: 'No atom matches the current filter.',
     },
     reviewPanel: {

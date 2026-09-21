@@ -32,7 +32,7 @@ export async function POST(req: Request) {
     // 1) Validate INPUT
     const input = playwrightCodegenRequestSchema.parse(rawBody);
 
-    // 2) Build prompt + gọi AI Provider (Gemini -> AI_MODEL_FALLBACK -> Groq)
+    // 2) Build prompt + gọi AI Provider (Gemini-only: model chain + retry/fallback)
     const promptString = buildPlaywrightCodegenPrompt(input);
     const aiRawResult = await runAIAgent(promptString, 'playwright_codegen', buildPlaywrightResponseSchema());
 

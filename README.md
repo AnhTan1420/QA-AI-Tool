@@ -48,7 +48,7 @@ npm run dev
 # http://localhost:3000 → Register → Create Project → Generate
 ```
 
-**Prerequisites**: Node.js 20+, a Supabase project (free tier is fine), a Gemini API key (required) and Groq API key (recommended fallback). Cloudflare R2 is optional — see [CLOUDFLARE_R2_SETUP.md](CLOUDFLARE_R2_SETUP.md); without it, storage falls back to Supabase Storage automatically.
+**Prerequisites**: Node.js 20+, a Supabase project (free tier is fine), and a Google Gemini API key (required — Gemini is the only LLM provider). Cloudflare R2 is optional — see [CLOUDFLARE_R2_SETUP.md](CLOUDFLARE_R2_SETUP.md); without it, storage falls back to Supabase Storage automatically.
 
 ---
 
@@ -56,7 +56,8 @@ npm run dev
 
 | Feature | Description |
 |---------|-------------|
-| AI Test Case Generation | Structured test cases from a natural-language requirement, via Copilot → Gemini → Groq fallback |
+| AI Test Case Generation | Structured test cases from a natural-language requirement, via Gemini-only multi-model failover |
+| 100% Document Traceability | Every document atom is deterministically checked against `source_requirement_ids`; uncovered atoms trigger an automatic Gemini repair pass before the run is reported complete |
 | Senior QA Review & Enhance | Independent agent scores coverage, flags gaps/comments, and can rewrite the set based on its own review |
 | Test Case Library | Search, paginate, bulk-delete, version history, threaded comments |
 | Old-Cases Import (Excel) | Upload an existing `.xlsx` suite to review or feed as generation reference |
@@ -82,7 +83,7 @@ Frontend:     Next.js 16 + React 19 + TypeScript + Tailwind CSS 4
 Backend:      Next.js API Routes + Server Components
 Database:     Supabase PostgreSQL + pgvector
 Auth:         Supabase Auth (Email/Password + Google OAuth)
-AI/LLM:       GitHub Copilot (proxy) → Google Gemini (@google/genai) → Groq (groq-sdk), automatic fallback
+AI/LLM:       Google Gemini ONLY (@google/genai) — multi-model failover across the configured Flash pool
 Automation:   Playwright (playwright-core + @sparticuz/chromium on serverless, full `playwright` self-hosted)
 E2E Suite:    @playwright/test (tests/) — authored by qa-planner/qa-generator/qa-healer Claude Code subagents, see docs/e2e-agents.md
 Storage:      Cloudflare R2 (S3-compatible, @aws-sdk/client-s3), Supabase Storage as fallback
@@ -118,7 +119,7 @@ QA-AI-Tool/
 │       └── test-cases/                # CRUD + comments + versions + automation scripts/runs
 ├── components/                        # auth, automation, layout, team, test-case(-form/-list), tools
 ├── lib/
-│   ├── ai/                            # providers (copilot/gemini/groq), prompts, parsing
+│   ├── ai/                            # Gemini engine + model registry, prompts, validation, coverage repair
 │   ├── automation/                    # browser runner, batch runner, R2/Supabase storage, rate limiter
 │   ├── documents/                     # AI Document Reader helpers
 │   ├── validators/                    # Zod schemas
@@ -165,10 +166,11 @@ test_cases (1:N) ──► automation_runs (pass/fail history, screenshot_url)
 
 ### AI Generation
 1. Enter a requirement (optionally attach an old `.xlsx` suite and/or run the AI Document Reader on a Figma link, MD/PDF/DOCX doc, or ERD/diagram image).
-2. `/api/ai/generate` calls Copilot → Gemini → Groq with the requirement, any RAG-retrieved old cases, and any document atoms; returns structured test cases plus a `document_coverage` score if documents were attached.
-3. All AI output is validated against `lib/validators/test-case.ts` before reaching the client.
-4. Optional: run the independent **Review Agent** (`/api/ai/enhance`, `mode: "review"` — sees only the requirement + test cases, never the generation prompt) for a coverage score, gaps, and comments; optionally **Enhance** to rewrite based on that review.
-5. **Save to Library** persists the set via `/api/test-case-sets` + `/api/test-cases/bulk`.
+2. `/api/ai/generate` calls Gemini (primary model → retry → fallback models) with the requirement, any RAG-retrieved old cases, and any document atoms.
+3. All AI output is validated against `models/validators/test-case.ts` **and** the semantic validator in `services/ai/test-case-validation.ts` before reaching the client.
+4. The route then computes `document_coverage` **in code** and, if any atom is uncovered, runs the **Coverage Repair loop** (`services/ai/coverage-repair.ts`) until coverage is 100% — see [Document coverage](#document-coverage-100-is-the-only-complete-state).
+5. Optional: run the **Review Agent** (`/api/ai/enhance`, `mode: "review"`). It receives the same document atoms and the deterministic coverage number, and its self-reported score is capped by that number. Optionally **Enhance** to close the gaps it found.
+6. **Save to Library** persists the set via `/api/test-case-sets` + `/api/test-cases/bulk`.
 
 ### Single-Case Automation
 1. Test case detail → **Automation** tab → configure/pick an environment.
@@ -201,26 +203,39 @@ NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key   # bypasses RLS — server-side system ops only, never expose to client
 
-# AI Providers — tried in order: Copilot -> Gemini -> Groq (lib/ai/provider.ts)
-GITHUB_COPILOT_TOKEN=your-github-copilot-proxy-token
-GITHUB_COPILOT_BASE_URL=https://your-copilot-proxy.example.com/v1   # OpenAI-compatible: chat/completions + embeddings
+# AI Provider — GEMINI ONLY. There is no second provider and no provider-routing
+# branch anywhere in the codebase (services/ai/provider.ts).
 GOOGLE_GEMINI_API_KEY=your-gemini-api-key
-GROQ_API_KEY=your-groq-api-key
 
-# Models — read from env, never hardcoded. Copilot shares ONE model + one fallback across
-# every task; Gemini has a model per task, falling back to AI_MODEL_FALLBACK if unset.
-AI_MODEL_COPILOT=gpt-4.1
-AI_MODEL_COPILOT_FALLBACK=gpt-4.1-mini
-AI_MODEL_GENERATION=gemini-3.6-flash
-AI_MODEL_REVIEW=gemini-3.5-flash-lite
-AI_MODEL_CLASSIFICATION=gemini-3.5-flash-lite
-AI_MODEL_DOCUMENT_EXTRACTION=gemini-3.6-flash    # must support multimodal input
-AI_MODEL_PLAYWRIGHT_CODEGEN=gemini-3.6-flash
-AI_MODEL_FALLBACK=gemini-3.5-flash-lite
+# Gemini Flash model pool. Every task resolves to:
+#     [task-specific model] -> AI_MODEL_PRIMARY -> AI_MODEL_FALLBACK_1 -> AI_MODEL_FALLBACK_2
+# then deduplicated, with empty values ignored. All of these are optional: if none
+# are set the defaults in services/ai/model-registry.ts (DEFAULT_MODEL_POOL) apply.
+AI_MODEL_PRIMARY=gemini-3.7-flash
+AI_MODEL_FALLBACK_1=gemini-3.6-flash
+AI_MODEL_FALLBACK_2=gemini-3.5-flash
+
+# Per-task overrides — optional, each falls back to the pool above.
+AI_MODEL_GENERATION=gemini-3.7-flash
+AI_MODEL_COVERAGE_REPAIR=gemini-3.7-flash        # defaults to AI_MODEL_GENERATION
+AI_MODEL_REVIEW=gemini-3.7-flash
+AI_MODEL_ENHANCE=gemini-3.7-flash                # defaults to AI_MODEL_REVIEW
+AI_MODEL_CLASSIFICATION=gemini-3.6-flash
+AI_MODEL_DOCUMENT_EXTRACTION=gemini-3.7-flash    # must support multimodal input (Vision)
+AI_MODEL_PLAYWRIGHT_CODEGEN=gemini-3.7-flash
+AI_MODEL_PLAYWRIGHT_HEAL=gemini-3.7-flash        # defaults to AI_MODEL_PLAYWRIGHT_CODEGEN
 AI_MODEL_EMBEDDING=gemini-embedding-001          # used by /api/ai/embed, /api/test-case-imports, /api/ai/retrieve
-AI_MODEL_COPILOT_EMBEDDING=text-embedding-3-small   # optional: if set (+ Copilot token/URL above), embeddings try Copilot first, else go straight to Gemini
-GROQ_MODEL_PRIMARY=llama-3.1-70b-versatile
-GROQ_MODEL_FALLBACK=llama-3.1-8b-instant
+
+# Resilience — every Gemini call is bounded and retried (services/ai/gemini.ts).
+GEMINI_REQUEST_TIMEOUT_MS=120000     # hard timeout per request (AbortController + racing timer)
+GEMINI_MAX_RETRIES_PER_MODEL=2       # retries on the SAME model before moving to the next one
+GEMINI_BACKOFF_BASE_MS=1000          # exponential backoff base
+GEMINI_BACKOFF_MAX_MS=8000           # backoff ceiling (jitter is always applied)
+
+# Document coverage repair loop (services/ai/coverage-repair.ts)
+AI_MAX_COVERAGE_REPAIR_ROUNDS=4      # hard stop; the loop also stops early if a round makes no progress
+AI_COVERAGE_REPAIR_BATCH_SIZE=35     # uncovered atoms sent per repair request, grouped by document/section
+
 
 # Optional
 FIGMA_ACCESS_TOKEN=your-figma-personal-access-token   # server-side fallback if user doesn't paste their own
@@ -234,7 +249,119 @@ R2_BUCKET_NAME=qa-automation-assets
 # R2_PUBLIC_URL=https://pub-abc123.r2.dev   # optional: public bucket domain, skips signed-URL generation
 ```
 
-Vision (`runDocumentVisionAgent`, used for diagram/ERD/UI-mockup reading) stays Gemini-only — no Copilot/Groq fallback.
+> **Legacy variables are ignored.** `GROQ_API_KEY`, `GROQ_MODEL_*`, `GITHUB_COPILOT_*` and `AI_MODEL_COPILOT*` have no effect — `validateModelConfiguration()` reports them as leftovers so they can be deleted from your deployment.
+> `AI_MODEL_FALLBACK` (the old single-fallback variable) is still honoured at the **end** of the chain so existing deployments don't lose a fallback on upgrade, but new setups should use `AI_MODEL_FALLBACK_1` / `_2`.
+
+Vision (`runDocumentVisionAgent`), embeddings, classification and Playwright codegen/healing all run through the same Gemini engine — there is no separate code path with different retry rules.
+
+---
+
+## AI architecture: Gemini-only, multi-model failover
+
+There is exactly one LLM provider. `services/ai/provider.ts` has no routing branch, and Copilot/Groq have been removed from the codebase, the dependencies and the environment.
+
+```
+runAIAgent() / runGeminiTask() / runDocumentVisionAgent() / createEmbedding()
+        ↓
+getModelChain(task)                 services/ai/model-registry.ts
+        ↓
+generateWithGeminiResilient()       services/ai/gemini.ts
+        ↓
+validated JSON result
+```
+
+### Failover behaviour
+
+Every request walks the model chain. Within each model it retries before giving up on it:
+
+```
+request
+  ↓
+Gemini primary          (AI_MODEL_PRIMARY)
+  ↓ 503
+retry same model        (exponential backoff + jitter)
+  ↓ 503
+Gemini fallback #1      (AI_MODEL_FALLBACK_1)
+  ↓ 503
+retry fallback #1
+  ↓ 503
+Gemini fallback #2      (AI_MODEL_FALLBACK_2)
+  ↓
+strict validation (Zod + semantic)
+  ↓
+success
+```
+
+A controlled `GeminiProviderError` is returned **only** after the entire strategy is exhausted. This is graceful recovery, not a promise that Gemini never fails — a single Flash model being briefly unavailable should not surface to the user, but a total outage honestly will.
+
+Errors are classified rather than pattern-matched on one or two status codes:
+
+| Classification | Triggers | Action |
+|---|---|---|
+| `transient` | 408, 425, 429, 500, 502, 503, 504, 529, `ECONNRESET`, `ETIMEDOUT`, `UND_ERR_CONNECT_TIMEOUT`, `EAI_AGAIN`, timeouts, socket errors | Retry same model with backoff + jitter, then next model |
+| `schema_incompatible` | 400 mentioning `responseSchema` / `propertyOrdering` / unsupported schema field | Retry the **same** model without `responseSchema` (structured-output degradation) |
+| `bad_response` | Empty body, unparseable JSON, Zod validation failure | Retry — a different sample may be valid |
+| `model_unavailable` | 404, "model not found", deprecated model | Skip straight to the next model |
+| `auth` | 401, 403, invalid API key, permission denied | Stop immediately — another model with the same key cannot help |
+| `fatal` | Genuinely malformed request | No retry; try next model once, then fail |
+
+Every request is bounded by `GEMINI_REQUEST_TIMEOUT_MS` using an `AbortController` **and** an independent racing timer, so a request can never hang indefinitely even if the SDK ignores the abort signal.
+
+### Structured-output degradation
+
+Not every model accepts every schema feature, so output handling degrades in three modes rather than failing:
+
+- **Mode A** — Gemini structured output with `responseSchema`.
+- **Mode B** — same model, `responseMimeType: application/json` but no schema, then Zod validation.
+- **Mode C** — strip markdown fences, extract the JSON object/array (including repairing a response truncated by `maxOutputTokens`), then Zod validation.
+
+Falling back never degrades the request itself: the next model receives the **identical** prompt — same requirement, same documents, same categories, same traceability rules. There is no shorter "emergency" prompt.
+
+---
+
+## Document coverage: 100% is the only complete state
+
+When documents are attached, every atom extracted by the AI Document Reader is a first-class QA requirement. `services/documents/coverage.ts` compares the real atom inventory against the real `source_requirement_ids` on the real generated test cases. It does not read `analysis.document_atom_plan`, it does not use token similarity, and it does not trust any score the model reports about itself.
+
+```
+Generate
+   ↓
+Validate test cases (Zod + semantic)
+   ↓
+Compute document coverage (in code)
+   ↓
+100%?
+ ┌───────┴───────┐
+ YES             NO
+ ↓                ↓
+success      Gemini Coverage Repair
+                  ↓  generate cases for the uncovered atoms only
+                  ↓  merge (existing coverage is never deleted)
+                  ↓  recompute
+                  └──→ repeat
+```
+
+The loop is bounded twice: by `AI_MAX_COVERAGE_REPAIR_ROUNDS`, and by a progress guard that stops immediately if a round fails to cover a single new atom — an untestable atom must not be allowed to burn your Gemini quota in a loop.
+
+**Anti-gaming rules enforced in code, not in the prompt:**
+
+- Hallucinated atom IDs are stripped and reported; they are never counted as covered.
+- A single test case may claim at most 8 atoms. A case claiming more is truncated, and the excess atoms return to *uncovered* so the repair loop writes real, targeted cases for them. This makes the "one generic case covers 20 unrelated atoms" trick strictly counter-productive.
+- Repair output that covers none of the currently-uncovered atoms is discarded.
+- `is_complete` compares atom **counts**, not the rounded percentage — 12,599 / 12,600 displays as 100.0% but is still incomplete.
+
+If the loop cannot reach 100%, the API returns `status: "coverage_incomplete"` together with the cases it did produce (partial work is never silently thrown away), and the UI shows the gap instead of a success state.
+
+### Generate → Review → Enhance share one source of truth
+
+All three flows operate on the same `QAAISourceContext` and the same prompt formatters (`services/ai/source-context.ts`):
+
+```
+Requirement description + ParsedDocument[] + DocumentAtom[] + RAG cases
++ GenerationAnalysis + current test cases + DocumentCoverageResult + ReviewResult
+```
+
+Review receives the documents and the deterministic coverage number, and its self-reported `coverage_score` is **capped** by that number — if code measures 32.5% and Gemini claims 95%, the API and UI show 32.5% and keep 95% only as `ai_reported_coverage_score` for auditing. Enhance receives the same context plus the review findings, may not delete an existing atom mapping, and its result is run back through the coverage repair loop.
 
 ---
 
@@ -295,13 +422,14 @@ curl -X POST http://localhost:3000/api/automation/batch-run \
 
 ## Core Principles
 
-1. **Never trust raw AI JSON** — every Copilot/Gemini/Groq response passes through `lib/validators/test-case.ts` before DB write or client response.
-2. **Review Agent must be independent** — no shared conversation history or prior test cases from the Generation Agent; it evaluates objectively.
-3. **No hard-coded model IDs** — always read from env (`process.env.AI_MODEL_GENERATION`, never a literal string). Provider order: Copilot → Gemini (task model, else `AI_MODEL_FALLBACK`) → Groq.
-4. **Test cases join through sets** — `test_cases` has no `project_id`; join via `test_case_sets`.
-5. **RLS is the primary defense** — Zod validates input, but RLS enforces access at the DB level. Never bypass with `supabase/admin.ts` except true system operations.
-6. **Automation config never persists secrets** — `project_environments` stores no credentials; tokens/passwords live only in memory for the run/batch.
-7. **Batch processing is one item per request** — `process-next` handles exactly one test case per call to stay inside Vercel Hobby's 60s limit; the open browser tab drives the loop, not a server worker.
+1. **Never trust raw AI JSON** — an HTTP 200 proves nothing. Every Gemini response passes Zod schema validation *and* semantic validation (`services/ai/test-case-validation.ts`) before it reaches the DB or the client.
+2. **Review Agent is independent, not blind** — it shares no conversation history or generation prompt with the Generation Agent, but it MUST receive the same documents, atoms and deterministic coverage number. An auditor that cannot see the specification cannot audit against it.
+3. **No hard-coded model IDs in business logic** — model selection lives *only* in `services/ai/model-registry.ts`. No feature file may name a model. Provider chain: Gemini task model → `AI_MODEL_PRIMARY` → `AI_MODEL_FALLBACK_1` → `AI_MODEL_FALLBACK_2`.
+4. **Document coverage is computed, never reported** — the number shown to the user always comes from `computeDocumentCoverage()`, never from anything the model said about itself.
+5. **Test cases join through sets** — `test_cases` has no `project_id`; join via `test_case_sets`.
+6. **RLS is the primary defense** — Zod validates input, but RLS enforces access at the DB level. Never bypass with `supabase/admin.ts` except true system operations.
+7. **Automation config never persists secrets** — `project_environments` stores no credentials; tokens/passwords live only in memory for the run/batch.
+8. **Batch processing is one item per request** — `process-next` handles exactly one test case per call to stay inside Vercel Hobby's 60s limit; the open browser tab drives the loop, not a server worker.
 
 ---
 

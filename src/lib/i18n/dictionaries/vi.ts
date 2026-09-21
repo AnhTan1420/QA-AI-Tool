@@ -494,8 +494,21 @@ const vi = {
       'Đang đối chiếu tài liệu & Figma đính kèm...',
       'Đang áp dụng taxonomy đã chọn...',
       'Đang sinh test case chi tiết...',
+      'Đang kiểm tra độ phủ từng yêu cầu trong tài liệu...',
+      'Đang bổ sung test case cho phần còn thiếu...',
       'Đang kiểm tra & định dạng kết quả...',
     ],
+    // Trang thai ket thuc cua 1 luot Generate/Enhance — xem results-panel.tsx.
+    runStatus: {
+      coverageIncompleteTitle: 'Chưa đạt 100% độ phủ tài liệu',
+      coverageIncompleteBody: (count: number) =>
+        `AI đã sinh test case nhưng chưa phủ hết tài liệu. Còn ${count} mục tài liệu chưa được test case nào kiểm tra — danh sách ở ngay bên dưới. Hãy chạy lại Generate hoặc dùng Review & Enhance để bổ sung.`,
+      validationFailedTitle: 'Kết quả chưa qua được kiểm tra chất lượng',
+      validationFailedBody:
+        'Bộ test case trả về có lỗi về mã trùng, thứ tự bước, hoặc tham chiếu tài liệu không hợp lệ. Vui lòng chạy lại.',
+      repairedTitle: (rounds: number) =>
+        `Đã đạt 100% độ phủ tài liệu sau ${rounds} vòng bổ sung tự động.`,
+    },
     generatingHint: 'Việc này có thể mất tới khoảng 1 phút tuỳ độ phức tạp của requirement.',
     generatingTitle: 'Đang tạo test case',
     generatingSubtitle: 'AI đang phân tích và sinh test case chi tiết cho requirement của bạn',
@@ -614,8 +627,13 @@ const vi = {
       colAtom: 'Atom',
       colType: 'Loại',
       colContent: 'Nội dung',
+      colStatus: 'Trạng thái',
       colCoveredBy: 'Được cover bởi',
       notCovered: 'Chưa cover',
+      statusCovered: 'Covered',
+      statusUncovered: 'Uncovered',
+      invalidMappingNote: (count: number) =>
+        `${count} atom_id do AI tự bịa đã bị loại bỏ khỏi mapping (không được tính là covered).`,
       noMatch: 'Không có atom nào khớp bộ lọc.',
     },
     reviewPanel: {

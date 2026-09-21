@@ -1,7 +1,9 @@
 // ============================================================================
 // File: parse.ts
-// Chức năng: Tiện ích xử lý dữ liệu trả về từ LLM và phân loại lỗi
+// Chức năng: Tiện ích bóc tách + validate dữ liệu JSON trả về từ Gemini.
 // ============================================================================
+
+import { GeminiBadResponseError } from './errors';
 
 function repairTruncatedJson(text: string): string | null {
   const openStack: string[] = [];
@@ -62,7 +64,7 @@ function repairTruncatedJson(text: string): string | null {
 
 export function extractJson(text: string): any {
   if (!text || typeof text !== 'string') {
-    throw new Error("Phản hồi từ AI trống hoặc không hợp lệ.");
+    throw new GeminiBadResponseError("Phản hồi từ AI trống hoặc không hợp lệ.");
   }
 
   // 1. Loại bỏ markdown code block nếu AI bọc kết quả bên trong (VD: ```json ... ```)
@@ -107,14 +109,19 @@ export function extractJson(text: string): any {
       }
     }
 
-    console.error("❌ Lỗi Parse JSON:", error);
-    console.error("Chuỗi text lỗi:", contentToParse);
-    throw new Error("Dữ liệu trả về từ AI không đúng định dạng JSON. Vui lòng thử lại.");
+    // KHONG log `contentToParse`: phan hoi AI co the chua nguyen van noi dung
+    // tai lieu nghiep vu nguoi dung vua upload (FS, ERD, thiet ke Figma...).
+    console.error("❌ Lỗi Parse JSON từ phản hồi AI:", error instanceof Error ? error.message : error);
+    throw new GeminiBadResponseError(
+      "Dữ liệu trả về từ AI không đúng định dạng JSON."
+    );
   }
 }
 
 /**
- * Groq (OpenAI-compatible)
+ * Boc mang test case ra khoi object bao ngoai. Gemini (ke ca khi dung structured
+ * output) co the tra ve `{ test_cases: [...] }`, `{ data: [...] }` hoac chinh
+ * mang do tuy prompt/che do — ham nay chuan hoa ve mot mang duy nhat.
  */
 export function unwrapArrayResponse(data: any): any {
   if (Array.isArray(data)) return data;
@@ -145,38 +152,35 @@ export function unwrapArrayResponse(data: any): any {
 }
 
 /**
- * Kiểm tra xem một lỗi có đáng để kích hoạt cơ chế Fallback (chuyển sang AI khác) không.
- * Chỉ Fallback khi lỗi thuộc về hạ tầng mạng hoặc giới hạn API (Rate limit, Timeout, 50x...).
+ * Validate 1 phan hoi AI bang Zod va bien loi thanh `GeminiBadResponseError`.
+ *
+ * Vi sao phai boc lai thay vi de ZodError tu nhien: engine trong gemini.ts phan
+ * loai loi de quyet dinh retry. ZodError thuan tuy bi xep vao "fatal" (khong
+ * retry, khong doi model) — trong khi that ra mot lan sample khac cua CUNG model
+ * rat co the tra ve JSON dung schema. Boc thanh bad_response de no duoc retry.
  */
-export function isFallbackWorthyError(error: any): boolean {
-  if (!error) return false;
+// Kieu CAU TRUC thay vi `ZodType<T>`: cac schema trong du an dung z.preprocess/
+// .default() nen kieu Input va Output khac nhau, khien `ZodType<T>` khong khop.
+// Ta chi can den `safeParse` + `issues`, nen khai bao dung phan do cho on dinh.
+type AIJsonParseOutcome<T> =
+  | { success: true; data: T }
+  | { success: false; error: { issues: { path: (string | number)[]; message: string }[] } };
 
-  const errorMessage = (error.message || '').toLowerCase();
-  const errorStatus = error.status || error.statusCode || 500;
+export function validateAIJson<T>(
+  schema: { safeParse: (value: unknown) => AIJsonParseOutcome<T> },
+  value: unknown,
+  label: string,
+): T {
+  const parsed = schema.safeParse(value);
+  if (parsed.success) return parsed.data;
 
-  // Danh sách các HTTP Status Code cho thấy server AI đang có vấn đề
-  // 429: Too Many Requests (Rate Limit/Quota)
-  // 500, 502, 503, 504: Lỗi từ máy chủ AI
-  const fallbackStatusCodes = [429, 500, 502, 503, 504];
-  if (fallbackStatusCodes.includes(errorStatus)) {
-    return true;
-  }
+  const preview = parsed.error.issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+    .join('; ');
 
-  // Kiểm tra bằng các từ khóa lỗi thường gặp trong API của Google và Groq
-  const fallbackKeywords = [
-    'rate limit',
-    'too many requests',
-    'quota',
-    'exhausted',
-    'overloaded',
-    'service unavailable',
-    'timeout',
-    'socket hang up',
-    'fetch failed',
-    '429',
-    '503',
-    '504'
-  ];
-
-  return fallbackKeywords.some(keyword => errorMessage.includes(keyword));
+  throw new GeminiBadResponseError(
+    `Phản hồi AI cho "${label}" không đúng schema: ${preview}`,
+    parsed.error.issues,
+  );
 }

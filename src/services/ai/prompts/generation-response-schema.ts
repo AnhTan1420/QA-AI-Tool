@@ -172,3 +172,26 @@ export function buildGenerationResponseSchema(): GeminiSchema {
     propertyOrdering: ['analysis', 'test_cases'],
   };
 }
+
+/**
+ * Schema cho cac luot CHI sinh test case, khong kem \"analysis\" 7 lop:
+ *   • Coverage Repair (services/ai/coverage-repair.ts) — chi can cac case BO SUNG
+ *     cho atom con thieu, khong can phan tich lai tu dau.
+ *   • Enhance (api/ai/enhance) — tra ve ca bo test case sau khi sua.
+ * Dung chung TEST_CASE_ITEM_SCHEMA voi generation de hinh dang test case KHONG
+ * BAO GIO lech nhau giua cac luong (day la ly do no duoc tach ra thay vi chep lai).
+ */
+export function buildTestCasesOnlyResponseSchema(): GeminiSchema {
+  return {
+    type: 'OBJECT',
+    properties: {
+      test_cases: {
+        type: 'ARRAY',
+        description: 'Cac test case can tra ve. Moi phan tu PHAI khop TEST_CASE_SCHEMA_CONTRACT.',
+        items: TEST_CASE_ITEM_SCHEMA,
+      },
+    },
+    required: ['test_cases'],
+    propertyOrdering: ['test_cases'],
+  };
+}

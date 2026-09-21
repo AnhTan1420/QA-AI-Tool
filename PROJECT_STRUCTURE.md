@@ -126,11 +126,20 @@ QA-AI-Tool/
 │   │   └── 📁 automation/{use-environments, use-batch-automation}.ts
 │   │
 │   ├── 📁 services/                     # SERVICES — business logic, external integrations, data access
-│   │   ├── 📁 ai/                       # AI/LLM layer
-│   │   │   ├── provider.ts              # Model routing: Gemini → fallback → Groq
-│   │   │   ├── gemini.ts, vision.ts, groq.ts, parse.ts
+│   │   ├── 📁 ai/                       # AI/LLM layer — GEMINI ONLY
+│   │   │   ├── provider.ts              # Gemini-only orchestration (no provider routing)
+│   │   │   ├── model-registry.ts        # THE single config layer: model chains, timeouts, retries
+│   │   │   ├── gemini.ts                # Resilient execution engine: retry, backoff+jitter, timeout,
+│   │   │   │                            #   schema degradation, vision, embeddings
+│   │   │   ├── errors.ts                # Error classification + GeminiProviderError
+│   │   │   ├── coverage-repair.ts       # Deterministic 100%-document-coverage repair loop
+│   │   │   ├── test-case-validation.ts  # Semantic validation + mechanical normalization
+│   │   │   ├── source-context.ts        # QAAISourceContext shared by Generate/Review/Enhance/Repair
+│   │   │   ├── parse.ts                 # JSON extraction + Zod guard for AI responses
 │   │   │   └── 📁 prompts/
 │   │   │       ├── generation-agent.ts, review-agent.ts, enhance-agent.ts
+│   │   │       ├── coverage-repair-agent.ts
+│   │   │       ├── generation-response-schema.ts
 │   │   │       ├── document-extraction-agent.ts
 │   │   │       └── playwright-agent.ts, playwright-response-schema.ts
 │   │   ├── 📁 automation/               # Playwright automation runner (server-side only)
@@ -243,19 +252,39 @@ app/api/<resource>/
 | Server | `services/supabase/server.ts` | API routes, Server Components | Cookie session, RLS enforced |
 | Admin | `services/supabase/admin.ts` | System operations | Service role, **bypasses RLS** — use sparingly |
 
-### 5. AI Model Routing (Services layer)
+### 5. AI Model Chain (Services layer) — Gemini only
 
 ```
-Task-specific Gemini model
-        ↓ (fallback)
-AI_MODEL_FALLBACK (Gemini)
-        ↓ (fallback)
-GROQ_MODEL_PRIMARY (Llama)
-        ↓ (fallback)
-GROQ_MODEL_FALLBACK (Llama)
+Task-specific Gemini model        (AI_MODEL_GENERATION, AI_MODEL_REVIEW, ...)
+        ↓
+AI_MODEL_PRIMARY                  (gemini-3.7-flash)
+        ↓
+AI_MODEL_FALLBACK_1               (gemini-3.6-flash)
+        ↓
+AI_MODEL_FALLBACK_2               (gemini-3.5-flash)
+        ↓
+controlled GeminiProviderError
 ```
 
-See `services/ai/provider.ts` for implementation.
+Within each model: up to `GEMINI_MAX_RETRIES_PER_MODEL` retries on transient
+failures (503, 429, 500, 502, 504, 408, connection resets, timeouts) using
+exponential backoff with jitter, plus one schema-free retry if the model rejects
+`responseSchema`. The chain is deduplicated and empty env values are ignored.
+
+There is no second provider. Resolution lives only in `services/ai/model-registry.ts`;
+execution lives only in `services/ai/gemini.ts`.
+
+### 6. Document Coverage Enforcement
+
+```
+Generate → validate → computeDocumentCoverage() → 100%?
+                                                   ├─ yes → status: completed
+                                                   └─ no  → Gemini repair loop → recompute → repeat
+```
+
+Coverage is computed from real atoms × real `source_requirement_ids`, never from
+`analysis.document_atom_plan` or any model-reported score. See
+`services/documents/coverage.ts` and `services/ai/coverage-repair.ts`.
 
 ---
 

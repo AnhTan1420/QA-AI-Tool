@@ -1,9 +1,24 @@
 import type { GeneratedTestCase } from '@/models/validators/test-case';
+import type { ParsedDocument } from '@/models/validators/document';
+import type { DocumentCoverageResult } from '@/services/documents/coverage';
+import {
+  formatCoverageForPrompt,
+  formatDocumentContextForPrompt,
+  formatTestCasesForPrompt,
+} from '../source-context';
 
-export function buildReviewPrompt(input: {
+export type ReviewPromptInput = {
   requirement_description: string;
   generated_test_cases: GeneratedTestCase[];
-}) {
+  /** AI Document Reader atoms — Review KHONG CON mu voi tai lieu (muc 10/19). */
+  documents: ParsedDocument[];
+  /** Do phu do UNG DUNG tinh. Gemini khong duoc phep mau thuan voi con so nay. */
+  document_coverage: DocumentCoverageResult | null;
+};
+
+export function buildReviewPrompt(input: ReviewPromptInput) {
+  const hasDocuments = input.documents.length > 0;
+
   return `You are a Principal QA Auditor with 20+ years auditing test suites for Fortune 500 companies. You are BRUTAL, PRECISE, and NEVER give false confidence. Your job is to find gaps that even senior engineers miss.
 
 ══════════════════════════════════════════════════════════════════
@@ -16,15 +31,25 @@ TRANSLATION & LANGUAGE RULES (CRITICAL)
 AUDIT PROTOCOL: 5-LAYER ADVERSARIAL ANALYSIS
 ══════════════════════════════════════════════════════════════════
 
-Before scoring, you MUST complete these 5 layers of analysis INSIDE the "analysis" field of the JSON output:
+Before scoring, you MUST complete these layers of analysis INSIDE the "analysis" field of the JSON output:
 
-LAYER 1 — REQUIREMENT COVERAGE MAPPING (Traceability Matrix)
+LAYER 1 — DOCUMENT TRACEABILITY (runs FIRST, outranks every other layer)
+${
+  hasDocuments
+    ? `• The attached documents have been atomized into atom_ids. The application has ALREADY computed, deterministically, which atoms are covered — see DOCUMENT COVERAGE below.
+• For every atom the application reports as UNCOVERED, record a requirement_gap with severity "Critical". These are not opinions; they are measured facts.
+• For every atom the application reports as COVERED, verify the mapping is GENUINE: does the referenced test case actually exercise that atom's behaviour, or was the atom_id merely pasted into source_requirement_ids? Report every fake mapping as a test_case_comment.
+• You MUST NOT report a high coverage_score while document atoms remain unmapped. Your coverage_score MUST NOT exceed the deterministic document coverage percentage stated below. The application enforces this in code and will overwrite a contradictory score.`
+    : '• No documents were attached to this request — skip document traceability and audit against the requirement text only.'
+}
+
+LAYER 2 — REQUIREMENT COVERAGE MAPPING
 • Break the requirement into atomic statements (one per line).
 • Map each statement to test case codes that cover it.
 • Flag: requirement statements with ZERO coverage = CRITICAL GAP.
 • Flag: requirement statements with only 1 positive case = NEEDS NEGATIVE/BOUNDARY.
 
-LAYER 2 — DIMENSIONAL COVERAGE CHECK (The 12 Dimensions)
+LAYER 3 — DIMENSIONAL COVERAGE CHECK (The 12 Dimensions)
 Check if the test suite covers ALL 12 quality dimensions:
   1. Functional Positive (happy path)
   2. Functional Negative (invalid input, unauthorized action)
@@ -39,7 +64,7 @@ Check if the test suite covers ALL 12 quality dimensions:
   11. Localization (unicode, RTL, timezone, currency, diacritics)
   12. Audit/Compliance (logging, GDPR, SOX, HIPAA where applicable)
 
-LAYER 3 — DEPTH ANALYSIS (The "So What?" Test)
+LAYER 4 — DEPTH ANALYSIS (The "So What?" Test)
 For EACH test case, ask:
 • Is the expected result OBSERVABLE? (Can I verify it with a screenshot, API response, or DB query?)
 • Is the expected result PRECISE? (Contains status code, error code, exact message, row count?)
@@ -48,7 +73,7 @@ For EACH test case, ask:
 • Does it test ONE thing, or is it a mashup of 3 scenarios?
 • Would a junior QA know EXACTLY what to do and how to verify?
 
-LAYER 4 — ADVERSARIAL ATTACK (Chaos Monkey Mindset)
+LAYER 5 — ADVERSARIAL ATTACK (Chaos Monkey Mindset)
 • What if the user does things in the WRONG order?
 • What if the session dies at step 3 of 5?
 • What if 2 users edit the same record simultaneously?
@@ -58,7 +83,7 @@ LAYER 4 — ADVERSARIAL ATTACK (Chaos Monkey Mindset)
 • What if the user has NO permission, PARTIAL permission, or ELEVATED permission?
 • What if the input contains zero-width spaces, RTL override, emoji, or null bytes?
 
-LAYER 5 — REDUNDANCY & EFFICIENCY AUDIT
+LAYER 6 — REDUNDANCY & EFFICIENCY AUDIT
 • Are there duplicate cases testing the same condition with different titles?
 • Are there cases so shallow they add no value? (Remove candidate)
 • Are there gaps so large they need 3+ new cases? (Add candidate)
@@ -72,6 +97,7 @@ SCORING RUBRIC (0-100)
 • 60-74: Mediocre. Missing negative cases, vague expected results, shallow steps.
 • 40-59: Poor. Major gaps, missing entire dimensions, happy-path only.
 • 0-39: Unacceptable. Missing core functionality, no security, no boundaries.
+${hasDocuments ? '\n⚠️ HARD CAP: coverage_score can never exceed the deterministic document coverage percentage below.' : ''}
 
 ══════════════════════════════════════════════════════════════════
 ISSUE_TYPE CLASSIFICATION RULE (MUST FOLLOW — ONLY 4 VALUES ALLOWED)
@@ -90,11 +116,12 @@ OUTPUT FORMAT (STRICT JSON OBJECT)
 
 {
   "analysis": {
-    "layer1_traceability": ["Observations on coverage"],
-    "layer2_dimensions": ["Observations on missing dimensions"],
-    "layer3_depth": ["Observations on step atomicity and data concreteness"],
-    "layer4_adversarial": ["Identified vulnerabilities and edge cases missed"],
-    "layer5_redundancy": ["Notes on duplicates or shallow cases"]
+    "layer1_document_traceability": ["Which atom_ids are genuinely tested vs merely referenced"],
+    "layer2_traceability": ["Observations on requirement coverage"],
+    "layer3_dimensions": ["Observations on missing dimensions"],
+    "layer4_depth": ["Observations on step atomicity and data concreteness"],
+    "layer5_adversarial": ["Identified vulnerabilities and edge cases missed"],
+    "layer6_redundancy": ["Notes on duplicates or shallow cases"]
   },
   "coverage_score": number,
   "dimension_scores": {
@@ -113,7 +140,7 @@ OUTPUT FORMAT (STRICT JSON OBJECT)
   },
   "requirement_gaps": [
     {
-      "requirement_text": "Exact text from requirement that is untested",
+      "requirement_text": "Exact text from requirement or document atom that is untested",
       "severity": "Critical" | "Major" | "Minor",
       "dimension": "which of the 12 dimensions is missing",
       "suggested_test_case": {
@@ -124,7 +151,8 @@ OUTPUT FORMAT (STRICT JSON OBJECT)
         "preconditions": ["string"],
         "test_data": {"field": "value"},
         "steps": [{"step_number": 1, "action": "string", "expected_result": "string"}],
-        "final_expected_result": "string"
+        "final_expected_result": "string",
+        "source_requirement_ids": ["exact atom_id values only — never invent one"]
       }
     }
   ],
@@ -146,8 +174,14 @@ INPUT DATA
 [REQUIREMENT]
 ${input.requirement_description}
 
+[SOURCE DOCUMENTS — AI Document Reader]
+${formatDocumentContextForPrompt(input.documents)}
+
+[DOCUMENT COVERAGE — computed by the application, authoritative]
+${formatCoverageForPrompt(input.document_coverage)}
+
 [TEST CASES TO AUDIT]
-${JSON.stringify(input.generated_test_cases, null, 2)}
+${formatTestCasesForPrompt(input.generated_test_cases)}
 
 ══════════════════════════════════════════════════════════════════
 OUTPUT: Pure JSON Object strictly following the schema above.`;
