@@ -539,6 +539,8 @@ const vi = {
       embedFailed: 'Đã nạp file để dùng ngay, nhưng lưu lại cho RAG (dùng lại lần sau) thất bại.',
       embedPartialFailure: (count: number) => `Đã lưu cho RAG, nhưng ${count} case bị lỗi khi tạo embedding.`,
       documentParseFailed: 'Phân tích tài liệu thất bại',
+      fileTooLarge: (size: string, max: string) => `File quá lớn (${size}, tối đa ${max}) để tải trực tiếp. Hãy dùng file nhỏ hơn.`,
+      docxExtractFailed: 'Không đọc được nội dung từ file .docx này (file có thể bị hỏng hoặc không đúng định dạng Word). Vui lòng thử file khác.',
       figmaImportFailed: 'Import Figma thất bại',
       figmaFileImportFailed: 'Đọc file Figma export thất bại',
       importReviewFileFailed: 'Import file thất bại',

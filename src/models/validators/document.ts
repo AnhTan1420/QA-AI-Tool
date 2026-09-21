@@ -1,4 +1,17 @@
 import { z } from 'zod';
+import { MAX_INLINE_BASE64_CHARS, formatMb, MAX_INLINE_BASE64_UPLOAD_BYTES } from '@/lib/utils/upload-limits';
+
+// Defense-in-depth cho `data_base64`: Vercel da chan cung o platform level (413
+// FUNCTION_PAYLOAD_TOO_LARGE) truoc khi request toi duoc route handler neu body
+// vuot ~4.5MB, nen check nay it khi kich hoat trong thuc te - nhung neu co client
+// nao khac (khong phai UI hien tai, vd goi API truc tiep) gui 1 payload lot qua
+// duoc gioi han cua Vercel nhung van qua kha nang xu ly hop ly cua route, ta van
+// muon tra ve 1 loi Zod ro rang thay vi de AI Vision/mammoth xu ly 1 buffer khong
+// lo mot cach am tham. Xem lib/utils/upload-limits.ts.
+const base64UploadSchema = z
+  .string()
+  .min(1)
+  .max(MAX_INLINE_BASE64_CHARS, { message: `File vượt quá ${formatMb(MAX_INLINE_BASE64_UPLOAD_BYTES)} — vui lòng dùng file nhỏ hơn.` });
 
 // ============================================================================
 // AI Document Reader — validators
@@ -122,7 +135,7 @@ export const parseTextDocumentRequestSchema = z.object({
   // tu extract text bang lib/documents/text-extractors.ts.
   file_format: z.enum(['text', 'markdown', 'pdf', 'docx']),
   content: z.string().min(1).optional(),
-  data_base64: z.string().min(1).optional(),
+  data_base64: base64UploadSchema.optional(),
 });
 export type ParseTextDocumentRequest = z.infer<typeof parseTextDocumentRequestSchema>;
 
@@ -130,7 +143,7 @@ export const parseImageDocumentRequestSchema = z.object({
   source_type: z.literal('diagram_image'),
   file_name: z.string().min(1),
   mime_type: z.string().min(1),
-  data_base64: z.string().min(1),
+  data_base64: base64UploadSchema,
 });
 export type ParseImageDocumentRequest = z.infer<typeof parseImageDocumentRequestSchema>;
 

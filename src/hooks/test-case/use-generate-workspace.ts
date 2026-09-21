@@ -10,6 +10,8 @@ import { useLanguage } from '@/lib/i18n/language-context';
 import { postJson } from '@/lib/api/client';
 import { exportCasesToExcel, downloadOldCasesTemplate as downloadTemplate, parseXlsxFile } from '@/lib/utils/test-case-excel';
 import { fileToBase64 } from '@/lib/utils/file-to-base64';
+import { extractDocxTextClientSide } from '@/lib/utils/docx-client-extract';
+import { MAX_INLINE_BASE64_UPLOAD_BYTES, formatMb } from '@/lib/utils/upload-limits';
 import { findPotentialDuplicates } from '@/services/test-case-similarity';
 import { diffTestCaseSets, type TestCaseDiffEntry } from '@/services/test-case-diff';
 import { VALID_CATEGORY_VALUES } from '@/views/test-case/generate-workspace/shared';
@@ -443,11 +445,14 @@ export function useGenerateWorkspace(projectId: string) {
    * EXPORTED out of Figma via its own "Export" panel — PDF/PNG/JPEG/WebP, since that's
    * indistinguishable from any other diagram image once exported) to /api/ai/documents/parse,
    * which atomizes it and returns a ParsedDocument. Text files are read client-side
-   * (File.text()); binary files (pdf/docx/images) are base64-encoded and extracted/analyzed
-   * server-side — for PDFs specifically, the server tries text extraction first and falls
-   * back to Vision automatically if the PDF turns out to be visual-only (see
-   * app/api/ai/documents/parse/route.ts), so this ONE handler covers both a text FS/PDF and
-   * a Figma-exported PDF without the UI needing to ask which kind it is. */
+   * (File.text()); .docx is ALSO fully extracted client-side (extractDocxTextClientSide) so
+   * only plain text — never the raw file — crosses the network; images/pdf are base64-encoded
+   * and analyzed server-side (guarded by MAX_INLINE_BASE64_UPLOAD_BYTES, since a base64 JSON
+   * body big enough will hit Vercel's hard ~4.5MB serverless request-body limit before our
+   * route handler even runs — see upload-limits.ts). For PDFs specifically, the server tries
+   * text extraction first and falls back to Vision automatically if the PDF turns out to be
+   * visual-only (see app/api/ai/documents/parse/route.ts), so this ONE handler covers both a
+   * text FS/PDF and a Figma-exported PDF without the UI needing to ask which kind it is. */
   async function handleDocumentFile(file: File) {
     setIsParsingDocument(true);
     setDocumentError('');
@@ -457,6 +462,7 @@ export function useGenerateWorkspace(projectId: string) {
 
       let payload: Record<string, unknown>;
       if (isImage) {
+        assertInlineUploadSize(file);
         payload = {
           source_type: 'diagram_image',
           file_name: file.name,
@@ -464,6 +470,7 @@ export function useGenerateWorkspace(projectId: string) {
           data_base64: await fileToBase64(file),
         };
       } else if (ext === 'pdf') {
+        assertInlineUploadSize(file);
         payload = {
           source_type: 'document',
           file_name: file.name,
@@ -471,11 +478,23 @@ export function useGenerateWorkspace(projectId: string) {
           data_base64: await fileToBase64(file),
         };
       } else if (ext === 'docx') {
+        // Extracted fully in-browser — no size guard needed, no raw bytes sent (see
+        // extractDocxTextClientSide's doc comment for why this is the actual fix for the
+        // 413 FUNCTION_PAYLOAD_TOO_LARGE bug on large .docx uploads).
+        let text: string;
+        try {
+          text = await extractDocxTextClientSide(file);
+        } catch {
+          throw new Error(t.generateWorkspace.errors.docxExtractFailed);
+        }
+        if (!text) {
+          throw new Error(t.generateWorkspace.errors.docxExtractFailed);
+        }
         payload = {
           source_type: 'document',
           file_name: file.name,
-          file_format: 'docx',
-          data_base64: await fileToBase64(file),
+          file_format: 'text',
+          content: text,
         };
       } else {
         payload = {
@@ -492,6 +511,14 @@ export function useGenerateWorkspace(projectId: string) {
       setDocumentError(err instanceof Error ? err.message : t.generateWorkspace.errors.documentParseFailed);
     } finally {
       setIsParsingDocument(false);
+    }
+  }
+
+  /** Throws a friendly, translated error BEFORE reading/encoding the file if it's too large
+   * to safely inline as base64 in a JSON request body (see upload-limits.ts for why). */
+  function assertInlineUploadSize(file: File) {
+    if (file.size > MAX_INLINE_BASE64_UPLOAD_BYTES) {
+      throw new Error(t.generateWorkspace.errors.fileTooLarge(formatMb(file.size), formatMb(MAX_INLINE_BASE64_UPLOAD_BYTES)));
     }
   }
 
