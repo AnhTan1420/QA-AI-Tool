@@ -49,8 +49,8 @@ EXTRACTION RULES
    • An acceptance criterion ("Given/When/Then", "AC-1", a definition-of-done bullet).
    • A relationship/dependency between entities, screens or services (including cardinality and cascade behaviour).
    • A branch or alternate path in a described flow, including the failure/timeout/retry route.
-   • An AMBIGUITY: a term the document leaves undefined or measurable only vaguely ("quickly", "valid", "large"). Use atom_type "condition" and state in `detail` what is ambiguous and what must be clarified before it can be tested.
-   • A CONTRADICTION: two statements in this document that cannot both hold. Use atom_type "condition" and quote both statements in `detail`.
+   • An AMBIGUITY: a term the document leaves undefined or measurable only vaguely ("quickly", "valid", "large"). Use atom_type "condition" and state in the atom's "detail" field what is ambiguous and what must be clarified before it can be tested.
+   • A CONTRADICTION: two statements in this document that cannot both hold. Use atom_type "condition" and quote both statements in the atom's "detail" field.
 3. Do NOT create atoms for: section headings alone, restatements/paraphrases of another atom you already extracted, pure narrative/marketing text, or a table of contents.
 4. If the document uses its own numbering (FS clauses, "REQ-04", "3.2.1", etc.), REUSE that numbering inside atom_id so a human reader can trace it straight back to the source (e.g. "${idPrefix}-3.2.1"). Otherwise, derive atom_id from "${idPrefix}" plus a zero-padded running counter (e.g. "${idPrefix}-001", "${idPrefix}-002").
 5. atom_id values MUST be unique within your output.
