@@ -508,6 +508,11 @@ const vi = {
         'Bộ test case trả về có lỗi về mã trùng, thứ tự bước, hoặc tham chiếu tài liệu không hợp lệ. Vui lòng chạy lại.',
       repairedTitle: (rounds: number) =>
         `Đã đạt 100% độ phủ tài liệu sau ${rounds} vòng bổ sung tự động.`,
+      truncatedBody:
+        'Phản hồi của AI bị cắt cụt vì vượt giới hạn token đầu ra — một phần kết quả đã bị mất và được sinh bù tự động. Hãy đối chiếu lại trước khi lưu.',
+      readerWarningsTitle: 'Cảnh báo khi đọc tài liệu',
+      issuesTitle: (errors: number, warnings: number) =>
+        `Phát hiện khi kiểm tra: ${errors} lỗi, ${warnings} cảnh báo`,
     },
     generatingHint: 'Việc này có thể mất tới khoảng 1 phút tuỳ độ phức tạp của requirement.',
     generatingTitle: 'Đang tạo test case',
@@ -581,8 +586,14 @@ const vi = {
       fileHint: 'Ảnh và PDF thuần hình (vd file export từ Figma) được AI đọc bằng Vision; PDF/DOCX/MD/TXT dạng văn bản được trích xuất và phân tích.',
       attachedCount: (count: number) => `${count} tài liệu đã đính kèm`,
       atomsSuffix: (count: number) => `${count} phần tử`,
+      chunksSuffix: (n: number) => `${n} phần`,
+      readerStatsLine: (chunks: number, firstPass: number, fromAudit: number, duplicates: number) =>
+        `Đọc thành ${chunks} phần · ${firstPass} atom ở lượt đầu · +${fromAudit} atom bổ sung ở lượt audit · ${duplicates} atom trùng đã gộp.`,
+      atomInventoryTitle: 'Danh sách atom đã trích xuất',
       coverageLabel: 'Độ phủ tài liệu',
       moreSuffix: 'phần tử khác',
+      showAll: (count: number) => `Xem đủ ${count} mục chưa được phủ`,
+      showLess: 'Thu gọn danh sách',
     },
     backToProject: 'Quay lại project',
     tabs: {
@@ -632,6 +643,7 @@ const vi = {
       notCovered: 'Chưa cover',
       statusCovered: 'Covered',
       statusUncovered: 'Uncovered',
+      statusWeakEvidence: 'Mapping giả',
       invalidMappingNote: (count: number) =>
         `${count} atom_id do AI tự bịa đã bị loại bỏ khỏi mapping (không được tính là covered).`,
       noMatch: 'Không có atom nào khớp bộ lọc.',

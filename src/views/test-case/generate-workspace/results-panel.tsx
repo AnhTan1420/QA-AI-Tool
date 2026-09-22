@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Brain, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle, ArrowRight, Inbox } from 'lucide-react';
 import type { TestCaseCategory } from '@/models/validators/test-case';
 import type { Dictionary } from '@/lib/i18n/dictionaries/vi';
+import { SCROLLBAR } from './shared';
 import { TestCaseCard } from './test-case-card';
 import { TraceabilityMatrix } from './traceability-matrix';
 import type { GenerateWorkspaceState } from '@/hooks/test-case/use-generate-workspace';
@@ -107,6 +108,7 @@ function AiReasoningPanel({ analysis, t }: { analysis: NonNullable<GenerateWorks
 export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState }) {
   const { t } = workspace;
   const [showMatrix, setShowMatrix] = useState(false);
+  const [showAllUncovered, setShowAllUncovered] = useState(false);
   // `is_complete` (so sanh SO LUONG atom) chu khong phai percent >= 100: mot bo
   // tai lieu lon co the lam tron len 100.0 trong khi van con atom bi bo sot.
   const coverageOk = workspace.documentCoverage?.is_complete ?? false;
@@ -150,11 +152,57 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
         </div>
       )}
 
+      {workspace.wasTruncated && (
+        <div className="mt-4 flex items-start gap-2 rounded-2xl border border-warning-600/20 bg-warning-50 p-4 text-sm text-warning-600">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{t.generateWorkspace.runStatus.truncatedBody}</p>
+        </div>
+      )}
+
+      {workspace.documentWarnings.length > 0 && (
+        <div className="mt-4 rounded-2xl border border-warning-600/20 bg-warning-50 p-4 text-sm text-warning-600">
+          <p className="font-bold">{t.generateWorkspace.runStatus.readerWarningsTitle}</p>
+          <ul className="mt-1 space-y-1 text-xs">
+            {workspace.documentWarnings.map((warning, i) => (
+              <li key={i}>• {warning}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {status === 'completed' && workspace.repairRounds > 0 && (
         <div className="mt-4 flex items-start gap-2 rounded-2xl border border-success-600/20 bg-success-50 p-4 text-sm text-success-600">
           <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
           <p className="font-bold">{gs.repairedTitle(workspace.repairRounds)}</p>
         </div>
+      )}
+
+      {/* Phat hien ngu nghia: mapping gia, atom_id bia dat, step sai thu tu...
+          Hien DAY DU, cuon duoc — day la thu quyet dinh co tin duoc bo test nay
+          hay khong, khong phai thong tin phu. */}
+      {workspace.runIssues.length > 0 && (
+        <details className="mt-4 rounded-2xl border border-ink-100 bg-ink-50 p-4 text-sm">
+          <summary className="cursor-pointer font-bold text-ink-700">
+            {t.generateWorkspace.runStatus.issuesTitle(
+              workspace.runIssues.filter((i) => i.severity === 'error').length,
+              workspace.runIssues.filter((i) => i.severity === 'warning').length,
+            )}
+          </summary>
+          <ul className={`mt-2 max-h-64 space-y-1.5 overflow-y-auto pr-1 text-xs ${SCROLLBAR}`}>
+            {workspace.runIssues.map((issue, i) => (
+              <li key={i} className="flex items-start gap-1.5">
+                <span
+                  className={`mt-0.5 shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${
+                    issue.severity === 'error' ? 'bg-danger-50 text-danger-600' : 'bg-warning-50 text-warning-600'
+                  }`}
+                >
+                  {issue.code}
+                </span>
+                <span className="text-ink-600">{issue.message}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
 
       {workspace.documentCoverage && (
@@ -176,17 +224,41 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
             )}
           </div>
           {!showMatrix && workspace.documentCoverage.uncovered.length > 0 && (
-            <ul className="mt-2.5 space-y-1 text-xs text-ink-600">
-              {workspace.documentCoverage.uncovered.slice(0, 10).map((item) => (
-                <li key={item.atom_id} className="flex items-start gap-1.5">
-                  <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink-300" />
-                  <span><span className="font-mono text-ink-500">[{item.atom_id}]</span> {item.label} <span className="text-ink-400">({item.source_document})</span></span>
-                </li>
-              ))}
+            <>
+              {/* Danh sach cuon duoc, KHONG cat bot. Truoc day day la
+                  `.slice(0, 10)` + dong "+85 phan tu khac" — tuc la dung luc do
+                  phu te nhat thi UI giau di gan het nhung thu con thieu. */}
+              <ul className={`mt-2.5 max-h-56 space-y-1 overflow-y-auto pr-1 text-xs text-ink-600 ${SCROLLBAR}`}>
+                {(showAllUncovered
+                  ? workspace.documentCoverage.uncovered
+                  : workspace.documentCoverage.uncovered.slice(0, 10)
+                ).map((item) => (
+                  <li key={item.atom_id} className="flex items-start gap-1.5">
+                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-ink-300" />
+                    <span>
+                      <span className="font-mono text-ink-500">[{item.atom_id}]</span> {item.label}{' '}
+                      <span className="text-ink-400">({item.source_document})</span>
+                      {item.gap_kind === 'weak_evidence' && (
+                        <span className="ml-1 rounded bg-warning-50 px-1 py-0.5 text-[10px] font-bold text-warning-600">
+                          {t.generateWorkspace.traceabilityMatrix.statusWeakEvidence}: {item.claimed_by.join(', ')}
+                        </span>
+                      )}
+                    </span>
+                  </li>
+                ))}
+              </ul>
               {workspace.documentCoverage.uncovered.length > 10 && (
-                <li className="pl-2.5 text-ink-400">+{workspace.documentCoverage.uncovered.length - 10} {t.generateWorkspace.documentReader.moreSuffix}</li>
+                <button
+                  type="button"
+                  onClick={() => setShowAllUncovered((v) => !v)}
+                  className="mt-1.5 text-xs font-bold text-brand-600 underline underline-offset-2"
+                >
+                  {showAllUncovered
+                    ? t.generateWorkspace.documentReader.showLess
+                    : t.generateWorkspace.documentReader.showAll(workspace.documentCoverage.uncovered.length)}
+                </button>
               )}
-            </ul>
+            </>
           )}
           {(workspace.documentCoverage.invalid_atom_ids?.length ?? 0) > 0 && (
             <p className="mt-2 text-xs font-semibold text-warning-600">

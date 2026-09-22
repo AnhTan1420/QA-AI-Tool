@@ -1080,6 +1080,41 @@ async function extractSameOriginLinks(page: any, originHostname: string): Promis
   return result;
 }
 
+// ============================================================================
+// CAP ELEMENT MAP MA KHONG XOA SO CAC BUOC/TRANG SAU.
+// ----------------------------------------------------------------------------
+// Loi cu: `[...element_map, ...snapshot].slice(0, MAX)` giu N phan tu DAU TIEN.
+// Mot khi element_map da day (>= MAX), moi snapshot moi bi vut bo HOAN TOAN vi
+// mang sau khi noi luon dai hon MAX va slice(0, MAX) luon tra ve dung N phan tu
+// cu. Ket qua: MOI buoc/trang sau thoi diem cham tran khong con grounding nao -
+// selector cho cac buoc do phai do model tu "doan", dung dieu muc 8 cua audit
+// yeu cau loai bo. Ham nay lay mau RAI DEU theo page_label/page_url, giong
+// cach flattenFigmaAtoms xu ly truong hop tuong tu.
+export function capElementMapEvenly(map: ElementMap, maxTotal: number): { map: ElementMap; dropped: number } {
+  if (map.length <= maxTotal) return { map, dropped: 0 };
+
+  const byPage = new Map<string, ElementMap>();
+  const pageOrder: string[] = [];
+  for (const el of map) {
+    const key = el.page_url || el.page_label || '(unlabeled)';
+    if (!byPage.has(key)) {
+      byPage.set(key, []);
+      pageOrder.push(key);
+    }
+    byPage.get(key)!.push(el);
+  }
+
+  const total = map.length;
+  const sampled: ElementMap = [];
+  for (const key of pageOrder) {
+    const bucket = byPage.get(key)!;
+    const share = Math.max(1, Math.round((bucket.length / total) * maxTotal));
+    sampled.push(...bucket.slice(0, share));
+  }
+
+  return { map: sampled.slice(0, maxTotal), dropped: total - Math.min(sampled.length, maxTotal) };
+}
+
 // Breadth-first same-origin crawl starting from the page's current URL. Visits up to
 // crawlOptions.max_pages pages (including the one already snapshotted before this is
 // called), snapshotting each with extractElementMap tagged by its own URL. Bounded by
@@ -1181,7 +1216,14 @@ export async function inspectEnvironment(
     const page_title = await page.title();
     const visitedUrls = new Set<string>([normalizeUrlForDedupe(page.url())]);
 
-    const MAX_TOTAL_ELEMENTS = 400; // keep the prompt bounded across many pages
+    // Configurable — was a hard-coded 400 with no env override. Kept the same
+    // default (prompt-size safety net for very large flows) but callers with a
+    // legitimately huge multi-page flow can raise it.
+    const MAX_TOTAL_ELEMENTS = (() => {
+      const raw = process.env.AI_MAX_ELEMENT_MAP_SIZE?.trim();
+      const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+      return Number.isFinite(parsed) ? Math.min(5000, Math.max(50, parsed)) : 400;
+    })();
     for (const step of inspectionSteps) {
       const stepWarning = await runInspectionStep(page, step);
       if (stepWarning) {
@@ -1191,10 +1233,11 @@ export async function inspectEnvironment(
       visitedUrls.add(normalizeUrlForDedupe(page.url()));
       const snapshot = await extractElementMap(page, step.label);
       const before = element_map.length + snapshot.length;
-      element_map = [...element_map, ...snapshot].slice(0, MAX_TOTAL_ELEMENTS);
+      const capped = capElementMapEvenly([...element_map, ...snapshot], MAX_TOTAL_ELEMENTS);
+      element_map = capped.map;
       if (before > MAX_TOTAL_ELEMENTS) {
         warnings.push(
-          `Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau bước "${step.label}" - một số phần tử đã bị cắt bớt, selector cho các bước sau có thể thiếu grounding.`,
+          `Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau bước "${step.label}" - đã lấy mẫu rải đều trên tất cả các trang đã chụp thay vì chỉ giữ các trang đầu, nhưng một số phần tử mỗi trang có thể thiếu grounding. Tăng AI_MAX_ELEMENT_MAP_SIZE nếu cần đầy đủ hơn.`,
         );
       }
     }
@@ -1211,9 +1254,10 @@ export async function inspectEnvironment(
         writeGuardBlocked,
       );
       const before = element_map.length + discovered.length;
-      element_map = [...element_map, ...discovered].slice(0, MAX_TOTAL_ELEMENTS);
+      const capped = capElementMapEvenly([...element_map, ...discovered], MAX_TOTAL_ELEMENTS);
+      element_map = capped.map;
       if (before > MAX_TOTAL_ELEMENTS) {
-        warnings.push(`Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau auto-expand - một số phần tử đã bị cắt bớt.`);
+        warnings.push(`Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau auto-expand - đã lấy mẫu rải đều thay vì chỉ giữ các trang đầu.`);
       }
       warnings.push(...expandWarnings);
     }
@@ -1230,9 +1274,10 @@ export async function inspectEnvironment(
         crawlOptions.max_pages,
       );
       const before = element_map.length + crawledMap.length;
-      element_map = [...element_map, ...crawledMap].slice(0, MAX_TOTAL_ELEMENTS);
+      const capped = capElementMapEvenly([...element_map, ...crawledMap], MAX_TOTAL_ELEMENTS);
+      element_map = capped.map;
       if (before > MAX_TOTAL_ELEMENTS) {
-        warnings.push(`Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau crawl - một số phần tử đã bị cắt bớt.`);
+        warnings.push(`Element map vượt ${MAX_TOTAL_ELEMENTS} phần tử sau crawl - đã lấy mẫu rải đều trên các trang đã crawl thay vì chỉ giữ các trang đầu.`);
       }
       warnings.push(...crawlWarnings);
     }

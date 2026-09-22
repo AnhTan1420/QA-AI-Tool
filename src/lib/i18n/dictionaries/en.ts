@@ -509,6 +509,11 @@ const en: Dictionary = {
         'The returned suite has duplicate codes, broken step numbering, or invalid document references. Please run it again.',
       repairedTitle: (rounds: number) =>
         `Reached 100% document coverage after ${rounds} automatic repair round(s).`,
+      truncatedBody:
+        'The AI response was cut off by the output token limit — part of the result was lost and regenerated automatically. Review the output before saving.',
+      readerWarningsTitle: 'Document reading warnings',
+      issuesTitle: (errors: number, warnings: number) =>
+        `Validation findings: ${errors} error(s), ${warnings} warning(s)`,
     },
     generatingHint: 'This can take up to about a minute depending on how complex the requirement is.',
     generatingTitle: 'Generating test cases',
@@ -582,8 +587,14 @@ const en: Dictionary = {
       fileHint: 'Images and visual-only PDFs (e.g. a Figma export) are read via AI Vision; text PDF/DOCX/MD/TXT are extracted and analyzed.',
       attachedCount: (count: number) => `${count} document(s) attached`,
       atomsSuffix: (count: number) => `${count} atoms`,
+      chunksSuffix: (n: number) => `${n} part${n === 1 ? '' : 's'}`,
+      readerStatsLine: (chunks: number, firstPass: number, fromAudit: number, duplicates: number) =>
+        `Read as ${chunks} part(s) · ${firstPass} atoms from the first pass · +${fromAudit} added by the completeness audit · ${duplicates} duplicate atom(s) merged.`,
+      atomInventoryTitle: 'Extracted atom inventory',
       coverageLabel: 'Document mapping coverage',
       moreSuffix: 'more',
+      showAll: (count: number) => `Show all ${count} uncovered items`,
+      showLess: 'Collapse list',
     },
     backToProject: 'Back to project',
     tabs: {
@@ -633,6 +644,7 @@ const en: Dictionary = {
       notCovered: 'Not covered',
       statusCovered: 'Covered',
       statusUncovered: 'Uncovered',
+      statusWeakEvidence: 'False mapping',
       invalidMappingNote: (count: number) =>
         `${count} hallucinated atom_id(s) were removed from the mapping and are not counted as covered.`,
       noMatch: 'No atom matches the current filter.',

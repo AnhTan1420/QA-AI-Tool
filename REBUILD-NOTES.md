@@ -217,3 +217,82 @@ These are judgement calls, not oversights:
   env var, as the old code did — made the app unbootable by default.
 - **Non-AI features were not touched.** Auth, Supabase, projects, storage, Excel
   import/export, Figma, Playwright automation and the DB model are unchanged.
+
+---
+
+## 7. Round 2 — Post-build QA audit (semantic evidence, information loss, Playwright grounding)
+
+A second pass audited the built system end-to-end (Reader → Generation → Coverage → Review → Enhance → Playwright) rather than the prompts. Findings and fixes:
+
+### Coverage was countable but not provable
+
+`computeDocumentCoverage()` treated "atom_id appears in `source_requirement_ids`" as sufficient. It is not — a model can satisfy that condition by copying IDs into an array without writing a single step that exercises the atom.
+
+**Fix:** `services/documents/coverage-evidence.ts`. Distinctive terms are extracted from each atom (quoted UI strings, technical identifiers like `users.status`, DB constraints, boundary numbers ≥2 digits) and matched **token-level** (not substring) against the full observable content of the citing test case. A mapping with no matching term becomes `weak_evidence` — cited but not covered. This feeds the repair loop (repair output lacking evidence is discarded) and Review/Enhance (false mappings are reported as `weak_evidence_mapping` issues).
+
+Gate is on by default: `COVERAGE_REQUIRE_SEMANTIC_EVIDENCE=false` to relax it.
+
+**Trap caught during implementation:** naive substring matching let the term `"5"` (from "locks after 5 attempts") match `TC_LOGIN_005`, validating every false mapping in the system. Fixed by tokenizing and requiring numeric terms to be ≥2 digits to count as strong evidence. Regression test: `coverage-evidence.test.ts`.
+
+### The Reader silently truncated documents
+
+`capText(text, 24000)` cut input at 24,000 characters before extraction. Everything past that point never became an atom — coverage could report 100% while representing a fraction of the actual document.
+
+**Fix:** `services/documents/reader.ts`. Documents are chunked on natural boundaries (paragraph/sentence, not mid-word) with overlap, each chunk is atomized independently, and an optional second pass (`AI_READER_AUDIT_PASS`, on by default) re-reads each chunk against an explicit miss-category checklist (field constraints, permissions, state transitions, error messages, ambiguities, contradictions) and asks only "what did the first pass miss?" — a narrower, more reliable question than "extract everything." A failed chunk degrades to a warning, not a request failure. Provenance (`reader_stats`, `reader_warnings`) is returned on `ParsedDocument` and shown in the Document Reader panel (expandable per-document atom inventory).
+
+`capText` is retained (marked `@deprecated` for document content) since it remains valid for bounding non-document text like logs.
+
+### Figma and element-map inspection had the same defect, worse
+
+`flattenFigmaAtoms` capped at a hard-coded 300 atoms and walked screens **in order** — screens after the cap never got visited at all, not just under-sampled.
+
+`inspectEnvironment`'s element map used `[...map, ...snapshot].slice(0, 400)`. Once `map` reached 400, appending any new snapshot always produced an array whose first 400 elements were the *old* ones, so the slice discarded the new snapshot **in its entirety** — every page or step visited after the cap contributed zero selector-grounding data, permanently, for the rest of the run.
+
+**Fix (both):** `capElementMapEvenly()` in `browser-runner.ts` and the rewritten `flattenFigmaAtoms()` in `figma-client.ts` group elements/atoms by page/screen first, then sample proportionally to each group's size — so hitting the cap degrades every page's detail slightly instead of erasing entire pages. Both caps are now env-configurable (`AI_FIGMA_MAX_ATOMS`, `AI_MAX_ELEMENT_MAP_SIZE`) with raised defaults. Regression tests: `figma-client.test.ts`, `element-map-cap.test.ts` (the latter specifically reproduces the old "second page vanishes" behavior and asserts it no longer happens).
+
+### AI-produced information was discarded after generation
+
+- `reviewResultSchema` had no `analysis` key, so Zod silently stripped the 6-layer adversarial analysis the Review prompt asked for and paid tokens to generate. Added `reviewAnalysisSchema` (a permissive record, so the model isn't locked to exactly 6 named layers) and returned it.
+- `enhance/route.ts` requested `gaps_addressed` / `atoms_newly_covered` / case counts in the prompt, parsed only `test_cases`, discarded the rest. Added `enhanceAnalysisSchema` and returned it.
+- `issues.slice(0, 100)` in both AI routes, `uncovered.slice(0, 10)` in the results panel, and a `MAX_TRACEABILITY_CLAUSES = 60` cap all silently dropped data at the exact moment there was the most of it to show (a bad run). All caps removed or raised and made env-configurable; the UI now uses scrollable/expandable containers instead of hard cuts.
+
+### Truncated Gemini responses were silently "repaired" and trusted
+
+`extractJson`'s truncated-JSON recovery path returned the salvaged partial object as if it were a complete, successful response — no flag, no warning to the caller.
+
+**Fix:** `GeminiTruncatedResponseError` now carries the salvaged payload. The resilience engine retries first (a fresh sample may not be truncated); only if every model/attempt fails does it fall back to the salvaged partial result, and that result is tagged `truncated: true` all the way through `GeminiCallResult` → the API response → the UI (a dedicated warning banner). Never silently accepted, never silently discarded.
+
+### Playwright anti-patterns were prompt-only
+
+The codegen prompt banned `waitForTimeout`, `page.pause()`, and `networkidle` waits — in text. Nothing in code rejected a script that used them anyway, and nothing checked that a script asserted anything at all.
+
+**Fix:** `services/ai/playwright-quality.ts`, wired into `/api/ai/playwright` (codegen), `/api/ai/playwright/heal`, and `services/automation/batch-runner.ts` (the one path with no human review before scripts are used). Deterministic regex-based scan for the banned patterns plus zero/weak-assertion detection. Most importantly: `checkHealPreservedAssertions()` compares assertion count before/after a heal and flags it as an **error** if healing reduced it — this is the specific failure mode where an automated heal loop "fixes" a failing test by deleting the assertion that was failing.
+
+### Tests added this round
+
+`coverage-evidence.test.ts`, `document-reader.test.ts`, `figma-client.test.ts`, `element-map-cap.test.ts`, `playwright-quality.test.ts`, plus a truncation-handling block appended to `gemini-provider.test.ts`. Existing coverage/repair/review tests were updated to explicitly control the new `COVERAGE_REQUIRE_SEMANTIC_EVIDENCE` gate (counting tests disable it to isolate what they test; the E2E repair test explicitly enables it and its fixtures were rewritten to produce evidence-bearing cases, matching what a correctly-functioning model actually returns).
+
+### New environment variables (Round 2)
+
+```
+COVERAGE_REQUIRE_SEMANTIC_EVIDENCE=true   # semantic evidence gate; false = ID-presence only (old behavior)
+AI_READER_CHUNK_CHARS=18000               # Reader chunk size
+AI_READER_CHUNK_OVERLAP_CHARS=1200        # overlap between chunks
+AI_READER_MAX_CHUNKS=24                   # hard cap on chunks per document
+AI_READER_AUDIT_PASS=true                 # second-pass completeness audit
+AI_FIGMA_MAX_ATOMS=2000                   # Figma atom cap (was hard-coded 300)
+AI_MAX_ELEMENT_MAP_SIZE=400               # Playwright element-map cap (was hard-coded 400)
+MAX_TRACEABILITY_CLAUSES=400              # was hard-coded 60
+```
+
+### Not done this round
+
+- **Review ↔ implementation-code comparison** (audit §6): no design decision made on how implementation source would be ingested (repo path? uploaded files? git connector?) — needs a product decision before code.
+- Documentation pass on `README.md` / `PROJECT_STRUCTURE.md` for the Round 2 changes (this file covers it; the primary docs are not yet updated to match).
+
+### Verification status
+
+Same constraint as Round 1: no network, no `node_modules` in this environment. `npm run typecheck`, `lint`, `test`, `build` have **not** run. Static checks this round (brace/JSX balance across 179 files, full import-path resolution) passed with zero new findings. Two changes carry the highest type-risk and should be checked first on your machine:
+
+1. `buildTestCaseHaystack` changed return type from `string` to a `{ text, tokens }` object — call sites in `coverage.ts` and `coverage-repair.ts` were updated, but this is exactly the kind of signature change `tsc` catches and a static grep does not.
+2. `flattenFigmaAtoms` and `fetchAndParseFigmaFile` gained a new required field (`atoms_before_cap`) and `flattenFigmaAtoms` gained an optional second parameter — the one call site (`parse/route.ts`) was updated.

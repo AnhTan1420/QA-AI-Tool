@@ -4,6 +4,7 @@ import { runAIAgent } from '@/services/ai/provider';
 import { buildPlaywrightCodegenPrompt, groupElementMapByPage, checkSelectorAttribution } from '@/services/ai/prompts/playwright-agent';
 import { buildPlaywrightResponseSchema } from '@/services/ai/prompts/playwright-response-schema';
 import { playwrightCodegenRequestSchema, playwrightScriptSchema } from '@/models/validators/playwright';
+import { checkPlaywrightQuality, findingsToWarnings } from '@/services/ai/playwright-quality';
 import { createClient } from '@/services/supabase/server';
 import { uploadScriptToR2, isR2Configured } from '@/services/automation/r2-storage';
 
@@ -107,6 +108,20 @@ export async function POST(req: Request) {
     const attributionWarnings = checkSelectorAttribution(parsed.data.page_objects, input.element_map);
     if (attributionWarnings.length > 0) {
       parsed.data.warnings = [...parsed.data.warnings, ...attributionWarnings];
+    }
+
+    // 3e) Anti-pattern + chất lượng assertion, kiểm tra Ở MỨC CODE. Prompt đã
+    // cấm waitForTimeout/page.pause/networkidle, nhưng cấm trong prompt không
+    // phải là thực thi — cùng bài học với độ phủ tài liệu.
+    const qualityWarnings = findingsToWarnings(
+      checkPlaywrightQuality({
+        code: parsed.data.code,
+        page_objects: parsed.data.page_objects,
+        manualStepCount: input.test_case.steps.length,
+      }),
+    );
+    if (qualityWarnings.length > 0) {
+      parsed.data.warnings = [...parsed.data.warnings, ...qualityWarnings];
     }
 
     // 4) (Best-effort) tìm test_case_id nếu client gửi kèm, để tự lưu version luôn -

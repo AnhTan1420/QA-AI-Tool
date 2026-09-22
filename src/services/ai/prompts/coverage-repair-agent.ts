@@ -56,6 +56,8 @@ RULES (INVIOLABLE)
 ══════════════════════════════════════════════════════════════════
 
 • Every uncovered atom_id above MUST appear in the "source_requirement_ids" array of at least one test case you return.
+• CITING AN ATOM IS NOT COVERING IT. The application scores every mapping for semantic evidence: the test case must actually mention the atom's field names, UI labels, quoted messages, constraints or boundary values. A case that lists an atom_id without exercising that atom's behaviour is DISCARDED by the validator and the atom stays uncovered. Entries marked "⚠ FALSE MAPPING" above already failed this check once.
+• Entries marked "⚠ FALSE MAPPING" need a case that genuinely verifies the atom — reuse the exact wording from the atom's label/detail in your steps and expected results so the behaviour being checked is unambiguous.
 • You MUST NOT invent atom IDs. Use the EXACT atom_id strings above, character for character. Never substitute a label, a description, a shortened form, or an approximation.
 • You MUST NOT mark an atom as covered unless the test case you write ACTUALLY VERIFIES that atom's behaviour. A test case that merely mentions the atom does not cover it.
 • One test case MAY cover multiple atoms when they genuinely belong to the same test scenario (e.g. a Figma field atom + the FS validation rule that governs that field).

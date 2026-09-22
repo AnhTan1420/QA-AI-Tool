@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { runAIAgent, runDocumentVisionAgent } from '@/services/ai/provider';
-import { buildTextDocumentExtractionPrompt, buildVisualDocumentExtractionPrompt } from '@/services/ai/prompts/document-extraction-agent';
+import { runDocumentVisionAgent } from '@/services/ai/provider';
+import { buildVisualDocumentExtractionPrompt } from '@/services/ai/prompts/document-extraction-agent';
 import { parseDocumentRequestSchema, documentExtractionResultSchema, type ParsedDocument } from '@/models/validators/document';
-import { extractDocxText, extractPdfText, capText } from '@/services/documents/text-extractors';
+import { extractDocxText, extractPdfText } from '@/services/documents/text-extractors';
+import { readTextDocument } from '@/services/documents/reader';
 import { fetchAndParseFigmaFile } from '@/services/documents/figma-client';
 
 export const maxDuration = 120;
@@ -63,14 +64,34 @@ export async function POST(req: Request) {
     // qua AI nen khong the "doan sai", day la nguon chinh xac nhat) ──
     if (input.source_type === 'figma') {
       const token = input.figma_token?.trim() || process.env.FIGMA_ACCESS_TOKEN || '';
-      const { title, atoms, screens, truncated } = await fetchAndParseFigmaFile(input.figma_url, token);
+      const { title, atoms, screens, truncated, atoms_before_cap } = await fetchAndParseFigmaFile(input.figma_url, token);
 
+      // Truoc day co truncated bi giau trong 1 cau trong summary, va viec cat
+      // luon xay ra o MAN HINH CUOI CUNG cua file (xem figma-client.ts). Gio
+      // provenance day du di kem qua reader_stats/reader_warnings — cung kenh
+      // ma AI Document Reader (van ban) dung — va viec lay mau la RAI DEU tren
+      // moi man hinh, khong con ai bi xoa so hoan toan.
       const parsedDocument: ParsedDocument = {
         id: randomUUID(),
         source_type: 'figma',
         title,
-        summary: `Figma design "${title}" — ${screens.length} màn hình: ${screens.slice(0, 8).join(', ')}${screens.length > 8 ? '…' : ''}. Đã trích xuất ${atoms.length} phần tử (text layer + component) trực tiếp từ thiết kế sống, nên mapping chính xác thay vì AI phải "đoán" qua ảnh.${truncated ? ' (File rất lớn, chỉ lấy phần đầu.)' : ''}`,
+        summary: `Figma design "${title}" — ${screens.length} màn hình: ${screens.slice(0, 8).join(', ')}${screens.length > 8 ? '…' : ''}. Đã trích xuất ${atoms.length} phần tử (text layer + component) trực tiếp từ thiết kế sống, nên mapping chính xác thay vì AI phải "đoán" qua ảnh.`,
         atoms,
+        ...(truncated
+          ? {
+              reader_stats: {
+                source_chars: 0,
+                chunks: 1,
+                atoms_first_pass: atoms_before_cap,
+                atoms_from_audit: 0,
+                duplicates_removed: 0,
+                failed_chunks: 0,
+              },
+              reader_warnings: [
+                `File Figma có ${atoms_before_cap} phần tử, vượt giới hạn ${atoms.length} (cấu hình qua AI_FIGMA_MAX_ATOMS). Đã lấy mẫu RẢI ĐỀU trên tất cả ${screens.length} màn hình thay vì cắt ở cuối, nhưng một số chi tiết trong mỗi màn hình có thể không thành atom. Tăng AI_FIGMA_MAX_ATOMS hoặc tách file theo từng phần để phân tích đầy đủ.`,
+              ],
+            }
+          : {}),
       };
       return NextResponse.json({ success: true, data: parsedDocument });
     }
@@ -125,30 +146,33 @@ export async function POST(req: Request) {
       throw new Error('Không trích xuất được nội dung văn bản nào từ file này.');
     }
 
-    const { text: boundedText, truncated } = capText(rawText);
-    const prompt = buildTextDocumentExtractionPrompt({
-      sourceLabel: input.file_name,
-      rawText: boundedText,
-      truncated,
-    });
-
-    const aiRawResult = await runAIAgent(prompt, 'document_extraction');
-    const parsed = documentExtractionResultSchema.safeParse(aiRawResult);
-    if (!parsed.success) {
-      console.error('[ai/documents/parse] Text extraction schema fail:', parsed.error.flatten());
+    // Đọc TOÀN BỘ tài liệu theo nhiều đoạn (chunk) + một lượt audit độ đầy đủ.
+    // Trước đây chỗ này gọi capText(rawText) và cắt thẳng ở ký tự thứ 24.000 —
+    // mọi yêu cầu nằm sau đó không bao giờ trở thành atom, nên độ phủ "100%"
+    // về sau chỉ là 100% của phần đầu tài liệu. Xem services/documents/reader.ts.
+    const reader = await readTextDocument({ fileName: input.file_name, text: rawText });
+    if (!reader) {
       return NextResponse.json(
         { success: false, error: 'AI không phân tích được tài liệu này. Vui lòng thử lại.' },
         { status: 502 },
       );
     }
 
+    console.info(
+      `[ai/documents/parse] "${input.file_name}": ${reader.stats.source_chars} ký tự → ${reader.stats.chunks} phần → ${reader.atoms.length} atom (pass 1: ${reader.stats.atoms_first_pass}, audit bổ sung: ${reader.stats.atoms_from_audit}, trùng lặp đã gộp: ${reader.stats.duplicates_removed}, phần lỗi: ${reader.stats.failed_chunks})`,
+    );
+
     const parsedDocument: ParsedDocument = {
       id: randomUUID(),
       source_type: 'document',
-      title: parsed.data.title,
+      title: reader.title,
       file_name: input.file_name,
-      summary: parsed.data.summary + (truncated ? ' (Tài liệu dài, chỉ phần đầu được phân tích.)' : ''),
-      atoms: parsed.data.atoms,
+      summary: reader.summary,
+      atoms: reader.atoms,
+      // Provenance đi KÈM trong `data` (không phải trong một field `meta` anh em)
+      // vì client bóc đúng `data` ra khỏi envelope — đặt ngoài là mất thẳng.
+      reader_stats: reader.stats,
+      reader_warnings: reader.warnings,
     };
     return NextResponse.json({ success: true, data: parsedDocument });
   } catch (error: any) {

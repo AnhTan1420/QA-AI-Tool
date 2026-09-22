@@ -3,7 +3,7 @@
 // Chức năng: Tiện ích bóc tách + validate dữ liệu JSON trả về từ Gemini.
 // ============================================================================
 
-import { GeminiBadResponseError } from './errors';
+import { GeminiBadResponseError, GeminiTruncatedResponseError } from './errors';
 
 function repairTruncatedJson(text: string): string | null {
   const openStack: string[] = [];
@@ -100,11 +100,17 @@ export function extractJson(text: string): any {
     if (repaired) {
       try {
         const result = JSON.parse(repaired);
-        console.warn(
-          "⚠️ [extractJson] Phản hồi AI bị cắt cụt giữa chừng (vượt giới hạn token) - đã tự động phục hồi phần JSON hợp lệ và bỏ phần tử cuối bị dở dang."
+        // KHONG tra ve am tham. Phan hoi bi cat cut nghia la mot phan ket qua
+        // (test case, review finding, page object...) KHONG TON TAI. Nem loi
+        // co kieu kem theo phan da va duoc: engine se thu lai truoc, va chi
+        // dung ban va nay khi khong con lua chon nao khac — luc do no duoc danh
+        // dau `truncated` de API/UI noi that voi nguoi dung.
+        throw new GeminiTruncatedResponseError(
+          'Phản hồi AI bị cắt cụt giữa chừng (vượt giới hạn token đầu ra).',
+          result,
         );
-        return result;
-      } catch {
+      } catch (repairError) {
+        if (repairError instanceof GeminiTruncatedResponseError) throw repairError;
         // Vá không thành công -> rơi xuống báo lỗi gốc bên dưới.
       }
     }

@@ -4,6 +4,11 @@ import { runAIAgent } from '@/services/ai/provider';
 import { buildPlaywrightCodegenPrompt, groupElementMapByPage, checkSelectorAttribution } from '@/services/ai/prompts/playwright-agent';
 import { buildPlaywrightResponseSchema } from '@/services/ai/prompts/playwright-response-schema';
 import { playwrightHealRequestSchema, playwrightScriptSchema } from '@/models/validators/playwright';
+import {
+  checkHealPreservedAssertions,
+  checkPlaywrightQuality,
+  findingsToWarnings,
+} from '@/services/ai/playwright-quality';
 import { createClient } from '@/services/supabase/server';
 import { uploadScriptToR2, isR2Configured } from '@/services/automation/r2-storage';
 
@@ -126,6 +131,31 @@ export async function POST(req: Request) {
     // Provenance marker so Code Viewer's warnings list makes it visible this version
     // came from a heal pass, not a plain Generate — no schema/DB migration needed,
     // "warnings" is already the established human-readable channel for this kind of note.
+    // Anti-pattern + assertion, giống nhánh codegen.
+    rosterWarnings.push(
+      ...findingsToWarnings(
+        checkPlaywrightQuality({
+          code: parsed.data.code,
+          page_objects: parsed.data.page_objects,
+          manualStepCount: input.test_case.steps.length,
+        }),
+      ),
+    );
+
+    // Kiểm tra RIÊNG cho heal: bản heal không được ít assertion hơn bản trước.
+    // Đây là cách một vòng heal tự động hỏng theo kiểu nguy hiểm nhất — xoá đúng
+    // phần kiểm chứng đang fail để test chuyển xanh.
+    rosterWarnings.push(
+      ...findingsToWarnings(
+        checkHealPreservedAssertions({
+          previousCode: input.previous_code,
+          previousPageObjects: input.previous_page_objects,
+          healedCode: parsed.data.code,
+          healedPageObjects: parsed.data.page_objects,
+        }),
+      ),
+    );
+
     const healNote = `[Heal] Regenerated to fix a failed run: ${input.failure.error_message}`;
     parsed.data.warnings = [healNote, ...rosterWarnings, ...parsed.data.warnings];
 

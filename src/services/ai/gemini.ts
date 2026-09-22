@@ -33,6 +33,7 @@ import {
   GeminiBadResponseError,
   GeminiProviderError,
   GeminiTimeoutError,
+  GeminiTruncatedResponseError,
   type GeminiErrorKind,
 } from './errors';
 import {
@@ -226,6 +227,9 @@ export type GeminiCallOptions<T> = {
 
 export type GeminiCallResult<T> = {
   data: T;
+  /** true khi ket qua nay duoc va lai tu mot phan hoi bi cat cut — nghia la
+   * NOI DUNG CHUA DAY DU. Caller PHAI bao len tren, khong duoc coi nhu binh thuong. */
+  truncated: boolean;
   /** Model thuc su tra ve ket qua. */
   model: string;
   /** Tong so lan goi API (ke ca lan hong). */
@@ -269,6 +273,10 @@ export async function generateWithGeminiResilient<T = unknown>(
   let totalAttempts = 0;
   let lastError: unknown;
   let lastKind: GeminiErrorKind = 'fatal';
+  // Phan hoi bi cat cut nhung VAN va lai duoc + qua validate. Giu lai lam phao
+  // cuu sinh: neu moi luot deu that bai, tra ve no con hon tra ve rong — nhung
+  // luon kem co `truncated: true` de khong ai nham la ket qua day du.
+  let salvaged: { data: T; model: string; schemaDegraded: boolean } | null = null;
 
   for (let modelIndex = 0; modelIndex < chain.length; modelIndex++) {
     const model = chain[modelIndex];
@@ -299,6 +307,7 @@ export async function generateWithGeminiResilient<T = unknown>(
         if (attempt > 0) console.info(`[Gemini] ${scope} retry succeeded on ${model}`);
         return {
           data,
+          truncated: false,
           model,
           attempts: totalAttempts,
           schema_degraded: degradedForThisModel,
@@ -308,6 +317,20 @@ export async function generateWithGeminiResilient<T = unknown>(
         lastError = error;
         lastKind = classifyGeminiError(error);
         const status = extractStatus(error);
+
+        // Phan hoi cat cut: thu cuu phan da va duoc (neu no qua duoc validate)
+        // truoc khi retry. Retry van chay binh thuong — ban cat cut chi la phao.
+        if (error instanceof GeminiTruncatedResponseError && !salvaged) {
+          try {
+            const partial = options.validate
+              ? options.validate(error.salvaged)
+              : (error.salvaged as T);
+            salvaged = { data: partial, model, schemaDegraded: degradedForThisModel };
+            console.warn(`[Gemini] ${scope} response truncated on ${model} — salvaged partial result as fallback`);
+          } catch {
+            // Phan va duoc cung khong hop le -> khong co gi de cuu.
+          }
+        }
 
         // (1) Auth/permission: doi model khong cuu duoc gi (cung 1 API key).
         if (lastKind === 'auth') {
@@ -363,6 +386,20 @@ export async function generateWithGeminiResilient<T = unknown>(
     if (modelIndex < chain.length - 1) {
       console.warn(`[Gemini] ${scope} switching to ${chain[modelIndex + 1]}`);
     }
+  }
+
+  if (salvaged) {
+    console.error(
+      `[Gemini] ${scope} exhausted all models; returning TRUNCATED partial result from ${salvaged.model} — caller must surface this as incomplete`,
+    );
+    return {
+      data: salvaged.data,
+      truncated: true,
+      model: salvaged.model,
+      attempts: totalAttempts,
+      schema_degraded: salvaged.schemaDegraded,
+      models_attempted: [...modelsAttempted],
+    };
   }
 
   console.error(`[Gemini] ${scope} exhausted all ${chain.length} configured model(s)`);

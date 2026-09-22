@@ -51,6 +51,7 @@ export async function POST(req: Request) {
     // 1) Validate INPUT từ client trước khi xử lý.
     const input = generateRequestSchema.parse(rawBody);
     const documents = input.document_context ?? [];
+    const issuesFromTruncation: SemanticIssue[] = [];
 
     const promptString = buildGenerationPrompt({
       requirement_description: input.requirement_description,
@@ -82,9 +83,21 @@ export async function POST(req: Request) {
       },
     });
 
+    // 2b) Phản hồi bị cắt cụt => KẾT QUẢ CHƯA ĐẦY ĐỦ. Không im lặng chấp nhận.
+    //     Vòng repair độ phủ bên dưới sẽ bù lại các atom bị mất cùng với nó,
+    //     nhưng người dùng vẫn phải được biết điều này đã xảy ra.
+    if (generation.truncated) {
+      issuesFromTruncation.push({
+        code: 'truncated_response',
+        severity: 'warning',
+        message:
+          'Phản hồi của AI bị cắt cụt vì vượt giới hạn token đầu ra — một phần test case đã bị mất. Hệ thống đã giữ lại phần hợp lệ và sẽ sinh bù ở vòng kiểm tra độ phủ.',
+      });
+    }
+
     // 3) Chuẩn hóa cơ học: bỏ atom_id bịa đặt, khử trùng mã, đánh lại số step.
     const normalized = normalizeGeneratedTestCases(generation.data.test_cases, documents);
-    const issues: SemanticIssue[] = [...normalized.issues];
+    const issues: SemanticIssue[] = [...issuesFromTruncation, ...normalized.issues];
 
     // 4) Coverage lần đầu — tính hoàn toàn bằng code.
     const initialCoverage = computeDocumentCoverage(documents, normalized.test_cases);
@@ -102,6 +115,19 @@ export async function POST(req: Request) {
 
     const finalTestCases = repair.test_cases;
     const finalCoverage = repair.document_coverage ?? initialCoverage;
+
+    // Mapping GIẢ: atom được trích dẫn nhưng test case không thực sự kiểm tra nó.
+    // Đây là phát hiện quan trọng nhất của lớp bằng chứng ngữ nghĩa — nếu không
+    // liệt kê ra, nó chỉ là một con số coverage thấp đi mà không ai biết tại sao.
+    for (const atom of finalCoverage?.uncovered ?? []) {
+      if (atom.gap_kind !== 'weak_evidence') continue;
+      issues.push({
+        code: 'weak_evidence_mapping',
+        severity: 'error',
+        atom_id: atom.atom_id,
+        message: `${atom.claimed_by.join(', ')} khai báo cover atom "${atom.atom_id}" (${atom.label}) nhưng không kiểm tra nội dung của nó. Mapping này không được tính là đã cover.`,
+      });
+    }
 
     // 6) Validate ngữ nghĩa lần cuối trên bộ kết quả đã merge.
     const semantic = validateGeneratedTestCases(finalTestCases, {
@@ -132,12 +158,14 @@ export async function POST(req: Request) {
         document_coverage: finalCoverage,
         analysis: generation.data.analysis,
         model_used: generation.model,
+        truncated: generation.truncated,
         repair_rounds: repair.rounds_run,
         repair_stop_reason: repair.stop_reason,
         provider_warning: repair.provider_error ?? null,
-        // Chỉ trả cảnh báo/lỗi ngữ nghĩa — hữu ích để QA lead audit, không lộ
-        // chi tiết hạ tầng provider.
-        issues: issues.slice(0, 100),
+        // Trả ĐỦ cảnh báo/lỗi ngữ nghĩa — hữu ích để QA lead audit, không lộ
+        // chi tiết hạ tầng provider. Cắt danh sách này ở N phần tử sẽ giấu đi
+        // đúng phần đuôi vào lúc kết quả có nhiều vấn đề nhất.
+        issues,
       },
     });
   } catch (error: unknown) {

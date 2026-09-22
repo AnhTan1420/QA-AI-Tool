@@ -385,3 +385,68 @@ describe('computeBackoffMs', () => {
     expect(computeBackoffMs(3, 0, 8000)).toBe(0);
   });
 });
+
+describe('xử lý phản hồi bị cắt cụt (không im lặng chấp nhận)', () => {
+  beforeEach(() => {
+    process.env.GOOGLE_GEMINI_API_KEY = 'test-key';
+    process.env.AI_MODEL_PRIMARY = 'gemini-3.7-flash';
+    delete process.env.AI_MODEL_FALLBACK_1;
+    delete process.env.AI_MODEL_FALLBACK_2;
+    delete process.env.AI_MODEL_FALLBACK;
+    delete process.env.AI_MODEL_GENERATION;
+    process.env.GEMINI_BACKOFF_BASE_MS = '0';
+    process.env.GEMINI_MAX_RETRIES_PER_MODEL = '1';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    __setGeminiClientFactoryForTests(null);
+    vi.restoreAllMocks();
+  });
+
+  // JSON bị cắt giữa phần tử thứ 3 — repairTruncatedJson vá được 2 phần tử đầu.
+  const TRUNCATED = '{"test_cases":[{"code":"TC_001"},{"code":"TC_002"},{"code":"TC_0';
+
+  it('RETRY khi phản hồi bị cắt cụt, thay vì trả luôn phần đã vá', async () => {
+    const { client, calls } = scriptedClient([
+      { kind: 'ok', text: TRUNCATED },
+      { kind: 'ok', text: '{"test_cases":[{"code":"TC_001"},{"code":"TC_002"},{"code":"TC_003"}]}' },
+    ]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    const result = await generateWithGeminiResilient<{ test_cases: { code: string }[] }>({
+      task: 'generation',
+      systemPrompt: 'sys',
+      userPrompt: 'user',
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(result.truncated).toBe(false);
+    expect(result.data.test_cases).toHaveLength(3);
+  });
+
+  it('khi hết lượt thì trả phần đã vá NHƯNG đánh dấu truncated = true', async () => {
+    const { client } = scriptedClient([{ kind: 'ok', text: TRUNCATED }]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    const result = await generateWithGeminiResilient<{ test_cases: { code: string }[] }>({
+      task: 'generation',
+      systemPrompt: 'sys',
+      userPrompt: 'user',
+    });
+
+    // Không vứt bỏ công sức đã sinh được...
+    expect(result.data.test_cases).toHaveLength(2);
+    // ...nhưng cũng không giả vờ là đầy đủ.
+    expect(result.truncated).toBe(true);
+  });
+
+  it('phản hồi bình thường luôn có truncated = false', async () => {
+    const { client } = scriptedClient([{ kind: 'ok', text: OK_JSON }]);
+    __setGeminiClientFactoryForTests(() => client);
+    const result = await generateWithGeminiResilient({ task: 'generation', systemPrompt: 's', userPrompt: 'u' });
+    expect(result.truncated).toBe(false);
+  });
+});

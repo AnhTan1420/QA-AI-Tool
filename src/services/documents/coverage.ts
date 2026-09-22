@@ -1,5 +1,10 @@
 import type { DocumentAtom, ParsedDocument } from '@/models/validators/document';
 import type { GeneratedTestCase } from '@/models/validators/test-case';
+import {
+  assessMappingEvidence,
+  buildTestCaseHaystack,
+  isSemanticEvidenceRequired,
+} from './coverage-evidence';
 
 // ============================================================================
 // File: src/services/documents/coverage.ts
@@ -17,7 +22,11 @@ import type { GeneratedTestCase } from '@/models/validators/test-case';
 // thanh cong/that bai cua request (xem services/ai/coverage-repair.ts).
 // ============================================================================
 
-export type AtomCoverageStatus = 'covered' | 'uncovered';
+// 'weak_evidence' = atom_id CO trong source_requirement_ids, nhung khong mot
+// test case nao thuc su nhac den noi dung cua atom. Day la mapping gia — xem
+// coverage-evidence.ts. No KHONG duoc tinh la covered khi che do bang chung
+// ngu nghia dang bat (mac dinh).
+export type AtomCoverageStatus = 'covered' | 'weak_evidence' | 'uncovered';
 
 export type TraceabilityMatrixRow = {
   atom_id: string;
@@ -27,7 +36,7 @@ export type TraceabilityMatrixRow = {
   source_document: string;
   /** Cac test case (code + title) co source_requirement_ids chua atom_id nay.
    * Mang rong nghia la atom CHUA duoc case nao cover. */
-  covered_by: { code: string; title: string }[];
+  covered_by: { code: string; title: string; has_evidence: boolean; evidence: string }[];
   status: AtomCoverageStatus;
 };
 
@@ -38,6 +47,11 @@ export type UncoveredAtom = {
   detail: string;
   screen_or_section?: string;
   source_document: string;
+  /** 'unmapped' = khong case nao tro toi. 'weak_evidence' = co tro toi nhung
+   * khong case nao that su kiem tra atom — repair prompt can noi ro su khac biet. */
+  gap_kind: 'unmapped' | 'weak_evidence';
+  /** Cac case dang tuyen bo cover atom nay ma khong co bang chung. */
+  claimed_by: string[];
 };
 
 /** Mot atom_id duoc test case tham chieu NHUNG khong ton tai trong tai lieu nao. */
@@ -54,7 +68,11 @@ export type DocumentCoverageResult = {
   uncovered: UncoveredAtom[];
   /** ID do AI bia ra (hallucinated) — khong bao gio duoc tinh la covered. */
   invalid_atom_ids: InvalidAtomReference[];
-  /** Dieu kien hoan tat DUY NHAT: moi atom deu co it nhat 1 case cover. */
+  /** So atom duoc tro toi nhung khong co bang chung ngu nghia (mapping gia). */
+  weak_evidence_atoms: number;
+  /** true khi che do bang chung ngu nghia dang bat (COVERAGE_REQUIRE_SEMANTIC_EVIDENCE). */
+  semantic_evidence_required: boolean;
+  /** Dieu kien hoan tat DUY NHAT: khong con atom nao thieu bang chung. */
   is_complete: boolean;
   matrix: TraceabilityMatrixRow[];
 };
@@ -98,7 +116,18 @@ export function computeDocumentCoverage(
   const inventory = collectAtomInventory(documents);
   if (inventory.ordered.length === 0) return null;
 
-  const casesByAtomId = new Map<string, { code: string; title: string }[]>();
+  const requireEvidence = isSemanticEvidenceRequired();
+
+  // Tinh haystack 1 LAN cho moi test case. Khong co buoc nay, moi cap
+  // (atom x case) se dung lai chuoi noi dung cua case — voi 126 atom va 150
+  // case do la ~19k lan chuan hoa chuoi thua.
+  const haystacks = new Map<string, ReturnType<typeof buildTestCaseHaystack>>();
+  for (const testCase of testCases ?? []) {
+    if (!haystacks.has(testCase.code)) haystacks.set(testCase.code, buildTestCaseHaystack(testCase));
+  }
+
+  type Claim = { code: string; title: string; has_evidence: boolean; evidence: string };
+  const claimsByAtomId = new Map<string, Claim[]>();
   const invalidRefs = new Map<string, Set<string>>();
 
   for (const testCase of testCases ?? []) {
@@ -109,7 +138,8 @@ export function computeDocumentCoverage(
       const id = typeof rawId === 'string' ? rawId.trim() : '';
       if (!id) continue;
 
-      if (!inventory.byId.has(id)) {
+      const atom = inventory.byId.get(id);
+      if (!atom) {
         // ID bia dat: ghi nhan de bao cao, TUYET DOI khong tinh vao covered.
         const refs = invalidRefs.get(id) ?? new Set<string>();
         refs.add(testCase.code);
@@ -117,35 +147,51 @@ export function computeDocumentCoverage(
         continue;
       }
 
-      const list = casesByAtomId.get(id) ?? [];
-      list.push({ code: testCase.code, title: testCase.title });
-      casesByAtomId.set(id, list);
+      // BANG CHUNG NGU NGHIA: gan ID vao mang la chua du (xem coverage-evidence.ts).
+      const evidence = assessMappingEvidence(atom, testCase, haystacks.get(testCase.code));
+      const list = claimsByAtomId.get(id) ?? [];
+      list.push({
+        code: testCase.code,
+        title: testCase.title,
+        has_evidence: evidence.has_evidence,
+        evidence: evidence.reason,
+      });
+      claimsByAtomId.set(id, list);
     }
   }
 
   const matrix: TraceabilityMatrixRow[] = inventory.ordered.map((atom) => {
-    const coveredBy = casesByAtomId.get(atom.atom_id) ?? [];
+    const claims = claimsByAtomId.get(atom.atom_id) ?? [];
+    const proven = claims.some((c) => c.has_evidence);
+
+    const status: AtomCoverageStatus =
+      claims.length === 0 ? 'uncovered' : proven || !requireEvidence ? 'covered' : 'weak_evidence';
+
     return {
       atom_id: atom.atom_id,
       atom_type: atom.atom_type,
       label: atom.label,
       screen_or_section: atom.screen_or_section,
       source_document: atom.source_document,
-      covered_by: coveredBy,
-      status: coveredBy.length > 0 ? 'covered' : 'uncovered',
+      covered_by: claims,
+      status,
     };
   });
 
-  const uncovered: UncoveredAtom[] = inventory.ordered
-    .filter((atom) => (casesByAtomId.get(atom.atom_id) ?? []).length === 0)
-    .map((atom) => ({
-      atom_id: atom.atom_id,
-      atom_type: atom.atom_type,
-      label: atom.label,
+  const gaps = matrix.filter((row) => row.status !== 'covered');
+  const uncovered: UncoveredAtom[] = gaps.map((row) => {
+    const atom = inventory.byId.get(row.atom_id)!;
+    return {
+      atom_id: row.atom_id,
+      atom_type: row.atom_type,
+      label: row.label,
       detail: atom.detail,
-      screen_or_section: atom.screen_or_section,
-      source_document: atom.source_document,
-    }));
+      screen_or_section: row.screen_or_section,
+      source_document: row.source_document,
+      gap_kind: row.status === 'weak_evidence' ? 'weak_evidence' : 'unmapped',
+      claimed_by: row.covered_by.map((c) => c.code),
+    };
+  });
 
   const total = inventory.ordered.length;
   const covered = total - uncovered.length;
@@ -159,9 +205,11 @@ export function computeDocumentCoverage(
       atom_id,
       referenced_by: [...refs],
     })),
-    // So sanh SO LUONG, khong so sanh percent === 100: 1259/1260 atom lam tron
-    // len van ra 99.9, nhung 12599/12600 co the lam tron thanh 100.0 — dung
-    // percent de quyet dinh hoan tat se am tham bo sot atom o bo tai lieu lon.
+    weak_evidence_atoms: matrix.filter((row) => row.status === 'weak_evidence').length,
+    semantic_evidence_required: requireEvidence,
+    // So sanh SO LUONG, khong so sanh percent === 100: 1259/1260 lam tron len
+    // van ra 99.9, nhung 12599/12600 co the lam tron thanh 100.0 — dung percent
+    // de quyet dinh hoan tat se am tham bo sot atom o bo tai lieu lon.
     is_complete: covered === total,
     matrix,
   };

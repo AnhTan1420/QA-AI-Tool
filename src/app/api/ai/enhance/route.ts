@@ -9,6 +9,8 @@ import {
   generatedTestCasesSchema,
   retrievedTestCaseSchema,
   reviewResultSchema,
+  enhanceAnalysisSchema,
+  type EnhanceAnalysis,
   type GeneratedTestCase,
   type ReviewResult,
 } from '@/models/validators/test-case';
@@ -154,7 +156,7 @@ async function handleReview(input: {
 
   return NextResponse.json({
     success: true,
-    data: { ...reconciled, model_used: result.model },
+    data: { ...reconciled, model_used: result.model, truncated: result.truncated },
   });
 }
 
@@ -177,18 +179,36 @@ async function handleEnhance(input: {
     document_coverage: input.coverageBefore,
   });
 
-  const enhanced = await runGeminiTask<GeneratedTestCase[]>({
+  const enhanced = await runGeminiTask<{ test_cases: GeneratedTestCase[]; analysis: EnhanceAnalysis | null }>({
     task: 'enhance',
     prompt,
     responseSchema: buildTestCasesOnlyResponseSchema(),
-    validate: (raw) =>
-      validateAIJson(generatedTestCasesSchema, unwrapArrayResponse(raw), 'enhanced test cases'),
+    validate: (raw) => {
+      const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+      const testCases = validateAIJson(
+        generatedTestCasesSchema,
+        unwrapArrayResponse(obj.test_cases ?? raw),
+        'enhanced test cases',
+      );
+      // `analysis` là bản ghi "AI đã sửa gì" — giữ lại để người duyệt đọc,
+      // không phải điều kiện thành công nên parse khoan dung.
+      const parsedAnalysis = enhanceAnalysisSchema.safeParse(obj.analysis);
+      return { test_cases: testCases, analysis: parsedAnalysis.success ? parsedAnalysis.data : null };
+    },
   });
 
   const issues: SemanticIssue[] = [];
+  if (enhanced.truncated) {
+    issues.push({
+      code: 'truncated_response',
+      severity: 'warning',
+      message:
+        'Phản hồi Enhance bị cắt cụt vì vượt giới hạn token đầu ra — một phần test case đã bị mất. Cơ chế chống tụt lùi độ phủ và vòng repair bên dưới sẽ bù lại, nhưng hãy đối chiếu kết quả trước khi áp dụng.',
+    });
+  }
 
   // 1) Chuẩn hóa cơ học + loại atom_id bịa đặt.
-  const normalized = normalizeGeneratedTestCases(enhanced.data, input.documents);
+  const normalized = normalizeGeneratedTestCases(enhanced.data.test_cases, input.documents);
   issues.push(...normalized.issues);
 
   // 2) Không cho phép TỤT LÙI: atom đã cover trước đó mà giờ mất thì khôi phục
@@ -198,13 +218,16 @@ async function handleEnhance(input: {
     console.warn(
       `[ai/enhance] Enhance làm mất ${preserved.lost_atom_ids.length} atom đã cover — đã khôi phục ${preserved.restored.length} test case gốc.`,
     );
-    issues.push({
-      code: 'invalid_atom_id',
-      severity: 'warning',
-      message: `Enhance đã bỏ sót ${preserved.lost_atom_ids.length} atom từng được cover (${preserved.lost_atom_ids
-        .slice(0, 10)
-        .join(', ')}${preserved.lost_atom_ids.length > 10 ? '…' : ''}). Hệ thống đã khôi phục các test case gốc tương ứng.`,
-    });
+    // Liệt kê ĐẦY ĐỦ, không cắt bớt: đây chính là danh sách người review cần
+    // để kiểm tra lại từng atom bị Enhance đánh rơi.
+    for (const atomId of preserved.lost_atom_ids) {
+      issues.push({
+        code: 'invalid_atom_id',
+        severity: 'warning',
+        atom_id: atomId,
+        message: `Enhance bỏ sót atom "${atomId}" từng được cover — đã khôi phục test case gốc tương ứng.`,
+      });
+    }
   }
 
   // 3) Vòng repair: đưa độ phủ về 100% nếu vẫn còn atom trống.
@@ -219,6 +242,19 @@ async function handleEnhance(input: {
 
   const finalCases = repair.test_cases;
   const finalCoverage = repair.document_coverage ?? computeDocumentCoverage(input.documents, finalCases);
+
+  // Mapping GIẢ: atom được trích dẫn nhưng test case không thực sự kiểm tra nó.
+  // Đây là phát hiện quan trọng nhất của lớp bằng chứng ngữ nghĩa — nếu không
+  // liệt kê ra, nó chỉ là một con số coverage thấp đi mà không ai biết tại sao.
+  for (const atom of finalCoverage?.uncovered ?? []) {
+    if (atom.gap_kind !== 'weak_evidence') continue;
+    issues.push({
+      code: 'weak_evidence_mapping',
+      severity: 'error',
+      atom_id: atom.atom_id,
+      message: `${atom.claimed_by.join(', ')} khai báo cover atom "${atom.atom_id}" (${atom.label}) nhưng không kiểm tra nội dung của nó. Mapping này không được tính là đã cover.`,
+    });
+  }
 
   // 4) Validate ngữ nghĩa lần cuối.
   const semantic = validateGeneratedTestCases(finalCases, { documents: input.documents });
@@ -243,11 +279,16 @@ async function handleEnhance(input: {
       status,
       test_cases: finalCases,
       document_coverage: finalCoverage,
+      analysis: enhanced.data.analysis,
+      restored_test_cases: preserved.restored.map((c) => c.code),
       model_used: enhanced.model,
+      truncated: enhanced.truncated,
       repair_rounds: repair.rounds_run,
       repair_stop_reason: repair.stop_reason,
       provider_warning: repair.provider_error ?? null,
-      issues: issues.slice(0, 100),
+      // KHÔNG cắt: mỗi issue là một phát hiện kiểm thử thật, cắt ở 100 nghĩa là
+      // giấu đi phần đuôi đúng lúc kết quả tệ nhất (nhiều vấn đề nhất).
+      issues,
     },
   });
 }

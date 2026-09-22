@@ -24,10 +24,20 @@ import type { GeneratedTestCase } from '@/models/validators/test-case';
 
 const OVERLAP_THRESHOLD = 0.4;
 const MIN_CLAUSE_TOKENS = 2;
-/** Tran so luong clause xu ly moi lan luu - analysis.explicit_rules/implicit_rules
- * ly thuyet khong gioi han, chan bot de tranh insert qua nhieu dong vao
- * requirement_traceability cho 1 requirement bat thuong dai. */
-export const MAX_TRACEABILITY_CLAUSES = 60;
+/**
+ * Tran so luong clause xu ly moi lan luu — chan DB khoi mot requirement bat
+ * thuong dai, khong phai de "gon gang".
+ *
+ * Nang tu 60 len 400: 60 la mot con so am tham vut bo yeu cau. Mot FS thuc te
+ * de dang co tren 100 rule minh bach + ngam dinh; cat o 60 nghia la clause thu
+ * 61 tro di khong bao gio xuat hien trong bang traceability va khong ai nhin
+ * thay no da bien mat. Co the chinh qua env khi can.
+ */
+export const MAX_TRACEABILITY_CLAUSES = (() => {
+  const raw = process.env.MAX_TRACEABILITY_CLAUSES?.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  return Number.isFinite(parsed) ? Math.min(2000, Math.max(10, parsed)) : 400;
+})();
 
 const STOPWORDS = new Set([
   'the', 'a', 'an', 'is', 'are', 'to', 'of', 'and', 'or', 'with', 'for', 'in', 'on', 'at', 'this', 'that',
@@ -76,7 +86,8 @@ export type TraceabilityMatch = {
 };
 
 /** Gop + khu trung explicit_rules/implicit_rules thanh 1 danh sach clause duy
- * nhat, cat bot neu vuot MAX_TRACEABILITY_CLAUSES. */
+ * nhat. Chi cat khi vuot MAX_TRACEABILITY_CLAUSES (tran bao ve DB, xem tren) —
+ * `truncated` cho biet dieu do da xay ra de caller con bao len tren. */
 export function collectRequirementClauses(input: {
   explicitRules?: string[] | null;
   implicitRules?: string[] | null;
@@ -85,6 +96,17 @@ export function collectRequirementClauses(input: {
     .map((c) => c.trim())
     .filter(Boolean);
   return Array.from(new Set(merged)).slice(0, MAX_TRACEABILITY_CLAUSES);
+}
+
+/** So clause bi cat vi vuot tran (0 = khong mat gi). */
+export function countDroppedClauses(input: {
+  explicitRules?: string[] | null;
+  implicitRules?: string[] | null;
+}): number {
+  const merged = [...(input.explicitRules ?? []), ...(input.implicitRules ?? [])]
+    .map((c) => c.trim())
+    .filter(Boolean);
+  return Math.max(0, new Set(merged).size - MAX_TRACEABILITY_CLAUSES);
 }
 
 /** Doi chieu tung clause voi toan bo test case, tra ve danh sach code test case

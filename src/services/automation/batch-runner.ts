@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { inspectEnvironment, runGeneratedScript } from '@/services/automation/browser-runner';
 import { uploadRunScreenshot } from '@/services/automation/screenshot-storage';
 import { runAIAgent } from '@/services/ai/provider';
+import { checkPlaywrightQuality, findingsToWarnings } from '@/services/ai/playwright-quality';
 import { buildPlaywrightCodegenPrompt, groupElementMapByPage } from '@/services/ai/prompts/playwright-agent';
 import { buildPlaywrightResponseSchema } from '@/services/ai/prompts/playwright-response-schema';
 import { playwrightScriptSchema, type EnvironmentConfig, type PageObject } from '@/models/validators/playwright';
@@ -167,6 +168,18 @@ export async function processClaimedBatchItem(
       for (const name of expectedNames) {
         if (!actualNames.has(name)) rosterWarnings.push(`Thiếu Page Object dự kiến "${name}".`);
       }
+      // Anti-pattern + chất lượng assertion, cùng bộ kiểm tra với
+      // app/api/ai/playwright/route.ts — batch chạy không ai nhìn, nên đây là
+      // đường dễ để code kém chất lượng lọt vào thư viện nhất.
+      rosterWarnings.push(
+        ...findingsToWarnings(
+          checkPlaywrightQuality({
+            code: parsed.data.code,
+            page_objects: parsed.data.page_objects,
+            manualStepCount: promptInput.test_case.steps.length,
+          }),
+        ),
+      );
       if (rosterWarnings.length > 0) parsed.data.warnings = [...parsed.data.warnings, ...rosterWarnings];
 
       const { data: existingVersion } = await supabase

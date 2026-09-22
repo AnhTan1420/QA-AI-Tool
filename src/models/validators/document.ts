@@ -104,6 +104,20 @@ export type DocumentSourceType = z.infer<typeof documentSourceTypeSchema>;
 // ── Ket qua cuoi cung, da chuan hoa (id + source_type gan boi server) — day la
 // hinh dang duoc luu trong workspace client va gui kem trong document_context
 // khi goi /api/ai/generate. ──
+// Provenance cua buoc doc tai lieu (services/documents/reader.ts). Tat ca deu
+// optional va chi de HIEN THI/audit: nguoi dung phai thay duoc "tai lieu nay
+// duoc doc lam may phan, co phan nao loi khong, audit bo sung bao nhieu atom"
+// thay vi phai tin rang inventory la day du.
+export const documentReaderStatsSchema = z.object({
+  source_chars: z.number(),
+  chunks: z.number(),
+  atoms_first_pass: z.number(),
+  atoms_from_audit: z.number(),
+  duplicates_removed: z.number(),
+  failed_chunks: z.number(),
+});
+export type DocumentReaderStats = z.infer<typeof documentReaderStatsSchema>;
+
 export const parsedDocumentSchema = z.object({
   id: z.string().min(1),
   source_type: documentSourceTypeSchema,
@@ -111,6 +125,8 @@ export const parsedDocumentSchema = z.object({
   file_name: z.string().optional(),
   summary: z.string().min(1),
   atoms: z.array(documentAtomSchema).min(1),
+  reader_stats: documentReaderStatsSchema.optional(),
+  reader_warnings: z.array(z.string()).optional(),
 });
 
 export type ParsedDocument = z.infer<typeof parsedDocumentSchema>;

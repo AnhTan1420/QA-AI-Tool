@@ -60,9 +60,22 @@ function makeCase(code: string, atomIds: string[], title = `Test ${code}`): Gene
   };
 }
 
-/** Rut danh sach atom_id con thieu ra khoi prompt repair. */
-function uncoveredAtomIdsFromPrompt(prompt: string): string[] {
-  return [...prompt.matchAll(/^- atom_id: (\S+)$/gm)].map((m) => m[1]);
+/** Test case THUC SU kiem tra atom (co dan lai label + detail), de qua duoc
+ * cong bang chung ngu nghia. Day cung la hinh dang ma mot lan generate tot tra ve. */
+function coveringCases(atoms: { atom_id: string; label: string; detail: string }[]): GeneratedTestCase[] {
+  return atoms.map((atom, i) => {
+    const tc = makeCase(`TC_GEN_${String(i + 1).padStart(3, '0')}`, [atom.atom_id], `Kiểm tra ${atom.label}`);
+    return {
+      ...tc,
+      steps: [...tc.steps, { step_number: 3, action: `Kiểm tra ${atom.label}`, expected_result: atom.detail }],
+    };
+  });
+}
+
+/** Rut danh sach atom con thieu (id + label + detail) ra khoi prompt repair. */
+function uncoveredAtomsFromPrompt(prompt: string): { atom_id: string; label: string; detail: string }[] {
+  const pattern = /^- atom_id: (\S+)\n {2}atom_type: .*\n {2}label: (.*)\n {2}detail: (.*)$/gm;
+  return [...prompt.matchAll(pattern)].map((m) => ({ atom_id: m[1], label: m[2], detail: m[3] }));
 }
 
 /**
@@ -77,10 +90,19 @@ function cooperativeClient(): { client: GeminiLikeClient; callCount: () => numbe
     models: {
       generateContent: async (args) => {
         calls++;
-        const atomIds = uncoveredAtomIdsFromPrompt(String(args.contents));
-        const testCases = atomIds.map((atomId) =>
-          makeCase(`TC_REPAIR_${sequence++}`, [atomId], `Kiểm tra ${atomId} theo tài liệu`),
-        );
+        const atoms = uncoveredAtomsFromPrompt(String(args.contents));
+        const testCases = atoms.map((atom) => {
+          const tc = makeCase(`TC_REPAIR_${sequence++}`, [atom.atom_id], `Kiểm tra ${atom.label}`);
+          // Một model hoạt động đúng sẽ dẫn lại nội dung yêu cầu trong bước test
+          // — đó chính là thứ lớp bằng chứng ngữ nghĩa đi tìm.
+          return {
+            ...tc,
+            steps: [
+              ...tc.steps,
+              { step_number: 3, action: `Kiểm tra ${atom.label}`, expected_result: atom.detail },
+            ],
+          };
+        });
         return { text: JSON.stringify({ test_cases: testCases }) };
       },
       embedContent: async () => ({ embeddings: [{ values: [0] }] }),
@@ -99,6 +121,10 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
     process.env.GEMINI_BACKOFF_BASE_MS = '0';
     process.env.AI_COVERAGE_REPAIR_BATCH_SIZE = '35';
     process.env.AI_MAX_COVERAGE_REPAIR_ROUNDS = '4';
+    // Khẳng định rõ: E2E này chạy VỚI cổng bằng chứng ngữ nghĩa bật, đúng như
+    // production. Nếu không, test sẽ xanh ngay cả khi vòng repair chấp nhận các
+    // case chỉ trích dẫn atom_id mà không kiểm tra gì.
+    delete process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE;
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.spyOn(console, 'info').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -111,9 +137,7 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
 
   it('trang thai ban dau dung la 41/126 = 32.5%', () => {
     const doc = makeDocument();
-    const initial = doc.atoms
-      .slice(0, INITIALLY_COVERED)
-      .map((atom, i) => makeCase(`TC_GEN_${String(i + 1).padStart(3, '0')}`, [atom.atom_id]));
+    const initial = coveringCases(doc.atoms.slice(0, INITIALLY_COVERED));
 
     const coverage = computeDocumentCoverage([doc], initial)!;
 
@@ -125,9 +149,7 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
 
   it('dua do phu tu 32.5% len 100% va bao stop_reason = complete', async () => {
     const doc = makeDocument();
-    const initial = doc.atoms
-      .slice(0, INITIALLY_COVERED)
-      .map((atom, i) => makeCase(`TC_GEN_${String(i + 1).padStart(3, '0')}`, [atom.atom_id]));
+    const initial = coveringCases(doc.atoms.slice(0, INITIALLY_COVERED));
 
     const { client, callCount } = cooperativeClient();
     __setGeminiClientFactoryForTests(() => client);
@@ -151,9 +173,7 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
 
   it('GIU NGUYEN toan bo 41 test case ban dau (khong xoa coverage da co)', async () => {
     const doc = makeDocument();
-    const initial = doc.atoms
-      .slice(0, INITIALLY_COVERED)
-      .map((atom, i) => makeCase(`TC_GEN_${String(i + 1).padStart(3, '0')}`, [atom.atom_id]));
+    const initial = coveringCases(doc.atoms.slice(0, INITIALLY_COVERED));
 
     const { client } = cooperativeClient();
     __setGeminiClientFactoryForTests(() => client);
@@ -177,7 +197,7 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
 
   it('khong goi Gemini lan nao khi do phu da la 100%', async () => {
     const doc = makeDocument();
-    const complete = doc.atoms.map((atom, i) => makeCase(`TC_GEN_${i}`, [atom.atom_id]));
+    const complete = coveringCases(doc.atoms);
 
     const { client, callCount } = cooperativeClient();
     __setGeminiClientFactoryForTests(() => client);
@@ -210,7 +230,7 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
 
   it('DUNG vong lap khi 1 vong khong cai thien duoc atom nao (chong lap vo han)', async () => {
     const doc = makeDocument();
-    const initial = [makeCase('TC_GEN_001', ['ATOM_001'])];
+    const initial = coveringCases([makeDocument().atoms[0]]);
 
     // Gemini "buong tay": luon tra ve case khong cover atom nao con thieu.
     let calls = 0;
@@ -245,7 +265,7 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
 
   it('KHONG tinh atom_id bia dat la da cover trong vong repair', async () => {
     const doc = makeDocument();
-    const initial = [makeCase('TC_GEN_001', ['ATOM_001'])];
+    const initial = coveringCases([makeDocument().atoms[0]]);
 
     const liarClient: GeminiLikeClient = {
       models: {
@@ -279,7 +299,7 @@ describe('repairDocumentCoverage — E2E 41/126 → 126/126', () => {
 
   it('giu lai ket qua tung phan khi Gemini chet giua chung', async () => {
     const doc = makeDocument();
-    const initial = doc.atoms.slice(0, 41).map((atom, i) => makeCase(`TC_GEN_${i}`, [atom.atom_id]));
+    const initial = coveringCases(doc.atoms.slice(0, 41));
 
     const deadClient: GeminiLikeClient = {
       models: {

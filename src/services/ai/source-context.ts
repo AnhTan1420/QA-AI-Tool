@@ -81,7 +81,11 @@ export function formatCoverageForPrompt(coverage: DocumentCoverageResult | null 
     return '(No documents attached — document coverage does not apply to this request.)';
   }
 
-  const header = `Deterministic document coverage computed by the application (NOT by you): ${coverage.covered_atoms}/${coverage.total_atoms} = ${coverage.coverage_percent}%`;
+  const header =
+    `Deterministic document coverage computed by the application (NOT by you): ${coverage.covered_atoms}/${coverage.total_atoms} = ${coverage.coverage_percent}%` +
+    (coverage.weak_evidence_atoms > 0
+      ? `\n${coverage.weak_evidence_atoms} atom(s) are cited in source_requirement_ids but NOT actually verified by the citing test case. Citing an atom_id does not cover it.`
+      : '');
 
   if (coverage.is_complete) {
     return `${header}\nAll document atoms are currently mapped. Do NOT remove any existing source_requirement_ids mapping.`;
@@ -90,7 +94,10 @@ export function formatCoverageForPrompt(coverage: DocumentCoverageResult | null 
   const uncoveredList = coverage.uncovered
     .map(
       (atom) =>
-        `  [${atom.atom_id}] (${atom.atom_type}${atom.screen_or_section ? `, ${atom.screen_or_section}` : ''}, doc: ${atom.source_document}) ${atom.label} — ${atom.detail}`,
+        `  [${atom.atom_id}] (${atom.atom_type}${atom.screen_or_section ? `, ${atom.screen_or_section}` : ''}, doc: ${atom.source_document}) ${atom.label} — ${atom.detail}` +
+        (atom.gap_kind === 'weak_evidence'
+          ? `\n      ⚠ FALSE MAPPING: ${atom.claimed_by.join(', ')} list this atom_id but never actually test it. Write a case that verifies it, or extend one of those cases so it genuinely does.`
+          : ''),
     )
     .join('\n');
 

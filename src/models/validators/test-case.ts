@@ -193,9 +193,24 @@ const dimensionScoresSchema = z
   })
   .partial();
 
+// Phan tich 6 lop cua Review Agent. TRUOC DAY schema nay KHONG khai bao
+// `analysis`, nen Zod (che do "strip" mac dinh) vut bo toan bo no ngay sau khi
+// parse: model ton token that su de viet ra layer1..layer6 (phan gia tri nhat
+// cua mot ban audit — no chi ra *tai sao* diem so nhu vay) roi khong noi nao
+// trong app doc lai duoc. Dung `record` thay vi liet ke cung 6 key de model doi
+// ten lop khong lam mat du lieu.
+const reviewAnalysisSchema = z.record(
+  z.preprocess(
+    (value) => (typeof value === 'string' ? [value] : value),
+    z.array(z.string()),
+  ),
+);
+export type ReviewAnalysis = z.infer<typeof reviewAnalysisSchema>;
+
 export const reviewResultSchema = z.object({
   coverage_score: z.number().min(0).max(100),
   summary: z.string().optional(),
+  analysis: reviewAnalysisSchema.optional(),
   dimension_scores: dimensionScoresSchema.optional(),
   requirement_gaps: z.array(
     z.object({
@@ -214,6 +229,18 @@ export const reviewResultSchema = z.object({
     }),
   ),
 });
+
+// Analysis cua Enhance Agent — cung mot loi cu: prompt yeu cau model liet ke
+// dung nhung gap nao da duoc dong va atom nao vua chuyen tu uncovered sang
+// covered, roi route chi lay `test_cases` va vut phan con lai. Do chinh la ban
+// ghi "AI da lam gi" ma nguoi review can de duyet ket qua.
+export const enhanceAnalysisSchema = z.object({
+  gaps_addressed: z.array(z.string()).optional(),
+  atoms_newly_covered: z.array(z.string()).optional(),
+  total_cases_before: z.number().optional(),
+  total_cases_after: z.number().optional(),
+});
+export type EnhanceAnalysis = z.infer<typeof enhanceAnalysisSchema>;
 
 export type ReviewSeverity = z.infer<typeof severitySchema>;
 export type DimensionScores = z.infer<typeof dimensionScoresSchema>;

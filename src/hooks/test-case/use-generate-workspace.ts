@@ -27,6 +27,15 @@ type AIGenerationResponse = {
   analysis?: GenerationAnalysis | null;
   repair_rounds?: number;
   provider_warning?: string | null;
+  /** Phan hoi AI bi cat cut -> ket qua CHUA day du. */
+  truncated?: boolean;
+  issues?: { code: string; severity: 'error' | 'warning'; message: string; atom_id?: string; test_case_code?: string }[];
+};
+
+/** Enhance tra ve them ban ghi "AI da sua gi" (mục 2: khong vut bo thong tin AI). */
+type AIEnhanceResponse = AIGenerationResponse & {
+  analysis?: { gaps_addressed?: string[]; atoms_newly_covered?: string[]; total_cases_before?: number; total_cases_after?: number } | null;
+  restored_test_cases?: string[];
 };
 
 /**
@@ -68,6 +77,11 @@ export function useGenerateWorkspace(projectId: string) {
   const [generationStatus, setGenerationStatus] = useState<AIRunStatus | null>(null);
   const [repairRounds, setRepairRounds] = useState(0);
   const [providerWarning, setProviderWarning] = useState('');
+  const [wasTruncated, setWasTruncated] = useState(false);
+  // Toan bo phat hien ngu nghia cua luot chay (mapping gia, ID bia dat, step
+  // sai thu tu...). KHONG cat bot — day la danh sach QA lead can doc.
+  const [runIssues, setRunIssues] = useState<NonNullable<AIGenerationResponse['issues']>>([]);
+  const [enhanceAnalysis, setEnhanceAnalysis] = useState<AIEnhanceResponse['analysis']>(null);
 
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [analysis, setAnalysis] = useState<GenerationAnalysis | null>(null);
@@ -216,6 +230,9 @@ export function useGenerateWorkspace(projectId: string) {
     setGenerationStatus(null);
     setRepairRounds(0);
     setProviderWarning('');
+    setWasTruncated(false);
+    setRunIssues([]);
+    setEnhanceAnalysis(null);
 
     const ragCases = await retrieveRagContext();
     // Gop RAG context tu dong voi file nguoi dung tu upload o Step 3 (neu co),
@@ -239,6 +256,8 @@ export function useGenerateWorkspace(projectId: string) {
     setGenerationStatus(result.status);
     setRepairRounds(result.repair_rounds ?? 0);
     setProviderWarning(result.provider_warning ?? '');
+    setWasTruncated(Boolean(result.truncated));
+    setRunIssues(result.issues ?? []);
   }
 
   function handleGenerateClick() {
@@ -322,7 +341,7 @@ export function useGenerateWorkspace(projectId: string) {
     setIsEnhancing(true);
     setReviewError('');
     try {
-      const enhanced = await postJson<AIGenerationResponse>('/api/ai/enhance', {
+      const enhanced = await postJson<AIEnhanceResponse>('/api/ai/enhance', {
         mode: 'enhance',
         requirement_description: getEffectiveRequirementDescription(),
         test_cases: casesToEnhance,
@@ -344,6 +363,9 @@ export function useGenerateWorkspace(projectId: string) {
       });
       setRepairRounds(enhanced.repair_rounds ?? 0);
       setProviderWarning(enhanced.provider_warning ?? '');
+      setWasTruncated(Boolean(enhanced.truncated));
+      setRunIssues(enhanced.issues ?? []);
+      setEnhanceAnalysis(enhanced.analysis ?? null);
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.enhanceFailedGeneric);
     } finally {
@@ -675,7 +697,8 @@ export function useGenerateWorkspace(projectId: string) {
 
     // Results
     testCases, groupedCases, safeTestCasesCount,
-    generationStatus, repairRounds, providerWarning,
+    generationStatus, repairRounds, providerWarning, wasTruncated, runIssues, enhanceAnalysis,
+    documentWarnings: documents.flatMap((doc) => doc.reader_warnings ?? []),
     duplicateWarnings,
     analysis,
     review, coverageTone,

@@ -17,17 +17,22 @@ const ATOM_JSON_CONTRACT = `{
 export function buildTextDocumentExtractionPrompt(input: {
   sourceLabel: string;
   rawText: string;
-  truncated: boolean;
+  /** Vi tri cua doan van ban nay trong tai lieu goc (1-based). */
+  chunkIndex?: number;
+  chunkTotal?: number;
 }) {
   const idPrefix = input.sourceLabel.toUpperCase().replace(/[^A-Z0-9]+/g, '_').slice(0, 12) || 'DOC';
+  const isChunked = (input.chunkTotal ?? 1) > 1;
+  const chunkNote = isChunked
+    ? `\n[PART ${input.chunkIndex} OF ${input.chunkTotal} of a longer document. Extract atoms ONLY from the text shown here — the other parts are processed separately and merged. Consecutive parts overlap slightly, so if you see content that clearly belongs to a neighbouring part, still extract it; duplicates are removed automatically. Prefix every atom_id you invent with "P${input.chunkIndex}_" UNLESS the document supplies its own numbering (see rule 4), so ids stay unique across parts.]`
+    : '';
 
   return `You are a meticulous Requirements Analyst preparing a document for 100%-coverage QA test case generation. Your job is NOT to summarize — it is to ATOMIZE: break the document down into the smallest independently-testable units ("atoms") so that later, every atom can be checked off against at least one test case.
 
 ══════════════════════════════════════════════════════════════════
 SOURCE DOCUMENT: ${input.sourceLabel}
 ══════════════════════════════════════════════════════════════════
-${input.rawText}
-${input.truncated ? '\n[NOTE: this document was truncated to fit the context window — extract atoms from the text above only.]' : ''}
+${input.rawText}${chunkNote}
 
 ══════════════════════════════════════════════════════════════════
 EXTRACTION RULES
@@ -41,6 +46,11 @@ EXTRACTION RULES
    • A state/status value and its meaning, or a valid state transition.
    • An access-control / permission / role rule.
    • A numbered requirement clause (Functional Specification style, e.g. "3.2.1 The system shall...").
+   • An acceptance criterion ("Given/When/Then", "AC-1", a definition-of-done bullet).
+   • A relationship/dependency between entities, screens or services (including cardinality and cascade behaviour).
+   • A branch or alternate path in a described flow, including the failure/timeout/retry route.
+   • An AMBIGUITY: a term the document leaves undefined or measurable only vaguely ("quickly", "valid", "large"). Use atom_type "condition" and state in `detail` what is ambiguous and what must be clarified before it can be tested.
+   • A CONTRADICTION: two statements in this document that cannot both hold. Use atom_type "condition" and quote both statements in `detail`.
 3. Do NOT create atoms for: section headings alone, restatements/paraphrases of another atom you already extracted, pure narrative/marketing text, or a table of contents.
 4. If the document uses its own numbering (FS clauses, "REQ-04", "3.2.1", etc.), REUSE that numbering inside atom_id so a human reader can trace it straight back to the source (e.g. "${idPrefix}-3.2.1"). Otherwise, derive atom_id from "${idPrefix}" plus a zero-padded running counter (e.g. "${idPrefix}-001", "${idPrefix}-002").
 5. atom_id values MUST be unique within your output.
@@ -93,6 +103,68 @@ STEP 2 — OUTPUT RULES
 • Pure JSON object only. No markdown, no \`\`\`json fences, no commentary.
 • MUST exactly match this contract:
 ${ATOM_JSON_CONTRACT}
+
+OUTPUT NOW.`;
+}
+
+/**
+ * PASS 2 — kiem tra do day du (muc 3 cua ban audit).
+ *
+ * Pass 1 (buildTextDocumentExtractionPrompt) bao gio cung bo sot mot so thu: khi
+ * mot model doc 20 trang no co xu huong dung lai o cac muc noi bat va luot qua
+ * cac rang buoc phu, nhanh loi, va quy tac quyen han. Pass nay dua NGUOC lai
+ * danh sach da trich cho model va hoi: "con gi trong van ban nay chua co trong
+ * danh sach?" — mot cau hoi de tra loi hon nhieu so voi "hay trich xuat tat ca".
+ */
+export function buildDocumentCompletenessAuditPrompt(input: {
+  sourceLabel: string;
+  rawText: string;
+  existingAtoms: { atom_id: string; label: string }[];
+  chunkIndex?: number;
+  chunkTotal?: number;
+}) {
+  const idPrefix = input.sourceLabel.toUpperCase().replace(/[^A-Z0-9]+/g, '_').slice(0, 12) || 'DOC';
+  const part = (input.chunkTotal ?? 1) > 1 ? ` (part ${input.chunkIndex}/${input.chunkTotal})` : '';
+
+  return `You are auditing a requirements-extraction pass for COMPLETENESS. A first pass already atomized the document below. Your job is to find what it MISSED.
+
+══════════════════════════════════════════════════════════════════
+SOURCE TEXT${part}
+══════════════════════════════════════════════════════════════════
+${input.rawText}
+
+══════════════════════════════════════════════════════════════════
+ATOMS THE FIRST PASS ALREADY EXTRACTED (${input.existingAtoms.length})
+══════════════════════════════════════════════════════════════════
+${input.existingAtoms.map((a) => `  [${a.atom_id}] ${a.label}`).join('\n') || '(none)'}
+
+══════════════════════════════════════════════════════════════════
+YOUR TASK
+══════════════════════════════════════════════════════════════════
+Walk the source text again and list ONLY testable units that are NOT already represented above.
+First passes most often miss these categories — check each one explicitly against the text:
+
+  • field-level constraints (max length, allowed characters, format, required/optional, default value)
+  • role / permission / authorization rules, and what an unauthorized actor sees instead
+  • states, status values, and the transitions between them (including invalid transitions)
+  • alternate, failure, timeout, retry and rollback branches of a flow
+  • exact error messages, error codes, and validation messages
+  • acceptance criteria stated separately from the prose requirement
+  • relationships between entities, including cardinality and cascade/restrict behaviour
+  • non-functional constraints that are actually checkable (limits, quotas, retention, audit logging)
+  • ambiguities and contradictions (atom_type "condition", explain the problem in detail)
+
+Rules:
+• Return ONLY NEW atoms. If something is already covered by an atom above — even under a different wording — do NOT repeat it.
+• If the first pass genuinely missed nothing, return an empty "atoms" array. Do not invent atoms to look thorough; a fabricated requirement is worse than a missed one because it will generate tests for behaviour that does not exist.
+• Give new atoms ids prefixed "${idPrefix}-A${input.chunkIndex ?? 1}-" plus a running counter, unless the document supplies its own numbering — then reuse that.
+• "detail" must be self-contained: exact thresholds, exact messages, exact enum values.
+
+══════════════════════════════════════════════════════════════════
+OUTPUT — pure JSON object, no markdown, matching exactly:
+${ATOM_JSON_CONTRACT}
+
+For this audit pass, "title" and "summary" may restate the source document's title and a one-line note; the ONLY field that matters is "atoms".
 
 OUTPUT NOW.`;
 }

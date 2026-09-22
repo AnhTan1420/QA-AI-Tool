@@ -1,7 +1,7 @@
 /**
  * Unit tests cho services/documents/coverage.ts — nguon su that ve do phu tai lieu.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   computeDocumentCoverage,
   collectAtomInventory,
@@ -46,7 +46,17 @@ function casesCovering(atomIds: string[]): GeneratedTestCase[] {
   return atomIds.map((id, i) => makeCase(`TC_DOC_${String(i + 1).padStart(3, '0')}`, [id]));
 }
 
-describe('computeDocumentCoverage', () => {
+describe('computeDocumentCoverage (đếm thuần — tắt cổng bằng chứng ngữ nghĩa)', () => {
+  // Lớp bằng chứng ngữ nghĩa có bộ test riêng (coverage-evidence.test.ts). Ở đây
+  // ta kiểm tra ĐÚNG phần đếm/khử trùng/hoàn tất, nên tắt nó để mỗi test chỉ
+  // hỏi một câu hỏi.
+  beforeEach(() => {
+    process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE = 'false';
+  });
+  afterEach(() => {
+    delete process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE;
+  });
+
   it('126/126 = 100% va is_complete = true', () => {
     const doc = makeDocument(126);
     const cases = casesCovering(doc.atoms.map((a) => a.atom_id));
@@ -221,5 +231,85 @@ describe('groupUncoveredAtomsIntoBatches', () => {
 
   it('tra ve mang rong khi khong con atom nao thieu', () => {
     expect(groupUncoveredAtomsIntoBatches([], 35)).toEqual([]);
+  });
+});
+
+// ── Cổng bằng chứng ngữ nghĩa bật (mặc định production) ────────────────────
+
+describe('computeDocumentCoverage — bằng chứng ngữ nghĩa (mặc định BẬT)', () => {
+  const doc: ParsedDocument = {
+    id: 'doc-1',
+    source_type: 'figma',
+    title: 'Màn hình đăng nhập',
+    summary: 'Thiết kế màn hình đăng nhập',
+    atoms: [
+      {
+        atom_id: 'FIG_login_email_input',
+        atom_type: 'screen_element',
+        label: 'Ô nhập Email',
+        detail: 'Ô nhập có placeholder "Nhập địa chỉ email của bạn", bắt buộc, tối đa 255 ký tự.',
+        screen_or_section: 'Login',
+      },
+    ],
+  };
+
+  function caseWithSteps(code: string, action: string, expected: string): GeneratedTestCase {
+    return {
+      code,
+      title: `Test ${code}`,
+      category: 'positive',
+      priority: 'Normal',
+      preconditions: [],
+      test_data: {},
+      steps: [{ step_number: 1, action, expected_result: expected }],
+      final_expected_result: expected,
+      source_requirement_ids: ['FIG_login_email_input'],
+    };
+  }
+
+  it('đánh dấu weak_evidence khi test case chỉ trích dẫn atom_id mà không kiểm tra gì', () => {
+    const empty = caseWithSteps('TC_001', 'Mở ứng dụng', 'Ứng dụng khởi động');
+    const coverage = computeDocumentCoverage([doc], [empty])!;
+
+    expect(coverage.matrix[0].status).toBe('weak_evidence');
+    expect(coverage.covered_atoms).toBe(0);
+    expect(coverage.is_complete).toBe(false);
+    expect(coverage.weak_evidence_atoms).toBe(1);
+    expect(coverage.uncovered[0].gap_kind).toBe('weak_evidence');
+    expect(coverage.uncovered[0].claimed_by).toEqual(['TC_001']);
+  });
+
+  it('tính là covered khi test case dùng đúng nhãn/placeholder từ thiết kế', () => {
+    const real = caseWithSteps(
+      'TC_002',
+      'Nhập "an.nguyen@example.com" vào ô Email',
+      'Ô Email hiển thị placeholder "Nhập địa chỉ email của bạn" khi còn trống',
+    );
+    const coverage = computeDocumentCoverage([doc], [real])!;
+
+    expect(coverage.matrix[0].status).toBe('covered');
+    expect(coverage.is_complete).toBe(true);
+    expect(coverage.matrix[0].covered_by[0].has_evidence).toBe(true);
+  });
+
+  it('một case có bằng chứng đủ để cover, kể cả khi case khác thì không', () => {
+    const coverage = computeDocumentCoverage([doc], [
+      caseWithSteps('TC_001', 'Mở ứng dụng', 'Ứng dụng khởi động'),
+      caseWithSteps('TC_002', 'Nhập email vào ô Email, tối đa 255 ký tự', 'Chấp nhận giá trị hợp lệ'),
+    ])!;
+
+    expect(coverage.matrix[0].status).toBe('covered');
+    expect(coverage.matrix[0].covered_by.map((c) => c.has_evidence)).toEqual([false, true]);
+  });
+
+  it('tắt cổng bằng env thì mapping yếu lại được tính là covered', () => {
+    process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE = 'false';
+    try {
+      const coverage = computeDocumentCoverage([doc], [caseWithSteps('TC_001', 'Mở ứng dụng', 'OK')])!;
+      expect(coverage.matrix[0].status).toBe('covered');
+      expect(coverage.is_complete).toBe(true);
+    } finally {
+      delete process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE;
+    }
   });
 });

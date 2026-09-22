@@ -218,9 +218,16 @@ const AI_REVIEW: ReviewResult = {
 
 describe('reconcileReviewCoverage', () => {
   beforeEach(() => {
+    // Bộ test này kiểm tra việc CHẶN TRẦN điểm review, không phải lớp bằng chứng
+    // ngữ nghĩa (đã có coverage-evidence.test.ts) — tắt nó để fixture đơn giản
+    // vẫn cho ra đúng 41/126 như tình huống thật đang mô phỏng.
+    process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE = 'false';
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    delete process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE;
+    vi.restoreAllMocks();
+  });
 
   it('chan tren diem review bang do phu tai lieu that (95% AI vs 32.5% code)', () => {
     const doc = makeDocument(126);

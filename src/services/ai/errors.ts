@@ -185,6 +185,22 @@ export class GeminiBadResponseError extends Error {
   }
 }
 
+/**
+ * Phan hoi bi CAT CUT giua chung (thuong do cham tran maxOutputTokens).
+ *
+ * Truoc day parse.ts am tham va lai phan JSON hop le roi tra ve nhu mot ket qua
+ * binh thuong — nghia la he thong CHAP NHAN mot bo test case thieu mot nua ma
+ * khong ai biet. Gio no la mot loi co kieu: engine se retry (lan sample sau co
+ * the ngan hon va tron ven), va chi dung lai phan da va duoc khi khong con lua
+ * chon nao — kem theo co bao "truncated" di len tan API.
+ */
+export class GeminiTruncatedResponseError extends Error {
+  readonly name = 'GeminiTruncatedResponseError';
+  constructor(message: string, readonly salvaged: unknown) {
+    super(message);
+  }
+}
+
 /** Loi do ta chu dong nem khi request vuot qua timeout cau hinh. */
 export class GeminiTimeoutError extends Error {
   readonly code = 'ETIMEDOUT';
@@ -227,6 +243,7 @@ export class GeminiProviderError extends Error {
 }
 
 export function classifyGeminiError(error: unknown): GeminiErrorKind {
+  if (error instanceof GeminiTruncatedResponseError) return 'bad_response';
   if (error instanceof GeminiBadResponseError) return 'bad_response';
   if (error instanceof GeminiTimeoutError) return 'transient';
 

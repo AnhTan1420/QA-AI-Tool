@@ -25,9 +25,11 @@ import type { ParsedDocument } from '@/models/validators/document';
 import { generatedTestCasesSchema, type GeneratedTestCase } from '@/models/validators/test-case';
 import {
   computeDocumentCoverage,
+  collectAtomInventory,
   groupUncoveredAtomsIntoBatches,
   type DocumentCoverageResult,
 } from '@/services/documents/coverage';
+import { assessMappingEvidence, buildTestCaseHaystack } from '@/services/documents/coverage-evidence';
 import { buildCoverageRepairPrompt } from './prompts/coverage-repair-agent';
 import { buildTestCasesOnlyResponseSchema } from './prompts/generation-response-schema';
 import { runGeminiTask } from './provider';
@@ -153,16 +155,26 @@ export async function repairDocumentCoverage(
       const normalized = normalizeGeneratedTestCases(newCases, input.documents);
       issues.push(...normalized.issues);
 
-      // 2) CHONG AN GIAN: chi giu case that su dong gop it nhat 1 atom dang thieu.
-      //    Neu khong, Gemini co the tra ve cac case "bo sung" khong lien quan de
-      //    lam day response ma coverage van dam chan tai cho.
-      const contributing = normalized.test_cases.filter((testCase) =>
-        (testCase.source_requirement_ids ?? []).some((id) => stillUncovered.has(id)),
-      );
+      // 2) CHONG AN GIAN: chi giu case vua (a) tro toi it nhat 1 atom dang thieu,
+      //    VA (b) that su co bang chung ngu nghia cho atom do. Dieu kien (b) moi
+      //    la then chot: khong co no, mot case rong tuech gan dung ID van duoc
+      //    tinh la "dong gop" va coverage nhay len 100% ma khong ai test gi ca.
+      const inventory = collectAtomInventory(input.documents);
+      const contributing = normalized.test_cases.filter((testCase) => {
+        const haystack = buildTestCaseHaystack(testCase);
+        return (testCase.source_requirement_ids ?? []).some((id) => {
+          if (!stillUncovered.has(id)) return false;
+          const atom = inventory.byId.get(id);
+          if (!atom) return false;
+          return assessMappingEvidence(atom, testCase, haystack).has_evidence;
+        });
+      });
 
       const skipped = normalized.test_cases.length - contributing.length;
       if (skipped > 0) {
-        console.warn(`[Coverage] repair dropped ${skipped} case(s) that covered no uncovered atom`);
+        console.warn(
+          `[Coverage] repair dropped ${skipped} case(s) that covered no uncovered atom, or claimed one without actually testing it`,
+        );
       }
 
       // 3) Merge (giu nguyen toan bo case cu, cap ma moi khong trung).

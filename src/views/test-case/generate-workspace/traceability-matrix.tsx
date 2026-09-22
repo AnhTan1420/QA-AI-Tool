@@ -33,7 +33,9 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return matrix.filter((row) => {
-      if (onlyUncovered && row.covered_by.length > 0) return false;
+      // "Chi hien atom chua cover" phai bao gom ca mapping gia — do moi la
+      // thu nguoi dung dang di tim, va no KHONG co covered_by rong.
+      if (onlyUncovered && row.status === 'covered') return false;
       if (!q) return true;
       return (
         row.atom_id.toLowerCase().includes(q) ||
@@ -85,6 +87,13 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
                 <td className="px-3 py-2">
                   {row.status === 'covered' ? (
                     <span className="rounded bg-success-50 px-1.5 py-0.5 text-[11px] font-bold text-success-600">{tm.statusCovered}</span>
+                  ) : row.status === 'weak_evidence' ? (
+                    <span
+                      className="rounded bg-warning-50 px-1.5 py-0.5 text-[11px] font-bold text-warning-600"
+                      title={row.covered_by.map((c) => `${c.code}: ${c.evidence}`).join('\n')}
+                    >
+                      {tm.statusWeakEvidence}
+                    </span>
                   ) : (
                     <span className="badge-warning">{tm.statusUncovered}</span>
                   )}
@@ -95,7 +104,13 @@ export function TraceabilityMatrix({ matrix, t }: { matrix: TraceabilityMatrixRo
                   ) : (
                     <div className="flex flex-wrap gap-1">
                       {row.covered_by.map((c, i) => (
-                        <span key={i} className="rounded bg-success-50 px-1.5 py-0.5 font-mono text-[11px] font-bold text-success-600" title={c.title}>
+                        <span
+                          key={i}
+                          className={`rounded px-1.5 py-0.5 font-mono text-[11px] font-bold ${
+                            c.has_evidence ? 'bg-success-50 text-success-600' : 'bg-warning-50 text-warning-600 line-through'
+                          }`}
+                          title={`${c.title}\n\n${c.evidence}`}
+                        >
                           {c.code}
                         </span>
                       ))}

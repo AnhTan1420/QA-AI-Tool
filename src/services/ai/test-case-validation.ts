@@ -30,7 +30,9 @@ export type SemanticIssueCode =
   | 'invalid_atom_id'
   | 'coverage_padding'
   | 'planned_atom_not_covered'
-  | 'planned_code_missing';
+  | 'planned_code_missing'
+  | 'truncated_response'
+  | 'weak_evidence_mapping';
 
 export type SemanticIssue = {
   code: SemanticIssueCode;

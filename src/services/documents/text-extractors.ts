@@ -22,9 +22,15 @@ export async function extractPdfText(buffer: Buffer): Promise<string> {
 }
 
 /**
- * Gioi han do dai text truoc khi dua vao prompt AI, tranh vuot qua context/
- * budget token cua model chi vi 1 file qua dai. Tra ve ca co bi cat hay khong
- * de route co the ghi chu lai trong `summary` cho nguoi dung biet.
+ * @deprecated KHONG dung cho luong doc tai lieu nua.
+ *
+ * Ham nay tung duoc goi trong /api/ai/documents/parse va cat thang tai lieu o
+ * ky tu thu 24.000, khien moi yeu cau phia sau khong bao gio tro thanh atom —
+ * tuc la bang kiem do phu bi khuyet ngay tu goc. Da duoc thay bang
+ * services/documents/reader.ts (chia chunk + gop, khong cat cut).
+ *
+ * Giu lai vi no van la mot tien ich chan do dai hop le cho cac muc dich khac
+ * (vd cat log). Dung no cho noi dung tai lieu la mot loi nghiem trong.
  */
 export function capText(text: string, maxChars = 24000): { text: string; truncated: boolean } {
   if (text.length <= maxChars) return { text, truncated: false };
