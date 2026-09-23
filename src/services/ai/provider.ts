@@ -45,6 +45,12 @@ export async function runGeminiTask<T>(options: {
   temperature?: number;
   maxOutputTokens?: number;
   label?: string;
+  /** Ghi de timeout/so lan retry MOI ATTEMPT — dung khi caller tu quan ly 1
+   * ngan sach thoi gian rieng (vd Reader chia ngan sach cho nhieu chunk, xem
+   * services/documents/reader.ts) va can timeout NHO DAN theo ngan sach con
+   * lai, thay vi luon dung GEMINI_REQUEST_TIMEOUT_MS co dinh toan cuc. */
+  timeoutMs?: number;
+  maxRetriesPerModel?: number;
 }): Promise<GeminiCallResult<T>> {
   return generateWithGeminiResilient<T>({
     task: options.task,
@@ -56,6 +62,8 @@ export async function runGeminiTask<T>(options: {
     temperature: options.temperature,
     maxOutputTokens: options.maxOutputTokens,
     label: options.label,
+    timeoutMs: options.timeoutMs,
+    maxRetriesPerModel: options.maxRetriesPerModel,
   });
 }
 
@@ -68,12 +76,16 @@ export async function runAIAgent(
   fullPrompt: string,
   task: AITask = 'generation',
   responseSchema?: Record<string, unknown>,
+  overrides?: { timeoutMs?: number; maxRetriesPerModel?: number; label?: string },
 ): Promise<unknown> {
   const result = await generateWithGeminiResilient<unknown>({
     task,
     systemPrompt: QA_SYSTEM_PROMPT,
     userPrompt: fullPrompt,
     responseSchema,
+    timeoutMs: overrides?.timeoutMs,
+    maxRetriesPerModel: overrides?.maxRetriesPerModel,
+    label: overrides?.label,
   });
   return result.data;
 }

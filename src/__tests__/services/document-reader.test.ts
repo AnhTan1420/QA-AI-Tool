@@ -181,3 +181,191 @@ describe('readTextDocument', () => {
     expect(await readTextDocument({ fileName: 'FS.md', text: 'Ngắn.' })).toBeNull();
   });
 });
+
+// ============================================================================
+// NGAN SACH THOI GIAN (wall-clock budget) — bai hoc tu su co that ngay 22/9:
+// mot tai lieu can 2 chunk, chunk 2 gap model qua tai (503) va viec retry+doi
+// model an het du thoi gian de VUOT QUA maxDuration cua route, khien Vercel
+// giet function GIUA CHUNG va lam MAT TRANG toan bo atom da trich duoc tu
+// chunk 1 (da thanh cong). Cac test duoi day dung fake timers de mo phong thoi
+// gian troi qua GIUA cac lan goi Gemini (khong cho doi thuc), kiem tra rang
+// readTextDocument tu dung lai CO KIEM SOAT truoc khi ngan sach can kiet, thay
+// vi mac ke cho platform ben ngoai giet no.
+// ============================================================================
+
+describe('readTextDocument — ngân sách thời gian (wall-clock budget)', () => {
+  beforeEach(() => {
+    process.env.GOOGLE_GEMINI_API_KEY = 'test-key';
+    process.env.GEMINI_BACKOFF_BASE_MS = '0';
+    process.env.AI_READER_CHUNK_CHARS = '400';
+    process.env.AI_READER_CHUNK_OVERLAP_CHARS = '50';
+    process.env.AI_READER_AUDIT_PASS = 'false';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    __setGeminiClientFactoryForTests(null);
+    delete process.env.AI_READER_TOTAL_BUDGET_MS;
+    delete process.env.AI_READER_REQUEST_TIMEOUT_MS;
+    delete process.env.AI_READER_MAX_RETRIES_PER_MODEL;
+    vi.restoreAllMocks();
+  });
+
+  // Nhieu doan van ngan -> chac chan chia thanh > 2 chunk voi chunkChars=400.
+  const manyChunksText = Array.from(
+    { length: 40 },
+    (_, i) => `Điều ${i + 1}. Hệ thống phải xử lý tình huống số ${i + 1} theo đúng quy định nghiệp vụ.`,
+  ).join('\n\n');
+
+  /** Client gia lap: moi lan goi "ton" `callDurationMs` thoi gian dong ho ao truoc khi tra ve. */
+  function slowClient(callDurationMs: number) {
+    let n = 0;
+    const fake: GeminiLikeClient = {
+      models: {
+        generateContent: async (args) => {
+          n++;
+          // Tien len dong ho GIA truoc khi resolve — mo phong 1 lan goi Gemini
+          // that su ton bao nhieu thoi gian, nhung khong can cho THAT.
+          vi.advanceTimersByTime(callDurationMs);
+          return {
+            text: JSON.stringify({
+              title: 'Tài liệu dài',
+              summary: 'Tóm tắt.',
+              atoms: [atom(`P${n}-001`, `Yêu cầu phần ${n}`, `Chi tiết phần ${n}`)],
+            }),
+          };
+        },
+        embedContent: async () => ({ embeddings: [{ values: [0] }] }),
+      },
+    };
+    return { fake, callCount: () => n };
+  }
+
+  it('dừng LẠI CÓ KIỂM SOÁT khi hết ngân sách, thay vì xử lý tiếp vô thời hạn', async () => {
+    process.env.AI_READER_TOTAL_BUDGET_MS = '32000'; // đủ cho ~2 lần gọi 15s, không đủ cho lần thứ 3
+    const { fake, callCount } = slowClient(15_000);
+    __setGeminiClientFactoryForTests(() => fake);
+
+    const totalChunks = chunkDocumentText(manyChunksText, { maxChars: 400, overlapChars: 50 }).length;
+    expect(totalChunks).toBeGreaterThan(2); // tiền đề của kịch bản: còn phần chưa xử lý
+
+    const result = await readTextDocument({ fileName: 'FS-dai.md', text: manyChunksText });
+
+    expect(result).not.toBeNull();
+    // Đúng 2 chunk được xử lý (32000ms ngân sách, mỗi lần gọi tốn 15000ms, còn
+    // lại 2000ms trước chunk thứ 3 — dưới ngưỡng tối thiểu 8000ms để thử thêm).
+    expect(result!.stats.chunks).toBe(2);
+    expect(callCount()).toBe(2);
+    // KHÔNG được mất trắng: atom của 2 chunk đã xử lý phải còn nguyên.
+    expect(result!.atoms.length).toBe(2);
+  });
+
+  it('cảnh báo nêu rõ đã xử lý bao nhiêu phần và còn bao nhiêu phần chưa xử lý', async () => {
+    process.env.AI_READER_TOTAL_BUDGET_MS = '32000';
+    const { fake } = slowClient(15_000);
+    __setGeminiClientFactoryForTests(() => fake);
+
+    const result = await readTextDocument({ fileName: 'FS-dai.md', text: manyChunksText });
+
+    expect(result!.warnings.some((w) => w.includes('2/') && w.includes('AI_READER_TOTAL_BUDGET_MS'))).toBe(true);
+  });
+
+  it('không xử lý chunk nào nếu ngân sách đã cạn ngay từ đầu — vẫn trả về null một cách an toàn, không throw', async () => {
+    process.env.AI_READER_TOTAL_BUDGET_MS = '20000'; // sàn tối thiểu cho phép
+    const { fake, callCount } = slowClient(25_000); // mỗi lần gọi tốn nhiều hơn cả ngân sách còn lại sau chunk 1
+
+    __setGeminiClientFactoryForTests(() => fake);
+    const result = await readTextDocument({ fileName: 'FS-dai.md', text: manyChunksText });
+
+    // Chunk đầu tiên vẫn được thử (còn đủ ngân sách ban đầu), nhưng dừng ngay sau đó.
+    expect(callCount()).toBe(1);
+    expect(result!.stats.chunks).toBe(1);
+    expect(result!.warnings.some((w) => w.includes('1/'))).toBe(true);
+  });
+
+  it('bỏ qua lượt audit khi ngân sách sắp cạn, nhưng vẫn giữ atom của lượt đầu', async () => {
+    process.env.AI_READER_AUDIT_PASS = 'true';
+    process.env.AI_READER_TOTAL_BUDGET_MS = '20000';
+    const { fake, callCount } = slowClient(15_000); // 1 lượt đầu tốn 15s, còn 5s — dưới ngưỡng 8s cho lượt audit
+
+    __setGeminiClientFactoryForTests(() => fake);
+    const result = await readTextDocument({ fileName: 'FS.md', text: 'Một đoạn văn bản ngắn để chỉ tạo 1 chunk.' });
+
+    expect(result).not.toBeNull();
+    expect(callCount()).toBe(1); // chỉ lượt đầu, KHÔNG có lượt audit
+    expect(result!.atoms.length).toBe(1); // atom của lượt đầu vẫn được giữ
+    expect(result!.warnings.some((w) => w.includes('audit'))).toBe(true);
+  });
+
+  it('dùng giới hạn retry-mỗi-model RIÊNG của Reader (mặc định 1, nhỏ hơn mặc định toàn cục 2)', async () => {
+    process.env.AI_MODEL_PRIMARY = 'model-a';
+    process.env.AI_MODEL_FALLBACK_1 = 'model-b';
+    process.env.AI_MODEL_FALLBACK_2 = '';
+    process.env.AI_READER_TOTAL_BUDGET_MS = '260000'; // đủ rộng, không phải biến kiểm tra ở test này
+
+    const callsPerModel: Record<string, number> = {};
+    const fake: GeminiLikeClient = {
+      models: {
+        generateContent: async (args) => {
+          callsPerModel[args.model] = (callsPerModel[args.model] ?? 0) + 1;
+          if (args.model === 'model-a') {
+            const err = new Error('[503 Service Unavailable]') as Error & { status: number };
+            err.status = 503;
+            throw err;
+          }
+          return { text: JSON.stringify({ title: 't', summary: 's', atoms: [atom('X-001')] }) };
+        },
+        embedContent: async () => ({ embeddings: [{ values: [0] }] }),
+      },
+    };
+    __setGeminiClientFactoryForTests(() => fake);
+
+    const result = await readTextDocument({ fileName: 'FS.md', text: 'Văn bản ngắn, chỉ 1 chunk.' });
+
+    expect(result).not.toBeNull();
+    // Reader mặc định maxRetriesPerModel=1 -> 1 lần thử đầu + 1 lần retry = 2
+    // lần gọi trên model-a trước khi chuyển sang model-b (thay vì 3 lần như
+    // mặc định toàn cục GEMINI_MAX_RETRIES_PER_MODEL=2).
+    expect(callsPerModel['model-a']).toBe(2);
+    expect(callsPerModel['model-b']).toBe(1);
+  });
+});
+
+describe('cấu hình ngân sách của Reader (env parsing + clamping)', () => {
+  afterEach(() => {
+    delete process.env.AI_READER_TOTAL_BUDGET_MS;
+    delete process.env.AI_READER_REQUEST_TIMEOUT_MS;
+    delete process.env.AI_READER_MAX_RETRIES_PER_MODEL;
+  });
+
+  it('getReaderTotalBudgetMs: mặc định 260000, sàn 20000, trần 900000', async () => {
+    const { getReaderTotalBudgetMs } = await import('@/services/documents/reader');
+    expect(getReaderTotalBudgetMs()).toBe(260_000);
+
+    process.env.AI_READER_TOTAL_BUDGET_MS = '5000'; // dưới sàn
+    expect(getReaderTotalBudgetMs()).toBe(20_000);
+
+    process.env.AI_READER_TOTAL_BUDGET_MS = '999999999'; // vượt trần
+    expect(getReaderTotalBudgetMs()).toBe(900_000);
+
+    process.env.AI_READER_TOTAL_BUDGET_MS = '100000';
+    expect(getReaderTotalBudgetMs()).toBe(100_000);
+  });
+
+  it('getReaderRequestTimeoutMs: mặc định 30000, nhỏ hơn nhiều so với mặc định toàn cục 60000', async () => {
+    const { getReaderRequestTimeoutMs } = await import('@/services/documents/reader');
+    expect(getReaderRequestTimeoutMs()).toBe(30_000);
+  });
+
+  it('getReaderMaxRetriesPerModel: mặc định 1', async () => {
+    const { getReaderMaxRetriesPerModel } = await import('@/services/documents/reader');
+    expect(getReaderMaxRetriesPerModel()).toBe(1);
+
+    process.env.AI_READER_MAX_RETRIES_PER_MODEL = '3';
+    expect(getReaderMaxRetriesPerModel()).toBe(3);
+  });
+});

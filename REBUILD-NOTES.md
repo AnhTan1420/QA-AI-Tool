@@ -296,3 +296,71 @@ Same constraint as Round 1: no network, no `node_modules` in this environment. `
 
 1. `buildTestCaseHaystack` changed return type from `string` to a `{ text, tokens }` object — call sites in `coverage.ts` and `coverage-repair.ts` were updated, but this is exactly the kind of signature change `tsc` catches and a static grep does not.
 2. `flattenFigmaAtoms` and `fetchAndParseFigmaFile` gained a new required field (`atoms_before_cap`) and `flattenFigmaAtoms` gained an optional second parameter — the one call site (`parse/route.ts`) was updated.
+
+---
+
+## 8. Round 3 — Production incident: Reader timed out and lost all work
+
+**Symptom** (from Vercel logs, real deployment): `/api/ai/documents/parse` failed with `Vercel Runtime Timeout Error: Task timed out after 120 seconds` while reading a multi-chunk document. Chunk 1 (~48s) succeeded. Chunk 2 hit a 503 on `gemini-3.5-flash`, retried twice (~64s total across 3 attempts on the *same* model), then switched to `gemini-3.5-flash-lite` — and 7.5 seconds later the platform killed the function. **Every atom already extracted from chunk 1 was lost** — the reader had no response to return, because it was mid-loop when the platform terminated it, not mid-error-handling of its own.
+
+### Root causes (two independent bugs, compounding)
+
+1. **`/api/ai/documents/parse/route.ts` had `maxDuration = 120`** — a value left over from before the Round 2 rebuild, when this route made exactly one Gemini call against a `capText`-truncated document. The Round 2 chunked, multi-pass reader turned this into potentially many sequential calls, and the route's time budget was never revisited to match. Every other AI-heavy route was audited for this in Round 1/2; this one specifically was missed because it wasn't rebuilt from scratch — it was extended in place, and `export const maxDuration` sat above the code I was editing, out of view. Checked all 7 AI routes this round; `retrieve` and `embed` had no `maxDuration` declared at all (relying on undocumented platform defaults). All 7 now declare an explicit, workload-appropriate value.
+
+2. **The reader had zero wall-clock awareness.** `readTextDocument()`'s chunk loop assumed unlimited time and just kept going — chunk after chunk, retry after retry, model after model — with no mechanism to notice "I am about to run out of time" and stop on its own terms. This is the same principle violated as the pre-Round-2 `capText` truncation and the pre-fix silently-accepted truncated JSON: **an uncontrolled failure that discards work is strictly worse than a controlled one that returns what it has.** The difference this time is the uncontrolled failure came from *outside* the process (the platform's own watchdog), which our own error handling cannot catch or clean up after — the only fix is to never get close enough to hit it.
+
+### Fixes
+
+- **All 7 `api/ai/*` routes now declare `maxDuration` explicitly**: `generate`, `enhance`, `documents/parse` → 300s (multi-call architectures); `playwright` codegen/heal → 300s (raised from 120s — a single resilient call with retries across models can itself approach 120s in the worst case, per the incident); `embed`, `retrieve` → 120s (single-call profile, but explicit rather than relying on platform defaults).
+
+- **`GEMINI_REQUEST_TIMEOUT_MS` default lowered from 120,000ms to 60,000ms** (`model-registry.ts`). A per-attempt timeout that equals or exceeds a route's entire function budget is a latent bug regardless of the reader — it means one hanging attempt can exhaust the whole request with zero room for retry or fallback. This is a systemic fix, not reader-specific.
+
+- **`services/documents/reader.ts` now tracks a wall-clock budget** (`ReaderBudget`, new). Before each chunk — and before the optional audit pass — it checks whether enough time plausibly remains for one more call (`AI_READER_TOTAL_BUDGET_MS`, default 260s, leaving ~40s margin under a 300s route). If not, it **stops immediately and returns everything extracted so far**, with a warning stating exactly how many chunks were processed and how many remain, and what env var to raise. This is a graceful, self-imposed stop — the same shape as the coverage-repair loop's no-progress guard and `GeminiTruncatedResponseError`'s salvage path, applied to the one place that didn't have it yet.
+
+- **Per-call timeout shrinks with remaining budget** (`ReaderBudget.timeoutForNextCall()`), and the reader now passes its own, deliberately *tighter* defaults per call: `AI_READER_REQUEST_TIMEOUT_MS` (default 30s, vs. the global 60s) and `AI_READER_MAX_RETRIES_PER_MODEL` (default 1, vs. the global 2). The incident's most expensive single event — three attempts on one struggling model consuming ~64 seconds before ever trying the fallback — is exactly what this prevents: with a chunked architecture making many calls, getting through the model chain fast matters more than persisting with one model.
+
+- **`runAIAgent()` / `runGeminiTask()` (`provider.ts`) now accept optional `timeoutMs` / `maxRetriesPerModel` overrides**, threaded through to `generateWithGeminiResilient()`. This is what lets the reader's shrinking budget actually reach the underlying Gemini call; previously only `generateWithGeminiResilient` itself supported per-call overrides, and every caller went through the fixed-default wrapper functions.
+
+- **Reader calls switched from `runAIAgent()` to `runGeminiTask()`** so each call carries a `label` (`chunk 2/5`, `chunk 2/5 audit`). Previously every reader log line was indistinguishable — `[Gemini] document_extraction using X` — with no way to tell which chunk or pass a given log line belonged to. This was a direct diagnostic gap during the incident: reading the logs required inferring chunk boundaries from timing alone.
+
+- **Schema-validation failures inside the reader's `extractAtoms()` now throw `GeminiBadResponseError`** (matching the established pattern from `validateAIJson()`) instead of a plain `Error`. A plain `Error` would have been classified `'fatal'` by `classifyGeminiError()` — coincidentally producing similar-looking behavior (still moves to the next model) but for the wrong reason and by accident, not by declared intent. Fixed for correctness and consistency, not because the old code visibly misbehaved.
+
+- **`ReaderResult.stats.chunks` now reports chunks actually processed**, not chunks planned — if the budget cuts the reader off early, this number must reflect what really happened, not overstate it.
+
+### Tests added
+
+`document-reader.test.ts` gained two new `describe` blocks using Vitest fake timers (`vi.useFakeTimers()` + `vi.advanceTimersByTime()` inside the mock client) to deterministically simulate wall-clock time passing between Gemini calls without any real waiting: budget-exhaustion mid-loop (asserts partial atoms are preserved, not lost, and the warning names exact processed/remaining counts), zero-chunks-processed-if-budget-dead-on-arrival, audit-pass-skipped-when-budget-low, and the tighter reader-specific retry count actually taking effect (2 calls to a failing model before fallback, not 3). `model-registry.test.ts` gained a direct regression test pinning the lowered `60_000` default.
+
+### New environment variables (Round 3)
+
+```
+AI_READER_TOTAL_BUDGET_MS=260000     # wall-clock budget for the ENTIRE readTextDocument() call
+AI_READER_REQUEST_TIMEOUT_MS=30000   # per-attempt timeout used by the Reader specifically (tighter than global)
+AI_READER_MAX_RETRIES_PER_MODEL=1    # per-model retry count used by the Reader specifically (tighter than global)
+```
+
+Changed default:
+
+```
+GEMINI_REQUEST_TIMEOUT_MS=60000      # was 120000 — see rationale above
+```
+
+### What this round does not fix
+
+The budget mechanism bounds the Reader's *own* runaway risk, but does not change the fact that `maxDuration` is a hard platform ceiling — a document large enough to need, say, 15+ chunks with several models failing over on each one could still legitimately need more than 260 seconds of real Gemini work. In that case the reader now degrades *correctly* (partial result, clear warning, chunks/atoms already extracted preserved) rather than *catastrophically* (total loss, opaque platform error) — but it still won't have read the whole document in one request. A true fix for arbitrarily large documents would need either a background job (process chunks across multiple function invocations, persisting progress) or a queue-based architecture; that is a larger change than this incident warranted and was not attempted here.
+
+### 8b. Same bug class found and fixed in batch automation codegen
+
+While fixing the Reader, I checked every other route that calls a Gemini function for the same class of problem — a step that checks "is there enough time left to *start*?" without also bounding the step's own *worst-case duration* to fit what's left.
+
+`services/automation/batch-runner.ts` (`processClaimedBatchItem`, called by `/api/automation/batch-run/[id]/process-next`) already had well-designed budget infrastructure predating this work: `BATCH_ITEM_BUDGET_MS = 50_000`, a `timeLeft()` closure, and explicit checks before Inspect and before Generate that bail out gracefully (`item_status: 'error'`, resumable) if too little time remains. This is the same defensive pattern I built into the Reader — done correctly, deliberately, with a comment explaining Vercel Hobby's 60-second hard ceiling.
+
+But the one Gemini call it guards — `runAIAgent(promptString, 'playwright_codegen', ...)` — had no timeout tied to that remaining budget. It used the global default (`GEMINI_REQUEST_TIMEOUT_MS`, 60s after this round's fix, 120s before it) regardless of whether the pre-check had confirmed 8 seconds or 45 seconds remained. A batch item could pass the "enough time to start" check with the minimum 8 seconds left, then have its single Gemini attempt freely run for up to 60 seconds — guaranteed to hit the platform's hard 60-second ceiling, leaving the item stuck at `running` with no result and no clean path to Resume.
+
+**Fix:** extracted `computeCodegenTimeoutMs(timeLeftMs)` as a pure, exported, unit-tested function — `min(50_000, max(3_000, timeLeftMs - 8_000 - 2_000))` — and passed it as `timeoutMs` to `runAIAgent`, along with `maxRetriesPerModel: 0` (with only tens of seconds total, trying each model once beats retrying one model and never reaching the fallback — the same lesson as the incident, where three attempts on one struggling model ate 64 seconds before ever trying the next). The margin subtracted (10s) preserves the existing post-Generate budget check before Run, so a codegen call that uses its full allotted timeout doesn't silently consume the time meant for the next step.
+
+This was intentionally the smallest safe change: the existing budget architecture was sound and untouched; only the one gap where it didn't yet reach the Gemini call itself was closed, using the `timeoutMs`/`maxRetriesPerModel` override mechanism already built for the Reader fix in the same round. New test: `batch-runner-budget.test.ts` (6 cases, pure arithmetic, no mocking required).
+
+### Verification status
+
+Same disclosed limitation as Rounds 1 and 2: no network, no `node_modules`, so `typecheck`/`lint`/`test`/`build` have not executed here. This round I additionally ran a corrected static scanner for the specific bug class that broke the Round 2 build (a matched pair of backticks used as markdown emphasis inside a JS template literal) across all 179 files, including test files and originally-untouched files — zero instances remain anywhere in `src/`. Brace/JSX balance and import-path resolution were re-verified clean after all Round 3 edits.

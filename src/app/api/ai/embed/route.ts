@@ -4,6 +4,12 @@ import { NextResponse } from 'next/server';
 import { createEmbedding } from '@/services/ai/provider'; 
 
 export const runtime = 'nodejs';
+// 1 lan goi Gemini (embedding / khong co goi Gemini truc tiep o retrieve) --
+// nhe hon nhieu so voi generate/enhance/parse, nhung van khai bao ro rang thay
+// vi de mac dinh nen tang cua platform (day chinh la loi da xay ra o route
+// parse: mac dinh 120s hoac thap hon khong duoc XEM XET lai khi kien truc ben
+// duoi thay doi).
+export const maxDuration = 120;
 
 const embedRequestSchema = z.object({
   content: z.string().min(1),

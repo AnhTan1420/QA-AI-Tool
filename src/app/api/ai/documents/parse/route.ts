@@ -7,7 +7,13 @@ import { extractDocxText, extractPdfText } from '@/services/documents/text-extra
 import { readTextDocument } from '@/services/documents/reader';
 import { fetchAndParseFigmaFile } from '@/services/documents/figma-client';
 
-export const maxDuration = 120;
+// Route nay chay Reader nhieu-luot (chunk + audit) cho tai lieu dai — co the
+// can nhieu lan goi Gemini TUAN TU. maxDuration=120 (gia tri cu, phu hop khi
+// Reader con cat cut o capText(24000) va chi goi Gemini 1 lan) da qua thap cho
+// kien truc chunked hien tai va la NGUYEN NHAN TRUC TIEP gay ra loi
+// "Vercel Runtime Timeout Error: Task timed out after 120 seconds" khi mot tai
+// lieu can >= 2 chunk va mot trong so do gap model dang qua tai (503).
+export const maxDuration = 300;
 export const runtime = 'nodejs';
 
 // Nguong so ky tu text-layer toi thieu de coi 1 file PDF la "van ban that su".

@@ -17,13 +17,14 @@
 //        → gop + khu trung + on dinh hoa atom_id
 // ============================================================================
 
-import { runAIAgent } from '@/services/ai/provider';
+import { runGeminiTask } from '@/services/ai/provider';
 import {
   buildDocumentCompletenessAuditPrompt,
   buildTextDocumentExtractionPrompt,
 } from '@/services/ai/prompts/document-extraction-agent';
 import { documentExtractionResultSchema, type DocumentAtom } from '@/models/validators/document';
 import { normalizeForMatch } from './coverage-evidence';
+import { GeminiBadResponseError, GeminiProviderError } from '@/services/ai/errors';
 
 function readIntEnv(name: string, fallback: number, min: number, max: number): number {
   const raw = process.env[name]?.trim();
@@ -51,6 +52,80 @@ export function getReaderMaxChunks(): number {
 export function isReaderAuditPassEnabled(): boolean {
   const raw = process.env.AI_READER_AUDIT_PASS?.trim().toLowerCase();
   return raw !== 'false' && raw !== '0' && raw !== 'off';
+}
+
+// ============================================================================
+// NGAN SACH THOI GIAN (wall-clock budget) — bai hoc tu su co that:
+// ----------------------------------------------------------------------------
+// Truoc ban sua nay, readTextDocument() lap qua tung chunk ma KHONG HE biet
+// route dang chay trong bao nhieu giay tong cong. Ket qua thuc te: 1 tai lieu
+// can 2 chunk, chunk thu 2 gap 1 model dang qua tai (503) va ban resilient
+// engine hop ly retry 3 lan + doi model — nhung tong thoi gian do (~64s) cong
+// voi chunk 1 (~48s) VUOT QUA maxDuration cua chinh serverless function. Vercel
+// giet function GIUA CHUNG, va TOAN BO atom da trich duoc tu chunk 1 (da thanh
+// cong) bi mat trang — khong co response nao tra ve nguoi dung ca, chu dung noi
+// la mot canh bao "chua doc het". Day la that bai NGHIEM TRONG HON ca truong
+// hop cu capText(24000): it nhat capText tra ve mot ket qua (du cat cut) thay
+// vi khong tra ve gi.
+//
+// Sua: theo doi 1 deadline tu dau ham, truoc moi chunk kiem tra con du thoi
+// gian khong (toi thieu du cho 1 attempt nhanh + margin xu ly), neu khong thi
+// DUNG LAI CO KIEM SOAT va tra ve nhung gi da co kem canh bao ro rang — giong
+// het nguyen tac da ap dung cho vong coverage-repair (dung khi khong con tien
+// trien) va cho GeminiTruncatedResponseError (giu ban va duoc thay vi mat het).
+// ============================================================================
+
+/**
+ * Tong ngan sach thoi gian (ms) cho CA HAM readTextDocument, tinh tu luc bat
+ * dau chunk dau tien. Mac dinh 260s: du cho maxDuration=300s cua route con
+ * ~40s du phong cho fetch file/parse input/serialize response.
+ */
+export function getReaderTotalBudgetMs(): number {
+  return readIntEnv('AI_READER_TOTAL_BUDGET_MS', 260_000, 20_000, 900_000);
+}
+
+/**
+ * Timeout MOI ATTEMPT danh rieng cho Reader — CO CHU DICH nho hon
+ * GEMINI_REQUEST_TIMEOUT_MS toan cuc (60s). Reader can di qua NHIEU chunk, moi
+ * chunk lai co the can di qua NHIEU model trong chain khi gap loi tam thoi —
+ * timeout dai cho tung attempt la thu xa xi Reader khong co: thoi gian danh
+ * cho 1 attempt "cham" la thoi gian lay tu chunk khac chua duoc xu ly.
+ */
+export function getReaderRequestTimeoutMs(): number {
+  return readIntEnv('AI_READER_REQUEST_TIMEOUT_MS', 30_000, 5_000, 120_000);
+}
+
+/**
+ * So lan retry MOI MODEL danh rieng cho Reader — mac dinh 1 (thay vi 2 o cau
+ * hinh toan cuc). Su co thuc te cho thay 3 attempt tren CUNG 1 model
+ * (gemini-3.5-flash) da an het 64 giay truoc khi engine chiu doi sang model ke
+ * tiep. Voi kien truc nhieu-chunk, uu tien "di qua het cac model NHANH" hon la
+ * "kien tri voi 1 model". Nguoi van co the tang lai qua env neu can.
+ */
+export function getReaderMaxRetriesPerModel(): number {
+  return readIntEnv('AI_READER_MAX_RETRIES_PER_MODEL', 1, 0, 5);
+}
+
+/** Thoi gian toi thieu con lai de con dang thu 1 lan goi nua (attempt + margin xu ly). */
+const MIN_TIME_FOR_ONE_ATTEMPT_MS = 8_000;
+
+class ReaderBudget {
+  private readonly deadline: number;
+  constructor(totalMs: number) {
+    this.deadline = Date.now() + totalMs;
+  }
+  remainingMs(): number {
+    return this.deadline - Date.now();
+  }
+  hasTimeForAnotherCall(): boolean {
+    return this.remainingMs() >= MIN_TIME_FOR_ONE_ATTEMPT_MS;
+  }
+  /** Timeout cho attempt ke tiep: nho hon giua (cau hinh Reader, ngan sach con lai - margin). */
+  timeoutForNextCall(): number {
+    const configured = getReaderRequestTimeoutMs();
+    const safe = Math.max(1_000, this.remainingMs() - 2_000);
+    return Math.min(configured, safe);
+  }
 }
 
 export type TextChunk = { index: number; total: number; text: string };
@@ -163,28 +238,55 @@ export type ReaderResult = {
 };
 
 /** Goi Gemini cho 1 prompt trich xuat va tra ve atom, hoac null neu that bai. */
-async function extractAtoms(prompt: string, label: string): Promise<{ title?: string; summary?: string; atoms: DocumentAtom[] } | null> {
+async function extractAtoms(
+  prompt: string,
+  label: string,
+  overrides: { timeoutMs?: number; maxRetriesPerModel?: number } = {},
+): Promise<{ title?: string; summary?: string; atoms: DocumentAtom[] } | null> {
   try {
-    const raw = await runAIAgent(prompt, 'document_extraction');
-    const parsed = documentExtractionResultSchema.safeParse(raw);
-    if (parsed.success) return parsed.data;
+    const result = await runGeminiTask({
+      task: 'document_extraction',
+      prompt,
+      label,
+      timeoutMs: overrides.timeoutMs,
+      maxRetriesPerModel: overrides.maxRetriesPerModel,
+      // Validate LONG TAY thay vi de runGeminiTask ep kieu — audit pass duoc
+      // phep tra ve 0 atom (nghia la "khong sot gi") va documentExtractionResultSchema
+      // yeu cau atoms.min(1) + title/summary, nen o day tu chap nhan ca hinh
+      // dang toi thieu { atoms: [...] } thay vi de bi coi la loi va bi retry oan.
+      //
+      // QUAN TRONG: khi ca 2 cach parse deu that bai, phai nem GeminiBadResponseError
+      // (khong phai Error thuong) — day la loai loi ma classifyGeminiError() nhan
+      // dien la 'bad_response' va cho retry/doi model dung cach. Mot Error thuong
+      // se roi vao nhanh phan loai 'fatal' MOT CACH TINH CO (dung hanh vi, sai
+      // chu dich khai bao) — de nguyen tac ro rang hon la dua vao trung hop.
+      validate: (raw: unknown) => {
+        const parsed = documentExtractionResultSchema.safeParse(raw);
+        if (parsed.success) return parsed.data;
 
-    // Audit pass duoc phep tra ve 0 atom (nghia la "khong sot gi"), nhung
-    // documentExtractionResultSchema yeu cau atoms.min(1) + title/summary. Chap
-    // nhan rieng hinh dang toi thieu { atoms: [...] } de khong vut bo ket qua hop le.
-    const loose = raw as { atoms?: unknown } | null;
-    if (loose && Array.isArray(loose.atoms)) {
-      const atomsOnly = documentExtractionResultSchema
-        .pick({ atoms: true })
-        .partial()
-        .safeParse({ atoms: loose.atoms });
-      if (atomsOnly.success && atomsOnly.data.atoms) return { atoms: atomsOnly.data.atoms };
-    }
+        const loose = raw as { atoms?: unknown } | null;
+        if (loose && Array.isArray(loose.atoms)) {
+          const atomsOnly = documentExtractionResultSchema
+            .pick({ atoms: true })
+            .partial()
+            .safeParse({ atoms: loose.atoms });
+          if (atomsOnly.success && atomsOnly.data.atoms) return { atoms: atomsOnly.data.atoms };
+        }
 
-    console.warn(`[Reader] ${label}: phản hồi sai schema, bỏ qua đoạn này.`, parsed.error.issues.slice(0, 3));
-    return null;
+        const preview = parsed.error.issues
+          .slice(0, 5)
+          .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+          .join('; ');
+        throw new GeminiBadResponseError(`Phản hồi AI cho "${label}" không đúng schema: ${preview}`, parsed.error.issues);
+      },
+    });
+    return result.data;
   } catch (error) {
-    console.warn(`[Reader] ${label}: gọi Gemini thất bại.`, error instanceof Error ? error.message : error);
+    if (error instanceof GeminiProviderError) {
+      console.warn(`[Reader] ${label}: ${error.userMessage} (models: ${error.meta.attemptedModels.join(', ')})`);
+    } else {
+      console.warn(`[Reader] ${label}: gọi Gemini thất bại.`, error instanceof Error ? error.message : error);
+    }
     return null;
   }
 }
@@ -218,10 +320,29 @@ export async function readTextDocument(input: {
   const firstPassBatches: DocumentAtom[][] = [];
   const auditBatches: DocumentAtom[][] = [];
   let failedChunks = 0;
+  let chunksProcessed = 0;
+
+  // Ngan sach thoi gian cho TOAN BO ham nay — xem ReaderBudget o tren. Day la
+  // phong tuyen CUOI CUNG truoc khi Vercel (hoac bat ky platform serverless
+  // nao) tu tay giet function va lam mat het ket qua da co, thay vi de chinh
+  // ung dung nhan biet va dung lai co kiem soat.
+  const budget = new ReaderBudget(getReaderTotalBudgetMs());
+  const retryOverride = { maxRetriesPerModel: getReaderMaxRetriesPerModel() };
 
   // Tuan tu chu khong song song: chay song song nhieu chunk se dam thang vao
   // rate limit cua Gemini va bien mot tai lieu dai thanh mot chuoi 429.
   for (const chunk of chunks) {
+    if (!budget.hasTimeForAnotherCall()) {
+      const remaining = chunks.length - chunksProcessed;
+      warnings.push(
+        `Đã hết ngân sách thời gian sau khi xử lý ${chunksProcessed}/${chunks.length} phần — còn ${remaining} phần chưa được phân tích. Tăng AI_READER_TOTAL_BUDGET_MS, hoặc tách tài liệu thành các phần nhỏ hơn và tải lên riêng để phân tích đầy đủ.`,
+      );
+      console.warn(
+        `[Reader] "${input.fileName}": hết ngân sách thời gian sau ${chunksProcessed}/${chunks.length} chunk — dừng có kiểm soát thay vì để function bị nền tảng buộc dừng giữa chừng.`,
+      );
+      break;
+    }
+
     const label = `chunk ${chunk.index}/${chunk.total}`;
     const extracted = await extractAtoms(
       buildTextDocumentExtractionPrompt({
@@ -231,7 +352,9 @@ export async function readTextDocument(input: {
         chunkTotal: chunk.total,
       }),
       label,
+      { timeoutMs: budget.timeoutForNextCall(), ...retryOverride },
     );
+    chunksProcessed++;
 
     if (!extracted) {
       failedChunks++;
@@ -245,18 +368,28 @@ export async function readTextDocument(input: {
     }
     firstPassBatches.push(extracted.atoms);
 
+    // Audit pass CHI chay neu con du ngan sach cho no — bo qua co canh bao ro
+    // rang thay vi am tham chay va co the la nguyen nhan lam function het gio
+    // giua chung o MOT chunk sau nay.
     if (isReaderAuditPassEnabled()) {
-      const audit = await extractAtoms(
-        buildDocumentCompletenessAuditPrompt({
-          sourceLabel: input.fileName,
-          rawText: chunk.text,
-          existingAtoms: extracted.atoms.map((a) => ({ atom_id: a.atom_id, label: a.label })),
-          chunkIndex: chunk.index,
-          chunkTotal: chunk.total,
-        }),
-        `${label} audit`,
-      );
-      if (audit) auditBatches.push(audit.atoms);
+      if (!budget.hasTimeForAnotherCall()) {
+        warnings.push(
+          `Đã bỏ qua lượt audit độ đầy đủ cho phần ${chunk.index}/${chunk.total} vì sắp hết ngân sách thời gian.`,
+        );
+      } else {
+        const audit = await extractAtoms(
+          buildDocumentCompletenessAuditPrompt({
+            sourceLabel: input.fileName,
+            rawText: chunk.text,
+            existingAtoms: extracted.atoms.map((a) => ({ atom_id: a.atom_id, label: a.label })),
+            chunkIndex: chunk.index,
+            chunkTotal: chunk.total,
+          }),
+          `${label} audit`,
+          { timeoutMs: budget.timeoutForNextCall(), ...retryOverride },
+        );
+        if (audit) auditBatches.push(audit.atoms);
+      }
     }
   }
 
@@ -272,7 +405,10 @@ export async function readTextDocument(input: {
     atoms: merged.atoms,
     stats: {
       source_chars: input.text.trim().length,
-      chunks: chunks.length,
+      // chunks DA XU LY, khong phai tong so chunk du kien — neu ngan sach het
+      // giua chung, con so nay phai phan anh dung nhung gi THAT SU chay, con
+      // canh bao ben tren da neu ro tong so con thieu.
+      chunks: chunksProcessed,
       atoms_first_pass: firstPassCount,
       atoms_from_audit: Math.max(0, auditContribution),
       duplicates_removed: merged.duplicates_removed,

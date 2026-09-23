@@ -20,6 +20,24 @@ const BATCH_ITEM_BUDGET_MS = 50_000;
 // pointless to start — not a promise it'll finish, just a "don't bother" guard.
 const MIN_STEP_BUDGET_MS = 8_000;
 
+/**
+ * Timeout danh cho LAN GOI GEMINI CODEGEN duy nhat trong file nay, tinh tu
+ * ngan sach con lai cua item.
+ *
+ * Tach thanh ham rieng (thay vi 1 bieu thuc inline) de co the unit-test truc
+ * tiep phep tinh nay ma khong can dung toi Supabase/browser automation — day
+ * la CHINH XAC cong thuc da chan su co lap lai o Round 3 (parse route bi
+ * Vercel giet giua chung vi 1 lan goi Gemini tu do dung het
+ * GEMINI_REQUEST_TIMEOUT_MS mac dinh du ngan sach thuc te con rat it).
+ *
+ * Danh margin cho: parse JSON, kiem tra chat luong, ghi DB, VA cho buoc kiem
+ * tra ngan sach truoc khi Run (ngay sau buoc Generate) van con y nghia — neu
+ * khong, lan goi Gemini se "an" het phan ngan sach danh cho buoc Run.
+ */
+export function computeCodegenTimeoutMs(timeLeftMs: number): number {
+  return Math.min(50_000, Math.max(3_000, timeLeftMs - MIN_STEP_BUDGET_MS - 2_000));
+}
+
 export type ProcessBatchItemResult = {
   item_status: 'passed' | 'failed' | 'error' | 'skipped';
   run_id: string | null;
@@ -137,7 +155,21 @@ export async function processClaimedBatchItem(
         language: locale === 'vi' ? 'Tiếng Việt' : 'English',
       };
       const promptString = buildPlaywrightCodegenPrompt(promptInput);
-      const aiRawResult = await runAIAgent(promptString, 'playwright_codegen', buildPlaywrightResponseSchema());
+      // Ngan sach con lai PHAI duoc truyen xuong tan lan goi Gemini, khong chi
+      // dung o buoc "kiem tra truoc khi bat dau" (timeLeft() < MIN_STEP_BUDGET_MS
+      // o tren). Neu khong, mot lan goi VAN co the tu do dung het
+      // GEMINI_REQUEST_TIMEOUT_MS mac dinh (60s) du chi con 8s ngan sach — day
+      // CHINH LA loi da gay ra su co "Vercel Runtime Timeout Error" tren
+      // /api/ai/documents/parse, chi khac cho: o do la Reader lam mat atom, o
+      // day se lam ket qua Generate cua CA batch item bi giet giua chung va
+      // item mac ket o trang thai 'running' (khong co gi de Resume dung dan).
+      const aiRawResult = await runAIAgent(promptString, 'playwright_codegen', buildPlaywrightResponseSchema(), {
+        timeoutMs: computeCodegenTimeoutMs(timeLeft()),
+        // Uu tien thu qua HET cac model trong chain hon la kien tri retry 1
+        // model — voi ngan sach chi con vai chuc giay, co hoi thanh cong cao
+        // hon khi nhanh chong doi sang model ke tiep thay vi cho backoff+retry.
+        maxRetriesPerModel: 0,
+      });
 
       let rawJsonObject: Record<string, unknown> | null = null;
       if (typeof aiRawResult === 'string') {

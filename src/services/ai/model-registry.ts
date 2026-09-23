@@ -38,9 +38,17 @@ export const DEFAULT_MODEL_POOL = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemi
 
 export const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
 
-/** Gia tri mac dinh cho cac tham so resilience (deu ghi de duoc qua env). */
+/**
+ * Timeout goi Gemini o CAP DO UNG DUNG (khong phai HTTP). 120_000ms lam mac
+ * dinh la NGUY HIEM: no gan bang hoac vuot qua budget cua chinh serverless
+ * function goi no (vd maxDuration=120 tren mot so route). Mot attempt "an het"
+ * 120s co the tu no lam chet ca function truoc khi engine kip retry hay doi
+ * model — day chinh la nguyen nhan cua su co "Vercel Runtime Timeout Error"
+ * tren /api/ai/documents/parse. Ha xuong 60s: van du rong cho hau het cac tac
+ * vu JSON structured-output, nhung khong con chiem gan het budget cua 1 route
+ * maxDuration=120, va cho phep nhieu attempt/model hon trong cung budget.
 export const RESILIENCE_DEFAULTS = {
-  requestTimeoutMs: 120_000,
+  requestTimeoutMs: 60_000,
   maxRetriesPerModel: 2,
   backoffBaseMs: 1_000,
   backoffMaxMs: 8_000,

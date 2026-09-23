@@ -142,6 +142,15 @@ describe('model-registry', () => {
     expect(getResilienceConfig().maxRetriesPerModel).toBe(2);
   });
 
+  it('requestTimeoutMs mac dinh la 60000, KHONG con la 120000', () => {
+    // Su co thuc te ngay 22/9: mot route co maxDuration=120s (gan bang chinh
+    // GEMINI_REQUEST_TIMEOUT_MS cu la 120000ms) bi Vercel giet giua chung khi
+    // 1 model retry+doi model. Timeout MOI ATTEMPT khong duoc phep xap xi bang
+    // toan bo ngan sach cua ca function goi no — ha xuong 60s de con du cho
+    // nhieu attempt/model trong cung 1 budget hop ly (vd maxDuration=120-300s).
+    expect(getResilienceConfig().requestTimeoutMs).toBe(60_000);
+  });
+
   it('model embedding mac dinh la gemini-embedding-001', () => {
     expect(getEmbeddingModel()).toBe('gemini-embedding-001');
     process.env.AI_MODEL_EMBEDDING = 'gemini-embedding-custom';

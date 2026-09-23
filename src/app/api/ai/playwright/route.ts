@@ -10,7 +10,11 @@ import { uploadScriptToR2, isR2Configured } from '@/services/automation/r2-stora
 
 // Chạy browser (inspect/run) diễn ra ở /api/automation/*, không phải ở đây -
 // route này CHỈ gọi LLM để sinh code, giữ đúng nguyên tắc mỗi route 1 trách nhiệm.
-export const maxDuration = 120;
+// Nang tu 120 -> 300: 1 lan goi Gemini duy nhat van co the can toi da
+// GEMINI_REQUEST_TIMEOUT_MS moi attempt x so attempt x so model trong chain
+// khi gap 503 lien tuc (xem su co /api/ai/documents/parse cung loai). 120s la
+// bien an toan qua mong khi resilient engine duoc phep retry + doi model.
+export const maxDuration = 300;
 export const runtime = 'nodejs';
 
 /**
