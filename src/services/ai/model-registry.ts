@@ -47,6 +47,7 @@ export const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
  * tren /api/ai/documents/parse. Ha xuong 60s: van du rong cho hau het cac tac
  * vu JSON structured-output, nhung khong con chiem gan het budget cua 1 route
  * maxDuration=120, va cho phep nhieu attempt/model hon trong cung budget.
+ */
 export const RESILIENCE_DEFAULTS = {
   requestTimeoutMs: 60_000,
   maxRetriesPerModel: 2,

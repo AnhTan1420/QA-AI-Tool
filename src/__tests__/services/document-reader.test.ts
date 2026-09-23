@@ -147,19 +147,34 @@ describe('readTextDocument', () => {
   });
 
   it('một chunk lỗi KHÔNG làm hỏng cả tài liệu, nhưng được báo cáo rõ ràng', async () => {
-    const { fake } = client((_, n) => {
-      if (n === 2) throw Object.assign(new Error('[400 Bad Request] broken'), { status: 400 });
-      return null;
-    });
-    __setGeminiClientFactoryForTests(() => fake);
+    // Engine co y sang model ke tiep khi 1 model loi (khong phai auth). Neu de
+    // pool mac dinh 3 model, model du phong se CUU chunk loi va khong co chunk
+    // nao that bai. Ghim chain con dung 1 model de gia lap "chunk that bai
+    // tren TAT CA model" — day moi la tinh huong test nay muon kiem tra.
+    process.env.AI_MODEL_PRIMARY = 'only-model';
+    process.env.AI_MODEL_FALLBACK_1 = '';
+    process.env.AI_MODEL_FALLBACK_2 = '';
+    process.env.AI_MODEL_FALLBACK = '';
+    try {
+      const { fake } = client((_, n) => {
+        if (n === 2) throw Object.assign(new Error('[400 Bad Request] broken'), { status: 400 });
+        return null;
+      });
+      __setGeminiClientFactoryForTests(() => fake);
 
-    const result = await readTextDocument({ fileName: 'FS.md', text: longText });
+      const result = await readTextDocument({ fileName: 'FS.md', text: longText });
 
-    expect(result).not.toBeNull();
-    expect(result!.stats.failed_chunks).toBe(1);
-    expect(result!.warnings.some((w) => w.includes('2'))).toBe(true);
-    // Các chunk còn lại vẫn cho ra atom — không vứt bỏ toàn bộ tài liệu.
-    expect(result!.atoms.length).toBeGreaterThan(0);
+      expect(result).not.toBeNull();
+      expect(result!.stats.failed_chunks).toBe(1);
+      expect(result!.warnings.some((w) => w.includes('2'))).toBe(true);
+      // Các chunk còn lại vẫn cho ra atom — không vứt bỏ toàn bộ tài liệu.
+      expect(result!.atoms.length).toBeGreaterThan(0);
+    } finally {
+      delete process.env.AI_MODEL_PRIMARY;
+      delete process.env.AI_MODEL_FALLBACK_1;
+      delete process.env.AI_MODEL_FALLBACK_2;
+      delete process.env.AI_MODEL_FALLBACK;
+    }
   });
 
   it('cảnh báo khi tài liệu vượt trần số chunk', async () => {

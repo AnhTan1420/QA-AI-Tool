@@ -44,7 +44,7 @@ const FIGMA_API_BASE = 'https://api.figma.com/v1';
 function getFigmaMaxAtoms(): number {
   const raw = process.env.AI_FIGMA_MAX_ATOMS?.trim();
   const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isFinite(parsed) ? Math.min(20_000, Math.max(50, parsed)) : 2_000;
+  return Number.isFinite(parsed) ? Math.min(20_000, Math.max(10, parsed)) : 2_000;
 }
 const MAX_DEPTH = 32;
 

@@ -36,7 +36,7 @@ function readIntEnv(name: string, fallback: number, min: number, max: number): n
 
 /** Kich thuoc 1 chunk van ban gui cho Gemini (ky tu). */
 export function getReaderChunkChars(): number {
-  return readIntEnv('AI_READER_CHUNK_CHARS', 18_000, 4_000, 60_000);
+  return readIntEnv('AI_READER_CHUNK_CHARS', 18_000, 400, 60_000);
 }
 
 /** Phan chong lan giua 2 chunk lien tiep, de 1 rule bi cat doi khong mat. */
