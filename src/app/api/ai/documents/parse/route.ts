@@ -4,7 +4,12 @@ import { runDocumentVisionAgent } from '@/services/ai/provider';
 import { buildVisualDocumentExtractionPrompt } from '@/services/ai/prompts/document-extraction-agent';
 import { parseDocumentRequestSchema, documentExtractionResultSchema, type ParsedDocument } from '@/models/validators/document';
 import { extractDocxText, extractPdfText } from '@/services/documents/text-extractors';
-import { readTextDocument } from '@/services/documents/reader';
+import {
+  readTextDocument,
+  ReaderProviderUnavailableError,
+  type ReaderJobInfo,
+} from '@/services/documents/reader';
+import { GeminiProviderError } from '@/services/ai/errors';
 import { fetchAndParseFigmaFile } from '@/services/documents/figma-client';
 
 // Route nay chay Reader nhieu-luot (chunk + audit) cho tai lieu dai — co the
@@ -47,6 +52,135 @@ async function parseVisualDocument(
     summary: parsed.data.summary,
     atoms: parsed.data.atoms,
   };
+}
+
+const NDJSON_CONTENT_TYPE = 'application/x-ndjson';
+
+/** Client opt-in stream bang header `Accept: application/x-ndjson` (xem lib/documents/resumable-parse.ts). */
+function wantsNdjson(req: Request): boolean {
+  return (req.headers.get('accept') ?? '').includes(NDJSON_CONTENT_TYPE);
+}
+
+/**
+ * Phan loai loi cua Reader thanh { status, error, retryable } — DUNG CHUNG cho
+ * ca duong JSON lan duong stream, de hai duong khong bao 2 nguyen nhan khac nhau.
+ * Tra ve null neu khong phai loi da biet (de nguoi goi xu ly nhu loi chung).
+ */
+function classifyReaderError(error: unknown): { status: number; error: string; retryable: boolean } | null {
+  // Gemini khong kha dung tren MOI chunk (503/timeout tren tat ca model): su co
+  // tam thoi cua nha cung cap, khong phai loi file. Thu lai sau la duoc.
+  if (error instanceof ReaderProviderUnavailableError) {
+    return { status: 503, error: error.userMessage, retryable: true };
+  }
+  // Loi tu Gemini ma doi model khong cuu duoc (vd sai/thieu API key): noi that ra.
+  if (error instanceof GeminiProviderError) {
+    return { status: 502, error: error.userMessage, retryable: error.meta.lastKind !== 'auth' };
+  }
+  return null;
+}
+
+/**
+ * Thong tin job gui cho client. `checkpoint` CHI kem theo khi job dang do: client
+ * can no de resume neu lo mat cac su kien stream; job da xong thi khong can (tiet
+ * kiem vai tram KB).
+ */
+function publicJob(job: ReaderJobInfo) {
+  const { checkpoint, ...rest } = job;
+  return job.status === 'completed' ? rest : { ...rest, checkpoint };
+}
+
+function toParsedDocument(fileName: string, reader: NonNullable<Awaited<ReturnType<typeof readTextDocument>>>): ParsedDocument {
+  return {
+    id: randomUUID(),
+    source_type: 'document',
+    title: reader.title,
+    file_name: fileName,
+    summary: reader.summary,
+    atoms: reader.atoms,
+    // Provenance đi KÈM trong `data` (không phải trong một field `meta` anh em)
+    // vì client bóc đúng `data` ra khỏi envelope — đặt ngoài là mất thẳng.
+    reader_stats: reader.stats,
+    reader_warnings: reader.warnings,
+  };
+}
+
+function logReaderSummary(fileName: string, reader: NonNullable<Awaited<ReturnType<typeof readTextDocument>>>) {
+  console.info(
+    `[ai/documents/parse] "${fileName}": ${reader.stats.source_chars} ký tự → ${reader.stats.chunks} phần → ${reader.atoms.length} atom (pass 1: ${reader.stats.atoms_first_pass}, audit bổ sung: ${reader.stats.atoms_from_audit}, trùng lặp đã gộp: ${reader.stats.duplicates_removed}, phần lỗi: ${reader.stats.failed_chunks}, khôi phục từ checkpoint: ${reader.stats.resumed_chunks}, chuyển agent: ${reader.stats.agent_handoffs}, còn dở: ${reader.stats.pending_chunks}) — job ${reader.job.status}/${reader.job.stop_reason}`,
+  );
+}
+
+/**
+ * Duong STREAM (NDJSON, moi dong 1 su kien JSON): phat checkpoint NGAY khi tung
+ * chunk xong. Day la thu giu cho "force-stop" — neu Vercel giet function giua
+ * chung (Task timed out), ket noi dut nhung client DA nhan het cac checkpoint
+ * phat truoc do, nen lan goi ke tiep resume duoc thay vi mat sach cong doc.
+ *
+ * Su kien: progress | checkpoint | handoff | agent_demoted | agent_restored |
+ * result { data, job } | error { status, error, retryable }.
+ * Stream ket thuc KHONG co `result`/`error` = bi ngat -> client resume.
+ */
+function streamReaderResponse(input: {
+  fileName: string;
+  text: string;
+  resume: Parameters<typeof readTextDocument>[0]['resume'];
+}): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      let closed = false;
+      const emit = (event: Record<string, unknown>) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+        } catch {
+          closed = true; // client da ngat ket noi — bo qua, khong lam hong job
+        }
+      };
+
+      // Chay job ngoai `start()` de stream mo ngay, khong doi job xong moi bat dau gui.
+      void (async () => {
+        try {
+          const reader = await readTextDocument({
+            fileName: input.fileName,
+            text: input.text,
+            resume: input.resume,
+            onEvent: (event) => emit(event),
+          });
+          if (!reader) {
+            emit({ type: 'error', status: 502, error: 'AI không phân tích được tài liệu này. Vui lòng thử lại.', retryable: false });
+          } else {
+            logReaderSummary(input.fileName, reader);
+            emit({ type: 'result', success: true, data: toParsedDocument(input.fileName, reader), job: publicJob(reader.job) });
+          }
+        } catch (error) {
+          const known = classifyReaderError(error);
+          if (known) {
+            console.error(`[ai/documents/parse] "${input.fileName}": ${known.error}`);
+            emit({ type: 'error', ...known });
+          } else {
+            console.error('❌ Lỗi API Parse Document (stream):', error);
+            emit({ type: 'error', status: 500, error: error instanceof Error ? error.message : 'Có lỗi xảy ra khi phân tích tài liệu', retryable: false });
+          }
+        } finally {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            /* da dong */
+          }
+        }
+      })();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': `${NDJSON_CONTENT_TYPE}; charset=utf-8`,
+      'Cache-Control': 'no-store, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }
 
 /**
@@ -156,7 +290,27 @@ export async function POST(req: Request) {
     // Trước đây chỗ này gọi capText(rawText) và cắt thẳng ở ký tự thứ 24.000 —
     // mọi yêu cầu nằm sau đó không bao giờ trở thành atom, nên độ phủ "100%"
     // về sau chỉ là 100% của phần đầu tài liệu. Xem services/documents/reader.ts.
-    const reader = await readTextDocument({ fileName: input.file_name, text: rawText });
+    //
+    // Client dùng stream (Accept: application/x-ndjson) để nhận checkpoint từng chunk
+    // ngay khi có và resume được sau khi bị ngắt; client cũ vẫn nhận JSON như trước.
+    if (wantsNdjson(req)) {
+      return streamReaderResponse({ fileName: input.file_name, text: rawText, resume: input.resume });
+    }
+
+    let reader: Awaited<ReturnType<typeof readTextDocument>>;
+    try {
+      reader = await readTextDocument({ fileName: input.file_name, text: rawText, resume: input.resume });
+    } catch (error) {
+      const known = classifyReaderError(error);
+      if (known) {
+        console.error(`[ai/documents/parse] "${input.file_name}": ${known.error}`);
+        return NextResponse.json(
+          { success: false, error: known.error, retryable: known.retryable },
+          { status: known.status, ...(known.status === 503 ? { headers: { 'Retry-After': '30' } } : {}) },
+        );
+      }
+      throw error;
+    }
     if (!reader) {
       return NextResponse.json(
         { success: false, error: 'AI không phân tích được tài liệu này. Vui lòng thử lại.' },
@@ -164,23 +318,9 @@ export async function POST(req: Request) {
       );
     }
 
-    console.info(
-      `[ai/documents/parse] "${input.file_name}": ${reader.stats.source_chars} ký tự → ${reader.stats.chunks} phần → ${reader.atoms.length} atom (pass 1: ${reader.stats.atoms_first_pass}, audit bổ sung: ${reader.stats.atoms_from_audit}, trùng lặp đã gộp: ${reader.stats.duplicates_removed}, phần lỗi: ${reader.stats.failed_chunks})`,
-    );
-
-    const parsedDocument: ParsedDocument = {
-      id: randomUUID(),
-      source_type: 'document',
-      title: reader.title,
-      file_name: input.file_name,
-      summary: reader.summary,
-      atoms: reader.atoms,
-      // Provenance đi KÈM trong `data` (không phải trong một field `meta` anh em)
-      // vì client bóc đúng `data` ra khỏi envelope — đặt ngoài là mất thẳng.
-      reader_stats: reader.stats,
-      reader_warnings: reader.warnings,
-    };
-    return NextResponse.json({ success: true, data: parsedDocument });
+    logReaderSummary(input.file_name, reader);
+    const parsedDocument = toParsedDocument(input.file_name, reader);
+    return NextResponse.json({ success: true, data: parsedDocument, job: publicJob(reader.job) });
   } catch (error: any) {
     console.error('❌ Lỗi API Parse Document:', error);
     const message =

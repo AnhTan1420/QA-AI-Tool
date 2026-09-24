@@ -583,6 +583,13 @@ const vi = {
       hint: 'Đính kèm thiết kế Figma, tài liệu Markdown/FS/logic, sơ đồ ERD hoặc diagram — AI sẽ đọc và map từng phần tử vào test case.',
       chooseFile: 'Chọn file (.md, .txt, .pdf, .docx, ảnh, hoặc file export Figma)',
       parsing: 'Đang phân tích tài liệu...',
+      // Agent Fallback & Job Resumption — trạng thái đọc tài liệu dài, có tự tiếp tục.
+      readingProgress: (done: number, total: number) => `Đang phân tích tài liệu... đã xong ${done}/${total} phần`,
+      switchedModel: (from: string, to: string) => `Model chính (${from}) gặp sự cố — đã tự chuyển sang ${to} và đang đọc tiếp`,
+      resuming: (round: number, max: number, done: number, total: number) =>
+        `Gemini bị gián đoạn — đang tự động tiếp tục từ chỗ đã đọc (lần ${round}/${max}${total > 0 ? `, đã xong ${done}/${total} phần` : ''})...`,
+      giveUpWarning: (rounds: number, pending: number) =>
+        `Đã tự động thử tiếp tục ${rounds} lần nhưng còn ${pending} phần chưa đọc được (Gemini chưa phản hồi). Bạn có thể tải lại file sau ít phút để đọc phần còn thiếu.`,
       fileHint: 'Ảnh và PDF thuần hình (vd file export từ Figma) được AI đọc bằng Vision; PDF/DOCX/MD/TXT dạng văn bản được trích xuất và phân tích.',
       attachedCount: (count: number) => `${count} tài liệu đã đính kèm`,
       atomsSuffix: (count: number) => `${count} phần tử`,

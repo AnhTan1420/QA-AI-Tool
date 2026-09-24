@@ -19,6 +19,7 @@ import {
   createGeminiEmbedding,
   generateWithGeminiResilient,
   type GeminiCallResult,
+  type GeminiThinkingLevel,
   type VisionImageInput,
 } from './gemini';
 import type { AITask } from './model-registry';
@@ -51,6 +52,10 @@ export async function runGeminiTask<T>(options: {
    * lai, thay vi luon dung GEMINI_REQUEST_TIMEOUT_MS co dinh toan cuc. */
   timeoutMs?: number;
   maxRetriesPerModel?: number;
+  /** Gioi han thinking (Gemini 3.x) — xem GeminiCallOptions.thinkingLevel. */
+  thinkingLevel?: GeminiThinkingLevel;
+  /** false = khong thu lai cung model sau timeout — xem GeminiCallOptions.retryOnTimeout. */
+  retryOnTimeout?: boolean;
 }): Promise<GeminiCallResult<T>> {
   return generateWithGeminiResilient<T>({
     task: options.task,
@@ -64,6 +69,8 @@ export async function runGeminiTask<T>(options: {
     label: options.label,
     timeoutMs: options.timeoutMs,
     maxRetriesPerModel: options.maxRetriesPerModel,
+    thinkingLevel: options.thinkingLevel,
+    retryOnTimeout: options.retryOnTimeout,
   });
 }
 

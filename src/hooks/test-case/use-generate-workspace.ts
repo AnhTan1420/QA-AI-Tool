@@ -8,6 +8,7 @@ import type { ParsedDocument } from '@/models/validators/document';
 import type { DocumentCoverageResult } from '@/services/documents/coverage';
 import { useLanguage } from '@/lib/i18n/language-context';
 import { postJson } from '@/lib/api/client';
+import { parseDocumentResumable, type ResumeProgress } from '@/lib/documents/resumable-parse';
 import { exportCasesToExcel, downloadOldCasesTemplate as downloadTemplate, parseXlsxFile } from '@/lib/utils/test-case-excel';
 import { fileToBase64 } from '@/lib/utils/file-to-base64';
 import { extractDocxTextClientSide } from '@/lib/utils/docx-client-extract';
@@ -66,6 +67,8 @@ export function useGenerateWorkspace(projectId: string) {
   const [documents, setDocuments] = useState<ParsedDocument[]>([]);
   const [isParsingDocument, setIsParsingDocument] = useState(false);
   const [documentError, setDocumentError] = useState('');
+  // Trang thai "dang doc / dang tu dong tiep tuc" cua Reader (Agent Fallback & Job Resumption).
+  const [documentProgress, setDocumentProgress] = useState('');
   const [figmaUrl, setFigmaUrl] = useState('');
   const [figmaToken, setFigmaToken] = useState('');
   const [documentCoverage, setDocumentCoverage] = useState<DocumentCoverageResult | null>(null);
@@ -531,6 +534,7 @@ export function useGenerateWorkspace(projectId: string) {
    * visual-only (see app/api/ai/documents/parse/route.ts), so this ONE handler covers both a
    * text FS/PDF and a Figma-exported PDF without the UI needing to ask which kind it is. */
   async function handleDocumentFile(file: File) {
+    const dr = t.generateWorkspace.documentReader;
     setIsParsingDocument(true);
     setDocumentError('');
     try {
@@ -582,13 +586,35 @@ export function useGenerateWorkspace(projectId: string) {
         };
       }
 
-      const parsed = await postJson<ParsedDocument>('/api/ai/documents/parse', payload, t.generateWorkspace.errors.requestFailed);
+      // Tai lieu van ban (md/txt/pdf/docx) di qua vong TU DONG TIEP TUC: server stream checkpoint
+      // tung chunk va tu chuyen model du phong khi model chinh loi; neu ket noi bi ngat (function
+      // bi giet, mat mang) hoac job dang do, client gui lai checkpoint de doc TIEP thay vi doc lai
+      // tu dau. Anh/diagram la 1 lan goi Vision duy nhat nen giu nguyen postJson.
+      const parsed =
+        payload.source_type === 'document'
+          ? await parseDocumentResumable(payload, {
+              requestFailedMessage: t.generateWorkspace.errors.requestFailed('/api/ai/documents/parse'),
+              onProgress: (progress) => setDocumentProgress(describeDocumentProgress(progress)),
+              giveUpWarning: dr.giveUpWarning,
+            })
+          : await postJson<ParsedDocument>('/api/ai/documents/parse', payload, t.generateWorkspace.errors.requestFailed);
       setDocuments((current) => [...current, parsed]);
     } catch (err) {
       setDocumentError(err instanceof Error ? err.message : t.generateWorkspace.errors.documentParseFailed);
     } finally {
       setIsParsingDocument(false);
+      setDocumentProgress('');
     }
+  }
+
+  /** Chuyen su kien tien do cua vong tu-dong-tiep-tuc thanh cau chu hien cho nguoi dung. */
+  function describeDocumentProgress(progress: ResumeProgress): string {
+    const dr = t.generateWorkspace.documentReader;
+    if (progress.handoff) return dr.switchedModel(progress.handoff.from, progress.handoff.to);
+    if (progress.kind === 'resuming') {
+      return dr.resuming(progress.round, progress.maxRounds, progress.completed, progress.total);
+    }
+    return progress.total > 0 ? dr.readingProgress(progress.completed, progress.total) : '';
   }
 
   /** Throws a friendly, translated error BEFORE reading/encoding the file if it's too large
@@ -686,7 +712,7 @@ export function useGenerateWorkspace(projectId: string) {
     isRetrievingRagContext, retrievedRagCount,
 
     // AI Document Reader (Figma / Markdown / logic document / FS / ERD / diagram)
-    documents, isParsingDocument, documentError, documentCoverage,
+    documents, isParsingDocument, documentError, documentProgress, documentCoverage,
     figmaUrl, setFigmaUrl, figmaToken, setFigmaToken,
     handleDocumentFile, handleFigmaImport, removeDocument,
 

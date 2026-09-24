@@ -34,6 +34,7 @@ import {
   GeminiProviderError,
   GeminiTimeoutError,
   GeminiTruncatedResponseError,
+  isTimeoutError,
   type GeminiErrorKind,
 } from './errors';
 import {
@@ -46,6 +47,19 @@ import {
 } from './model-registry';
 
 export type VisionImageInput = { mimeType: string; base64Data: string };
+
+/**
+ * Muc suy nghi (thinking) cua ho Gemini 3.x. CHI co 'low' | 'medium' | 'high':
+ * KHONG bao gio dung 'minimal' o day — theo tai lieu Gemini API, 'minimal' tra
+ * LOI o Gemini 3.7/3.8 Flash va 3.1 Pro, nen mot chain co model do se hong
+ * ngay attempt dau tien. 'low' duoc moi model text Gemini 3.x ho tro.
+ */
+export type GeminiThinkingLevel = 'low' | 'medium' | 'high';
+
+/** Ho Gemini 2.5 dung thinkingBudget (khong co thinkingLevel) nen chi ap dung cho 3.x. */
+function supportsThinkingLevel(model: string): boolean {
+  return /^gemini-3/i.test(model);
+}
 
 // ── Client adapter ─────────────────────────────────────────────────────────
 // Interface toi thieu de (a) khong phu thuoc chi tiet kieu cua SDK trong logic
@@ -150,6 +164,7 @@ async function callGeminiOnce(
     temperature: number;
     maxOutputTokens: number;
     timeoutMs: number;
+    thinkingLevel?: GeminiThinkingLevel;
   },
 ): Promise<unknown> {
   const controller = new AbortController();
@@ -167,6 +182,10 @@ async function callGeminiOnce(
         responseMimeType: 'application/json',
         abortSignal: controller.signal,
         ...(opts.responseSchema ? { responseSchema: opts.responseSchema } : {}),
+        // SDK dung enum chuoi IN HOA (ThinkingLevel.LOW = "LOW").
+        ...(opts.thinkingLevel
+          ? { thinkingConfig: { thinkingLevel: opts.thinkingLevel.toUpperCase() } }
+          : {}),
       },
     });
 
@@ -215,6 +234,20 @@ export type GeminiCallOptions<T> = {
   maxRetriesPerModel?: number;
   /** Cho phep thu lai KHONG kem schema khi model tu choi schema. Mac dinh: true. */
   allowSchemaDegradation?: boolean;
+  /**
+   * Gioi han thinking cho model Gemini 3.x. Bo qua -> dung mac dinh cua model
+   * (gemini-3.5-flash mac dinh 'medium', kha cham voi tac vu trich xuat co cau
+   * truc). Model khong ho tro (vd 2.5) tu dong duoc bo qua; neu API van tu choi
+   * thi engine thu lai CUNG model khong kem thinkingConfig.
+   */
+  thinkingLevel?: GeminiThinkingLevel;
+  /**
+   * Co thu lai tren CUNG model sau khi bi TIMEOUT hay khong. Mac dinh: true.
+   * Dat false khi caller dang chay duoi ngan sach thoi gian chat: timeout o T
+   * giay thu lai voi cung T gan nhu chac chan timeout lai, tuc la dot them T
+   * giay de nhan cung ket qua thay vi sang ngay model ke tiep.
+   */
+  retryOnTimeout?: boolean;
   /**
    * Validate o MUC UNG DUNG. BAT BUOC o moi call path nghiep vu: HTTP 200
    * KHONG co nghia la du lieu dung. Nem loi (bat ky loai nao) neu khong hop le
@@ -284,6 +317,7 @@ export async function generateWithGeminiResilient<T = unknown>(
     console.info(`[Gemini] ${scope} using ${model}`);
 
     let useSchema = Boolean(options.responseSchema);
+    let useThinking = Boolean(options.thinkingLevel) && supportsThinkingLevel(model);
     let degradedForThisModel = false;
     let attempt = 0;
     let moveToNextModel = false;
@@ -299,6 +333,7 @@ export async function generateWithGeminiResilient<T = unknown>(
           temperature: options.temperature ?? DEFAULT_TEMPERATURE,
           maxOutputTokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
           timeoutMs,
+          thinkingLevel: useThinking ? options.thinkingLevel : undefined,
         });
 
         // NEVER TRUST AI OUTPUT: HTTP 200 chi moi la dieu kien can.
@@ -355,6 +390,18 @@ export async function generateWithGeminiResilient<T = unknown>(
           continue;
         }
 
+        // (2b) Model tu choi thinkingConfig (400 nhac toi "thinking") -> thu lai
+        //      CUNG model, bo thinkingConfig. Khong tinh vao quota retry. Day la
+        //      lop bao ve de mot model moi/la khong lam hong ca chain chi vi ta
+        //      gui mot tham so toi uu toc do.
+        if (useThinking && status === 400 && /thinking/i.test(error instanceof Error ? error.message : '')) {
+          console.warn(
+            `[Gemini] ${scope} model ${model} rejected thinkingConfig (${describeErrorForLog(error)}) — retrying without it`,
+          );
+          useThinking = false;
+          continue;
+        }
+
         // (3) Model khong ton tai / khong kha dung -> sang model ke tiep ngay.
         if (lastKind === 'model_unavailable') {
           console.warn(`[Gemini] ${scope} model ${model} unavailable (${describeErrorForLog(error)})`);
@@ -364,7 +411,8 @@ export async function generateWithGeminiResilient<T = unknown>(
 
         // (4) Loi tam thoi HOAC phan hoi hong -> retry cung model neu con quota.
         const retryable = lastKind === 'transient' || lastKind === 'bad_response';
-        if (retryable && attempt < maxRetries) {
+        const skipRetryForTimeout = options.retryOnTimeout === false && isTimeoutError(error);
+        if (retryable && !skipRetryForTimeout && attempt < maxRetries) {
           attempt++;
           const waitMs = computeBackoffMs(attempt - 1, config.backoffBaseMs, config.backoffMaxMs);
           console.warn(
@@ -377,7 +425,7 @@ export async function generateWithGeminiResilient<T = unknown>(
 
         // (5) Het quota retry hoac loi khong retry duoc -> model ke tiep.
         console.warn(
-          `[Gemini] ${scope} ${model} failed with ${describeErrorForLog(error)}${retryable ? ' after retries' : ''}`,
+          `[Gemini] ${scope} ${model} failed with ${describeErrorForLog(error)}${retryable && attempt > 0 ? ' after retries' : ''}`,
         );
         moveToNextModel = true;
       }

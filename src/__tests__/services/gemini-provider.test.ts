@@ -450,3 +450,121 @@ describe('xử lý phản hồi bị cắt cụt (không im lặng chấp nhận
     expect(result.truncated).toBe(false);
   });
 });
+
+describe('thinkingLevel + retryOnTimeout', () => {
+  beforeEach(() => {
+    process.env.GOOGLE_GEMINI_API_KEY = 'test-key';
+    process.env.AI_MODEL_PRIMARY = 'gemini-3.5-flash';
+    process.env.AI_MODEL_FALLBACK_1 = 'gemini-2.5-flash';
+    process.env.AI_MODEL_FALLBACK_2 = '';
+    process.env.AI_MODEL_FALLBACK = '';
+    delete process.env.AI_MODEL_GENERATION;
+    process.env.GEMINI_BACKOFF_BASE_MS = '0';
+    process.env.GEMINI_MAX_RETRIES_PER_MODEL = '2';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    __setGeminiClientFactoryForTests(null);
+    delete process.env.AI_MODEL_PRIMARY;
+    delete process.env.AI_MODEL_FALLBACK_1;
+    delete process.env.AI_MODEL_FALLBACK_2;
+    vi.restoreAllMocks();
+  });
+
+  const timeoutError = () => Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' });
+
+  function recordingClient(script: Script) {
+    const calls: { model: string; config: Record<string, unknown> }[] = [];
+    let index = 0;
+    const client: GeminiLikeClient = {
+      models: {
+        generateContent: async (args) => {
+          calls.push({ model: args.model, config: args.config });
+          const step = script[Math.min(index, script.length - 1)];
+          index++;
+          if (step.kind === 'throw') throw step.error;
+          return { text: step.text };
+        },
+        embedContent: async () => ({ embeddings: [{ values: [0] }] }),
+      },
+    };
+    return { client, calls };
+  }
+
+  const base = { task: 'document_extraction' as const, systemPrompt: 's', userPrompt: 'u' };
+
+  it('gửi thinkingConfig (IN HOA) cho model 3.x và KHÔNG gửi cho model 2.5 (dùng thinkingBudget)', async () => {
+    const { client, calls } = recordingClient([
+      { kind: 'throw', error: httpError(404, 'model not found') },
+      { kind: 'ok', text: OK_JSON },
+    ]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    await generateWithGeminiResilient({ ...base, thinkingLevel: 'low' });
+
+    expect(calls[0].model).toBe('gemini-3.5-flash');
+    expect(calls[0].config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
+    expect(calls[1].model).toBe('gemini-2.5-flash');
+    expect('thinkingConfig' in calls[1].config).toBe(false);
+  });
+
+  it('không truyền thinkingLevel -> không gửi thinkingConfig (hành vi cũ giữ nguyên cho mọi caller khác)', async () => {
+    const { client, calls } = recordingClient([{ kind: 'ok', text: OK_JSON }]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    await generateWithGeminiResilient(base);
+    expect('thinkingConfig' in calls[0].config).toBe(false);
+  });
+
+  it('model từ chối thinkingConfig (400) -> thử lại CÙNG model không kèm thinkingConfig, không đổi model', async () => {
+    const { client, calls } = recordingClient([
+      { kind: 'throw', error: httpError(400, 'Thinking level "low" is not supported for this model') },
+      { kind: 'ok', text: OK_JSON },
+    ]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    const result = await generateWithGeminiResilient({ ...base, thinkingLevel: 'low' });
+
+    expect(result.model).toBe('gemini-3.5-flash');
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.5-flash', 'gemini-3.5-flash']);
+    expect('thinkingConfig' in calls[1].config).toBe(false);
+  });
+
+  it('mặc định VẪN retry cùng model sau timeout (không đổi hành vi của các caller khác)', async () => {
+    const { client, calls } = recordingClient([
+      { kind: 'throw', error: timeoutError() },
+      { kind: 'ok', text: OK_JSON },
+    ]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    await generateWithGeminiResilient(base);
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.5-flash', 'gemini-3.5-flash']);
+  });
+
+  it('retryOnTimeout=false: timeout -> sang NGAY model kế tiếp, không retry cùng model', async () => {
+    const { client, calls } = recordingClient([
+      { kind: 'throw', error: timeoutError() },
+      { kind: 'ok', text: OK_JSON },
+    ]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    const result = await generateWithGeminiResilient({ ...base, retryOnTimeout: false });
+
+    expect(result.model).toBe('gemini-2.5-flash');
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.5-flash', 'gemini-2.5-flash']);
+  });
+
+  it('retryOnTimeout=false KHÔNG ảnh hưởng 503: vẫn retry cùng model', async () => {
+    const { client, calls } = recordingClient([
+      { kind: 'throw', error: httpError(503, 'Service Unavailable') },
+      { kind: 'ok', text: OK_JSON },
+    ]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    await generateWithGeminiResilient({ ...base, retryOnTimeout: false });
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.5-flash', 'gemini-3.5-flash']);
+  });
+});

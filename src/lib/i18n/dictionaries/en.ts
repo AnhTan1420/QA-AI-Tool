@@ -584,6 +584,13 @@ const en: Dictionary = {
       hint: 'Attach a Figma design, a Markdown/FS/logic document, an ERD, or a diagram — the AI reads it and maps every element to a test case.',
       chooseFile: 'Choose a file (.md, .txt, .pdf, .docx, image, or Figma export)',
       parsing: 'Analyzing document...',
+      // Agent Fallback & Job Resumption — status while reading a long document, with auto-resume.
+      readingProgress: (done: number, total: number) => `Analyzing document... ${done}/${total} parts done`,
+      switchedModel: (from: string, to: string) => `Primary model (${from}) had a problem — switched to ${to} and continuing`,
+      resuming: (round: number, max: number, done: number, total: number) =>
+        `Gemini was interrupted — automatically resuming from where it left off (attempt ${round}/${max}${total > 0 ? `, ${done}/${total} parts done` : ''})...`,
+      giveUpWarning: (rounds: number, pending: number) =>
+        `Automatically retried ${rounds} times but ${pending} part(s) could not be read yet (Gemini did not respond). Re-upload the file in a few minutes to read the missing parts.`,
       fileHint: 'Images and visual-only PDFs (e.g. a Figma export) are read via AI Vision; text PDF/DOCX/MD/TXT are extracted and analyzed.',
       attachedCount: (count: number) => `${count} document(s) attached`,
       atomsSuffix: (count: number) => `${count} atoms`,

@@ -242,6 +242,18 @@ export class GeminiProviderError extends Error {
   }
 }
 
+/**
+ * true khi loi la do QUA THOI GIAN CHO (timeout cua chinh ta, hoac AbortError do
+ * abortSignal cua SDK). Tach rieng khoi 'transient' chung chung vi 1 request bi
+ * timeout o T giay ma thu lai voi CUNG timeout T gan nhu chac chan timeout lai —
+ * khac han 503/429, la loi tuc thoi that su va thu lai thuong qua duoc.
+ */
+export function isTimeoutError(error: unknown): boolean {
+  if (error instanceof GeminiTimeoutError) return true;
+  const name = (error as { name?: unknown } | null)?.name;
+  return name === 'AbortError' || name === 'TimeoutError';
+}
+
 export function classifyGeminiError(error: unknown): GeminiErrorKind {
   if (error instanceof GeminiTruncatedResponseError) return 'bad_response';
   if (error instanceof GeminiBadResponseError) return 'bad_response';

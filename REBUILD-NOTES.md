@@ -364,3 +364,84 @@ This was intentionally the smallest safe change: the existing budget architectur
 ### Verification status
 
 Same disclosed limitation as Rounds 1 and 2: no network, no `node_modules`, so `typecheck`/`lint`/`test`/`build` have not executed here. This round I additionally ran a corrected static scanner for the specific bug class that broke the Round 2 build (a matched pair of backticks used as markdown emphasis inside a JS template literal) across all 179 files, including test files and originally-untouched files — zero instances remain anywhere in `src/`. Brace/JSX balance and import-path resolution were re-verified clean after all Round 3 edits.
+
+---
+
+## 9. Round 4 — Runtime incident 23/9: every chunk failed, UI said "AI không phân tích được tài liệu này"
+
+**Symptom** (Vercel runtime log): 62k-char DOCX → 4 chunks. Each chunk: `gemini-3.5-flash` 503 (×2) → `gemini-3.5-flash-lite` aborted at exactly 30s (×2) → exhausted. ~63s per chunk, run one after another, 14:33:46 → 14:38:01 (~255s of the 260s budget). Zero atoms; the route returned a generic 502.
+
+### Root causes
+1. **`AI_READER_REQUEST_TIMEOUT_MS` default (30s) was below normal latency.** Round 3 recorded a *healthy* chunk at ~48s, so the fallback model's calls were aborted mid-flight even when the model was fine — and the retry reused the same 30s.
+2. **A timeout was retried on the same model.** Same request + same timeout ⇒ same result; it only burned another full timeout.
+3. **Sequential chunks, no circuit breaker.** Chunk 2–4 replayed chunk 1's entire failure chain. Separately, with the audit pass on (default) a 4-chunk doc is ~8 sequential 30–50s calls — over the 260s budget even when Gemini is healthy.
+4. **No thinking control.** `gemini-3.5-flash` defaults to `medium` thinking, which is wasted latency for mechanical extraction.
+5. **Wrong error surfaced.** "Gemini down" and "no atoms found" both became the same 502 message.
+
+### Fixes
+- `reader.ts`: default per-attempt timeout 30s → **60s**; chunks now run through a bounded worker pool (**`AI_READER_CONCURRENCY`**, default 3, `1` = old sequential behaviour), merged in chunk order; **circuit breaker** stops starting new chunks after 2 consecutive Gemini-unavailable failures (3 once any chunk has succeeded), keeping atoms already read; new `ReaderProviderUnavailableError` when *every* attempted chunk failed because of Gemini.
+- `gemini.ts` / `provider.ts`: new `retryOnTimeout` option (reader sets `false`; default unchanged for all other callers) and `thinkingLevel` option. Sent as `thinkingConfig.thinkingLevel` (uppercase enum) to `gemini-3*` models only; if the API rejects it with a 400 mentioning "thinking", the engine retries the same model without it. Reader default `low` via **`AI_READER_THINKING_LEVEL`** (`low|medium|high|default`). `minimal` is deliberately unsupported: per the Gemini docs it errors on 3.7/3.8 Flash and 3.1 Pro.
+- `errors.ts`: `isTimeoutError()`.
+- `/api/ai/documents/parse`: returns **503** + `retryable: true` + `Retry-After` and an accurate message when Gemini is unavailable; a real "no atoms" result is still 502.
+
+### New / changed environment variables
+```
+AI_READER_CONCURRENCY=3            # NEW  chunks read in parallel (1-8); 1 = sequential
+AI_READER_THINKING_LEVEL=low       # NEW  low|medium|high|default (default = model's own)
+AI_READER_REQUEST_TIMEOUT_MS=60000 # was 30000
+```
+
+### Not fixable in code
+The deployed chain had only two models (`AI_MODEL_PRIMARY`, `AI_MODEL_FALLBACK_1`), both from the 3.5 family, so one capacity problem took out both. Set `AI_MODEL_FALLBACK_2` to a model from a different generation.
+
+---
+
+## 10. Round 5 — Agent Fallback & Job Resumption
+
+**Requirement:** if the primary model (`gemini-3.5-flash`) fails or is force-stopped, the workflow fails over to a secondary agent (`gemini-3.5-flash-lite`), which picks up the previous state, resumes, and continues until the task is completed.
+
+### Why the existing per-call fallback wasn't enough
+`generateWithGeminiResilient` already falls back model-by-model *within one call*, but each call is stateless: every step re-tried the sick primary first (paying its failure cost again), the secondary always restarted from scratch, and a force-stop (Vercel "Task timed out", crash, deploy) discarded everything.
+
+### Model
+| Concept | In code |
+|---|---|
+| **Step** | one document chunk, `id = c{n}`, with `hash = sha256(promptVersion, fileName, n/total, chunkText)[:16]` |
+| **Agent** | one model from `getModelChain('document_extraction')`; `[0]` = primary, `[1]` = secondary … |
+| **State** | `{ extracted?, audit? }` — phase 1 (extract atoms) and phase 2 (completeness audit). Partial state is what gets handed over |
+
+`services/ai/resumable-job.ts` is a generic, I/O-free runner (no Gemini/document knowledge). `services/documents/reader.ts` is its first consumer; the coverage-repair and generation loops can adopt it the same way.
+
+### Behaviour
+1. **Failover with state handoff.** An agent that fails (503, timeout, crash — anything except auth) is replaced by the next one *for that same step*. If it had finished phase 1 and died in the audit, the next agent receives phase 1's atoms via `ctx.previous` and runs **only the audit**. A truncated phase-1 response is kept and continued through the audit prompt (which takes the existing atoms) instead of being discarded.
+2. **Health tracking.** An agent failing `AI_AGENT_DEMOTE_AFTER` (default 2) steps in a row is demoted: later steps go straight to the secondary instead of paying the primary's failure cost again. After `AI_AGENT_COOLDOWN_MS` (default 60s) it is probed again (failback); one more failure re-demotes it immediately. When *every* agent is demoted the job stops starting new steps and returns what it has (`stop_reason: agents_unavailable`). This replaces the Round-4 circuit breaker; the old "3 failures once a chunk has succeeded" nuance is gone in favour of this single rule.
+3. **Checkpoints.** After every step *and* after phase 1 of a step, the runner emits `{hash, complete, agent, state}`. Completed steps are never re-run; a partial step continues from its saved phase.
+4. **Auth errors** (bad/missing key) stop the job immediately and are surfaced (502, not retryable) — switching models cannot help.
+
+### Surviving a force-stop
+The parse route can stream (`Accept: application/x-ndjson`). Each line is one JSON event:
+```
+progress {completed,total} | checkpoint {step_id,record} | handoff {step_id,from,to,reason,carried_state}
+agent_demoted {agent} | agent_restored {agent}
+result {data, job}          # job.checkpoint included only when job.status = 'partial'
+error {status,error,retryable}
+```
+A stream that ends with neither `result` nor `error` means the function was killed or the connection dropped. Because checkpoints were emitted as they happened, the client already holds every completed chunk.
+
+`lib/documents/resumable-parse.ts` (used by `handleDocumentFile` for md/txt/pdf/docx) POSTs again with `resume` = accumulated checkpoint, up to 4 rounds, with backoff (0.5s after a budget stop, 3s→20s when Gemini is down). If it still can't finish it returns the **partial** document plus a warning rather than throwing away the work; it only throws when nothing was read. 4xx (validation, 413) and non-retryable errors are never retried.
+
+`resume` is untrusted client input: validated by `readerCheckpointSchema` (strict shape, ≤200 steps, ≤6000 atoms) and every step's `hash` is recomputed server-side from the real content, so a checkpoint for a different document, file name, chunking config or prompt version is silently discarded.
+
+Old clients keep working: without the `Accept` header the route returns the same `{success, data}` JSON (plus `job`).
+
+### Env vars (new in this round)
+```
+AI_AGENT_DEMOTE_AFTER=2        # consecutive failures before an agent is skipped for the rest of the run (1-10)
+AI_AGENT_COOLDOWN_MS=60000     # how long before a demoted agent is probed again (5000-600000)
+```
+Related, from Round 4: `AI_READER_CONCURRENCY`, `AI_READER_THINKING_LEVEL`, `AI_READER_REQUEST_TIMEOUT_MS`.
+
+### Limits (deliberate)
+- Checkpoints live in the client's memory for the duration of one upload; a page reload mid-upload starts over. There is no server-side job table, so no migration is needed and the public `/projects/demo` sandbox (no login) works.
+- Only the document Reader is resumable so far. Generation/enhance/coverage-repair still use the per-call fallback.
+- A killed function loses at most the chunk(s) in flight, never completed ones.

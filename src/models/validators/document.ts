@@ -115,6 +115,14 @@ export const documentReaderStatsSchema = z.object({
   atoms_from_audit: z.number(),
   duplicates_removed: z.number(),
   failed_chunks: z.number(),
+  // Agent Fallback & Job Resumption (services/ai/resumable-job.ts). Optional de
+  // document da luu / gui tu client cu van hop le.
+  /** So chunk duoc KHOI PHUC tu checkpoint (khong phai goi lai Gemini). */
+  resumed_chunks: z.number().optional(),
+  /** So lan chuyen agent (model chinh -> du phong) trong lan chay nay. */
+  agent_handoffs: z.number().optional(),
+  /** So chunk chua hoan tat (se duoc tiep tuc khi resume). */
+  pending_chunks: z.number().optional(),
 });
 export type DocumentReaderStats = z.infer<typeof documentReaderStatsSchema>;
 
@@ -130,6 +138,67 @@ export const parsedDocumentSchema = z.object({
 });
 
 export type ParsedDocument = z.infer<typeof parsedDocumentSchema>;
+
+// ============================================================================
+// CHECKPOINT cua Reader — Agent Fallback & Job Resumption.
+// ----------------------------------------------------------------------------
+// Sau MOI chunk (va sau moi pha cua chunk) server phat 1 ban ghi checkpoint;
+// client giu chung va gui lai o lan goi sau (`resume`) neu lan truoc bi ngat
+// (Gemini sap, het ngan sach, function bi nen tang giet). Vi `resume` den tu
+// CLIENT nen no la du lieu KHONG TIN CAY — validate chat + gioi han kich thuoc
+// nhu moi input khac; `hash` cua tung chunk lai duoc server tinh lai tu noi
+// dung that (xem services/documents/reader.ts) nen checkpoint cua tai lieu
+// khac / cau hinh khac bi loai tu dong.
+// ============================================================================
+
+const checkpointAtomsSchema = z.array(documentAtomSchema).max(1500);
+
+export const readerChunkStateSchema = z.object({
+  /** Ket qua pha 1 (trich atom). Co the la ban DO neu `truncated`. */
+  extracted: z
+    .object({
+      title: z.string().max(500).optional(),
+      summary: z.string().max(4000).optional(),
+      atoms: checkpointAtomsSchema,
+      truncated: z.boolean().optional(),
+    })
+    .optional(),
+  /** Ket qua pha 2 (audit / tiep tuc phan con thieu). */
+  audit: checkpointAtomsSchema.optional(),
+});
+export type ReaderChunkState = z.infer<typeof readerChunkStateSchema>;
+
+export const readerStepRecordSchema = z.object({
+  hash: z.string().regex(/^[0-9a-f]{16}$/),
+  complete: z.boolean(),
+  agent: z.string().max(120).optional(),
+  state: readerChunkStateSchema.optional(),
+});
+export type ReaderStepRecord = z.infer<typeof readerStepRecordSchema>;
+
+const MAX_CHECKPOINT_STEPS = 200;
+const MAX_CHECKPOINT_ATOMS = 6000;
+
+export const readerCheckpointSchema = z
+  .object({
+    v: z.literal(1),
+    steps: z.record(z.string().regex(/^c\d{1,3}$/), readerStepRecordSchema),
+  })
+  .superRefine((value, ctx) => {
+    const records = Object.values(value.steps);
+    if (records.length > MAX_CHECKPOINT_STEPS) {
+      ctx.addIssue({ code: 'custom', message: `Checkpoint có quá nhiều phần (tối đa ${MAX_CHECKPOINT_STEPS}).` });
+      return;
+    }
+    const atoms = records.reduce(
+      (n, r) => n + (r.state?.extracted?.atoms.length ?? 0) + (r.state?.audit?.length ?? 0),
+      0,
+    );
+    if (atoms > MAX_CHECKPOINT_ATOMS) {
+      ctx.addIssue({ code: 'custom', message: `Checkpoint có quá nhiều atom (tối đa ${MAX_CHECKPOINT_ATOMS}).` });
+    }
+  });
+export type ReaderCheckpoint = z.infer<typeof readerCheckpointSchema>;
 
 // ── Output THO tu Document Extraction Agent (chua co id/source_type, server se
 // gan sau khi validate) — dung cho ca nhanh text (Markdown/FS/logic doc/PDF/DOCX)
@@ -152,6 +221,8 @@ export const parseTextDocumentRequestSchema = z.object({
   file_format: z.enum(['text', 'markdown', 'pdf', 'docx']),
   content: z.string().min(1).optional(),
   data_base64: base64UploadSchema.optional(),
+  // Checkpoint tu lan doc truoc bi ngat — xem readerCheckpointSchema.
+  resume: readerCheckpointSchema.optional(),
 });
 export type ParseTextDocumentRequest = z.infer<typeof parseTextDocumentRequestSchema>;
 

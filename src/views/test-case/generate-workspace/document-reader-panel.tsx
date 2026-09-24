@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Upload, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload, AlertTriangle, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
 import { SCROLLBAR } from './shared';
 import { StepNumber, FileDropzone, sourceTypeIcon } from './workspace-ui';
 import type { GenerateWorkspaceState } from '@/hooks/test-case/use-generate-workspace';
@@ -49,6 +49,13 @@ export function DocumentReaderPanel({ workspace }: { workspace: GenerateWorkspac
           disabled={workspace.isParsingDocument}
         />
       </div>
+
+      {workspace.isParsingDocument && workspace.documentProgress && (
+        <p role="status" aria-live="polite" className="mt-2 flex items-center gap-1.5 text-xs font-medium text-brand-600">
+          <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+          {workspace.documentProgress}
+        </p>
+      )}
 
       {workspace.documentError && (
         <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-danger-600">
