@@ -2,7 +2,16 @@ import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { runGeminiTask } from '@/services/ai/provider';
 import { GeminiProviderError } from '@/services/ai/errors';
-import { buildGenerationPrompt } from '@/services/ai/prompts/generation-agent';
+import {
+  buildGenerationPrompt,
+  capDocumentAtomsForInitialGeneration,
+} from '@/services/ai/prompts/generation-agent';
+import {
+  getGenerationCategoryFloorCap,
+  getGenerationInitialAtomCap,
+  getGenerationRequestTimeoutMs,
+} from '@/services/ai/model-registry';
+import { countAtoms } from '@/services/ai/source-context';
 import { buildGenerationResponseSchema } from '@/services/ai/prompts/generation-response-schema';
 import {
   generateRequestSchema,
@@ -50,8 +59,24 @@ export async function POST(req: Request) {
 
     // 1) Validate INPUT từ client trước khi xử lý.
     const input = generateRequestSchema.parse(rawBody);
+    // `documents` (DAY DU, KHONG cat) la nguon su that cho coverage/repair/validate
+    // ben duoi. `initialDocuments` (co the bi cat bot atom) CHI dung cho PROMPT
+    // GOI DAU TIEN — xem comment o capDocumentAtomsForInitialGeneration va su co
+    // /api/ai/generate ngay 24/9 (429 roi timeout lap lai 3 lan, ~180s, that bai
+    // hoan toan: 1 lan goi duoc yeu cau gong ganh QUA NHIEU atom + category CUNG
+    // LUC, vuot ca tran maxOutputTokens lan thoi gian hop ly cho 1 request).
     const documents = input.document_context ?? [];
     const issuesFromTruncation: SemanticIssue[] = [];
+
+    const initialAtomCap = getGenerationInitialAtomCap(input.detail_level);
+    const initialDocuments = capDocumentAtomsForInitialGeneration(documents, initialAtomCap);
+    const totalAtoms = countAtoms(documents);
+    const includedAtoms = countAtoms(initialDocuments);
+    if (includedAtoms < totalAtoms) {
+      console.info(
+        `[ai/generate] lần gọi đầu tiên chỉ nhận ${includedAtoms}/${totalAtoms} atom (cap=${initialAtomCap}, detail_level=${input.detail_level}) — phần còn lại sẽ do vòng coverage repair đọc tiếp.`,
+      );
+    }
 
     const promptString = buildGenerationPrompt({
       requirement_description: input.requirement_description,
@@ -59,16 +84,24 @@ export async function POST(req: Request) {
       selected_categories: input.selected_categories,
       language: input.language,
       detail_level: input.detail_level,
-      document_context: documents,
+      document_context: initialDocuments,
+      category_floor_cap: getGenerationCategoryFloorCap(input.detail_level),
     });
 
     // 2) Gọi Gemini qua lớp resilient (retry → backoff+jitter → model kế tiếp).
     //    `validate` chạy NGAY trong engine: nếu JSON sai schema, engine coi đó là
     //    phản hồi hỏng và tự thử lại thay vì trả rác về đây.
+    //    timeoutMs: 100s thay vì mặc định 60s dùng chung cho tác vụ nhẹ — payload
+    //    của generation (object "analysis" + nhiều test case chi tiết) NẶNG HƠN
+    //    hẳn. retryOnTimeout=false: một khi ĐÃ timeout, thử lại CÙNG model với
+    //    CÙNG giới hạn thời gian gần như chắc chắn timeout lần nữa — chuyển NGAY
+    //    sang model kế tiếp thay vì đốt thêm 100s để nhận lại đúng kết quả đó.
     const generation = await runGeminiTask<GenerationPayload>({
       task: 'generation',
       prompt: promptString,
       responseSchema: buildGenerationResponseSchema(),
+      timeoutMs: getGenerationRequestTimeoutMs(),
+      retryOnTimeout: false,
       validate: (raw): GenerationPayload => {
         const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
         const testCases = validateAIJson(

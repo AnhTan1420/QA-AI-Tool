@@ -173,6 +173,76 @@ export function getMaxCoverageRepairRounds(): number {
   return readIntEnv('AI_MAX_COVERAGE_REPAIR_ROUNDS', 4, 0, 10);
 }
 
+/**
+ * Timeout GOI GEMINI danh rieng cho Generation Agent va Coverage Repair (mac
+ * dinh 100s, cao hon RESILIENCE_DEFAULTS.requestTimeoutMs=60s dung cho cac tac
+ * vu nhe hon nhu document_extraction).
+ *
+ * SU CO 24/9: generation dung chung timeout 60s voi moi tac vu khac trong khi
+ * payload cua no NANG HON HAN — phai sinh ca object "analysis" 7 lop LAN nhieu
+ * test case chi tiet trong 1 lan goi. Model thu 2 (gemini-3.5-flash-lite) bi
+ * abort dung 60s ba lan lien tiep (khong phai vi model "chet", ma vi 60s don
+ * gian la KHONG DU cho khoi luong output nay) truoc khi bi coi la that bai va
+ * chuyen model — dot ~180s ma khong doi duoc gi. 100s + retryOnTimeout=false
+ * (xem generate/route.ts, coverage-repair.ts) giai quyet ca hai chieu: du gio
+ * hon cho 1 model KHOE hoan thanh, va khong lang phi thoi gian retry lai DUNG
+ * timeout do tren CUNG 1 model khi that su la timeout.
+ */
+export function getGenerationRequestTimeoutMs(): number {
+  return readIntEnv('AI_GENERATION_REQUEST_TIMEOUT_MS', 100_000, 15_000, 200_000);
+}
+
+/**
+ * Ly do cac bang tra cuu ben duoi khac nhau theo detail_level: 1 case
+ * 'detailed' (>=7 buoc/case, nhieu precondition hon) nang gap ~2-3 lan 1 case
+ * 'concise' (3 buoc) o dau ra — MOT gioi han co dinh dung chung cho moi
+ * detail_level la khong an toan (du voi 'concise' hoac qua chat voi 'detailed').
+ *
+ * So atom TOI DA duoc dua vao PROMPT DAU TIEN cua Generation Agent. Tai lieu
+ * co nhieu atom hon se bi CAT BOT o day — phan con lai duoc coverage repair
+ * (da batch an toan, xem getCoverageRepairBatchSize) doc tiep cho toi 100%,
+ * thay vi bat 1 lan goi phai gong ganh toan bo tai lieu + object "analysis"
+ * 7 lop CUNG LUC. Day la NGUYEN NHAN GOC cua su co 24/9: voi mot tai lieu vua
+ * phai (~15-35 atom) + vai category duoc chon, tong output uoc tinh da VUOT
+ * tran maxOutputTokens (16_384) truoc ca khi tinh den yeu to thoi gian.
+ *
+ * AI_GENERATION_INITIAL_ATOM_CAP (neu > 0) ap dung cho MOI detail_level, ghi
+ * de bang tra cuu mac dinh ben duoi.
+ */
+const INITIAL_ATOM_CAP_BY_DETAIL: Record<string, number> = {
+  concise: 24,
+  standard: 15,
+  detailed: 6,
+};
+
+export function getGenerationInitialAtomCap(detailLevel: string): number {
+  const override = readIntEnv('AI_GENERATION_INITIAL_ATOM_CAP', 0, 0, 200);
+  if (override > 0) return override;
+  return INITIAL_ATOM_CAP_BY_DETAIL[detailLevel] ?? INITIAL_ATOM_CAP_BY_DETAIL.standard;
+}
+
+/**
+ * So CASE toi da duoc phep tao CHI DE dat san toi thieu theo category ("moi
+ * category duoc chon phai co >= N case") trong lan goi generation DAU TIEN,
+ * bat ke chon bao nhieu category. Khong co tran nay, chon 8-11 category (schema
+ * cho phep toi da 11) o detail_level 'standard'/'detailed' se buoc Gemini tao
+ * ra 30-66+ case CHI RIENG cho phan nay — tu no da vuot tran output, khong lien
+ * quan gi den kich thuoc tai lieu dinh kem.
+ *
+ * AI_GENERATION_CATEGORY_FLOOR_CAP (neu > 0) ap dung cho MOI detail_level.
+ */
+const CATEGORY_FLOOR_CAP_BY_DETAIL: Record<string, number> = {
+  concise: 22,
+  standard: 14,
+  detailed: 7,
+};
+
+export function getGenerationCategoryFloorCap(detailLevel: string): number {
+  const override = readIntEnv('AI_GENERATION_CATEGORY_FLOOR_CAP', 0, 0, 200);
+  if (override > 0) return override;
+  return CATEGORY_FLOOR_CAP_BY_DETAIL[detailLevel] ?? CATEGORY_FLOOR_CAP_BY_DETAIL.standard;
+}
+
 /** So atom toi da gui trong 1 lan goi repair (batch theo tai lieu/section). */
 export function getCoverageRepairBatchSize(): number {
   return readIntEnv('AI_COVERAGE_REPAIR_BATCH_SIZE', 35, 5, 200);

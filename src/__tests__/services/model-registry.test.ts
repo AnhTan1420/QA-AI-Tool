@@ -11,6 +11,9 @@ import {
   dedupeModels,
   describeModelRegistry,
   getEmbeddingModel,
+  getGenerationCategoryFloorCap,
+  getGenerationInitialAtomCap,
+  getGenerationRequestTimeoutMs,
   getModelChain,
   getModelPool,
   getResilienceConfig,
@@ -35,6 +38,9 @@ const AI_ENV_KEYS = [
   'AI_MODEL_PLAYWRIGHT_CODEGEN',
   'AI_MODEL_PLAYWRIGHT_HEAL',
   'AI_MODEL_EMBEDDING',
+  'AI_GENERATION_REQUEST_TIMEOUT_MS',
+  'AI_GENERATION_INITIAL_ATOM_CAP',
+  'AI_GENERATION_CATEGORY_FLOOR_CAP',
   'GEMINI_REQUEST_TIMEOUT_MS',
   'GEMINI_MAX_RETRIES_PER_MODEL',
   'GEMINI_BACKOFF_BASE_MS',
@@ -279,5 +285,102 @@ describe('reconcileReviewCoverage', () => {
 
     // Do phu tai lieu 100% khong co nghia chat luong test la 100%.
     expect(result.coverage_score).toBe(60);
+  });
+});
+
+// ============================================================================
+// SU CO 24/9: /api/ai/generate — 429 tren model chinh, roi TIMEOUT LAP LAI 3
+// LAN (60s x 3 = ~180s) tren model phu, cuoi cung that bai HOAN TOAN (0 test
+// case). Cac ham duoi day dinh nghia gioi han AN TOAN de mot lan goi generation
+// KHONG bao gio bi yeu cau tao ra nhieu hon no co the hoan thanh trong 1 lan
+// goi — xem model-registry.ts phia tren cac ham nay cho ly giai day du.
+// ============================================================================
+describe('getGenerationRequestTimeoutMs', () => {
+  beforeEach(() => {
+    for (const key of AI_ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const key of AI_ENV_KEYS) delete process.env[key];
+  });
+
+  it('mặc định 100_000ms — CAO HƠN đáng kể mức mặc định 60_000ms dùng cho tác vụ nhẹ (document_extraction)', () => {
+    expect(getGenerationRequestTimeoutMs()).toBe(100_000);
+    expect(getGenerationRequestTimeoutMs()).toBeGreaterThan(getResilienceConfig().requestTimeoutMs);
+  });
+
+  it('AI_GENERATION_REQUEST_TIMEOUT_MS ghi đè, kẹp trong [15_000, 200_000]', () => {
+    process.env.AI_GENERATION_REQUEST_TIMEOUT_MS = '150000';
+    expect(getGenerationRequestTimeoutMs()).toBe(150_000);
+    process.env.AI_GENERATION_REQUEST_TIMEOUT_MS = '1';
+    expect(getGenerationRequestTimeoutMs()).toBe(15_000);
+    process.env.AI_GENERATION_REQUEST_TIMEOUT_MS = '999999';
+    expect(getGenerationRequestTimeoutMs()).toBe(200_000);
+  });
+});
+
+describe('getGenerationInitialAtomCap', () => {
+  beforeEach(() => {
+    for (const key of AI_ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const key of AI_ENV_KEYS) delete process.env[key];
+  });
+
+  it('mặc định theo detail_level: detailed < standard < concise (case detailed nặng hơn nên cần cap nhỏ hơn)', () => {
+    const detailed = getGenerationInitialAtomCap('detailed');
+    const standard = getGenerationInitialAtomCap('standard');
+    const concise = getGenerationInitialAtomCap('concise');
+    expect(detailed).toBeLessThan(standard);
+    expect(standard).toBeLessThan(concise);
+    expect(detailed).toBeGreaterThanOrEqual(5); // vẫn phải còn ý nghĩa, không phải 0-1
+  });
+
+  it('detail_level không nhận diện được -> rơi về mức "standard"', () => {
+    expect(getGenerationInitialAtomCap('unknown_level')).toBe(getGenerationInitialAtomCap('standard'));
+  });
+
+  it('AI_GENERATION_INITIAL_ATOM_CAP > 0 ghi đè CHO MỌI detail_level (kể cả detailed)', () => {
+    process.env.AI_GENERATION_INITIAL_ATOM_CAP = '50';
+    expect(getGenerationInitialAtomCap('concise')).toBe(50);
+    expect(getGenerationInitialAtomCap('standard')).toBe(50);
+    expect(getGenerationInitialAtomCap('detailed')).toBe(50);
+  });
+
+  it('AI_GENERATION_INITIAL_ATOM_CAP=0 (hoặc không đặt) dùng bảng mặc định, không phải 0', () => {
+    process.env.AI_GENERATION_INITIAL_ATOM_CAP = '0';
+    expect(getGenerationInitialAtomCap('standard')).toBeGreaterThan(0);
+  });
+
+  it('mọi mức mặc định đều được kẹp trong [5, 200]', () => {
+    process.env.AI_GENERATION_INITIAL_ATOM_CAP = '99999';
+    expect(getGenerationInitialAtomCap('standard')).toBe(200);
+  });
+});
+
+describe('getGenerationCategoryFloorCap', () => {
+  beforeEach(() => {
+    for (const key of AI_ENV_KEYS) delete process.env[key];
+  });
+  afterEach(() => {
+    for (const key of AI_ENV_KEYS) delete process.env[key];
+  });
+
+  it('mặc định theo detail_level: detailed < standard < concise', () => {
+    const detailed = getGenerationCategoryFloorCap('detailed');
+    const standard = getGenerationCategoryFloorCap('standard');
+    const concise = getGenerationCategoryFloorCap('concise');
+    expect(detailed).toBeLessThan(standard);
+    expect(standard).toBeLessThan(concise);
+    expect(detailed).toBeGreaterThanOrEqual(3);
+  });
+
+  it('AI_GENERATION_CATEGORY_FLOOR_CAP > 0 ghi đè CHO MỌI detail_level', () => {
+    process.env.AI_GENERATION_CATEGORY_FLOOR_CAP = '40';
+    expect(getGenerationCategoryFloorCap('concise')).toBe(40);
+    expect(getGenerationCategoryFloorCap('detailed')).toBe(40);
+  });
+
+  it('detail_level không nhận diện được -> rơi về mức "standard"', () => {
+    expect(getGenerationCategoryFloorCap('???')).toBe(getGenerationCategoryFloorCap('standard'));
   });
 });

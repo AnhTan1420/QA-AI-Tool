@@ -33,6 +33,7 @@ import { assessMappingEvidence, buildTestCaseHaystack } from '@/services/documen
 import { buildCoverageRepairPrompt } from './prompts/coverage-repair-agent';
 import { buildTestCasesOnlyResponseSchema } from './prompts/generation-response-schema';
 import { runGeminiTask } from './provider';
+import { getGenerationRequestTimeoutMs } from './model-registry';
 import { unwrapArrayResponse, validateAIJson } from './parse';
 import { GeminiProviderError } from './errors';
 import { getCoverageRepairBatchSize, getMaxCoverageRepairRounds } from './model-registry';
@@ -126,11 +127,17 @@ export async function repairDocumentCoverage(
 
       let newCases: GeneratedTestCase[];
       try {
+        // timeoutMs/retryOnTimeout: cung ly do voi generation (xem generate/route.ts
+        // va su co 24/9) — 1 batch repair van phai sinh nhieu test case chi tiet,
+        // 60s mac dinh dung chung la khong du, va timeout thi khong nen thu lai
+        // CUNG model voi CUNG gioi han.
         const result = await runGeminiTask<GeneratedTestCase[]>({
           task: 'coverage_repair',
           prompt,
           responseSchema: buildTestCasesOnlyResponseSchema(),
           label: `repair round ${round}/${maxRounds}, batch ${batchIndex + 1}/${batches.length}`,
+          timeoutMs: getGenerationRequestTimeoutMs(),
+          retryOnTimeout: false,
           validate: (raw) =>
             validateAIJson(generatedTestCasesSchema, unwrapArrayResponse(raw), 'coverage repair test cases'),
         });

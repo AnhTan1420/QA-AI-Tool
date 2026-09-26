@@ -10,7 +10,54 @@ export type GenerationPromptInput = {
   // AI Document Reader: Figma design / Markdown / logic document / FS / ERD / diagram,
   // da duoc atomize truoc (xem PHASE 0 ben duoi + lib/documents/coverage.ts).
   document_context: ParsedDocument[];
+  /**
+   * Tran TONG SO CASE chi de dat san toi thieu theo category (bat ke chon bao
+   * nhieu category) — xem getGenerationCategoryFloorCap() trong model-registry.ts
+   * va comment o su co 24/9 tai do. KHONG truyen (undefined) = GIU NGUYEN hanh
+   * vi cu (moi category deu duoc perCategoryMinByDetail day du) — day la lua
+   * chon AN TOAN NGUOC cho bat ky caller nao chua biet den tham so nay.
+   */
+  category_floor_cap?: number;
 };
+
+/**
+ * Cat bot atom cua `documents` xuong toi da `atomCap` TONG (gop tren moi tai
+ * lieu), theo dung THU TU xuat hien — dung cho PROMPT DAU TIEN cua Generation
+ * Agent (xem getGenerationInitialAtomCap trong model-registry.ts va comment o
+ * su co 24/9 tai do). KHONG dung ket qua nay cho computeDocumentCoverage /
+ * repairDocumentCoverage / normalizeGeneratedTestCases — nhung cho do PHAI
+ * nhin thay TOAN BO atom that su cua tai lieu, chi rieng PROMPT dau tien moi
+ * can bi gioi han.
+ *
+ * Tai lieu bi cat het atom (von co atom nhung khong con atom nao lot vao ngan
+ * sach) bi LOAI KHOI danh sach tra ve — giu no lai voi "Atoms (0)" chi lam
+ * roi prompt ma khong mang thong tin gi. Tai lieu VON DI khong co atom nao
+ * duoc giu nguyen (summary cua no van co the huu ich).
+ */
+export function capDocumentAtomsForInitialGeneration(
+  documents: ParsedDocument[],
+  atomCap: number,
+): ParsedDocument[] {
+  let remaining = Math.max(0, atomCap);
+  const result: ParsedDocument[] = [];
+  for (const doc of documents) {
+    // Tai lieu VON DI khong co atom nao: giu nguyen (summary van co the huu ich),
+    // khong tinh vao ngan sach.
+    if (doc.atoms.length === 0) {
+      result.push(doc);
+      continue;
+    }
+    // Da het ngan sach truoc khi toi luot tai lieu nay: LOAI HAN, khong giu lai
+    // voi "Atoms (0)" — mot muc "Atoms (0)" chi lam roi prompt ma khong mang
+    // thong tin gi (khac voi truong hop tren, noi 0 la SU THAT von co cua tai lieu).
+    if (remaining <= 0) continue;
+    // remaining > 0 va doc.atoms KHONG rong => slice() luon tra ve >= 1 phan tu.
+    const kept = doc.atoms.slice(0, remaining);
+    remaining -= kept.length;
+    result.push({ ...doc, atoms: kept });
+  }
+  return result;
+}
 
 export function buildGenerationPrompt(input: GenerationPromptInput) {
   // ── 1. TÍNH TOÁN CÁC BIẾN RÀNG BUỘC ──────────────────────────────────────
@@ -19,8 +66,15 @@ export function buildGenerationPrompt(input: GenerationPromptInput) {
     : 'Any valid category from the schema';
 
   const perCategoryMinByDetail: Record<string, number> = { concise: 2, standard: 4, detailed: 6 };
-  const perCategoryMin = perCategoryMinByDetail[input.detail_level] ?? 4;
+  const nominalPerCategoryMin = perCategoryMinByDetail[input.detail_level] ?? 4;
   const categoriesForMin = input.selected_categories.length > 0 ? input.selected_categories : ['positive', 'negative', 'boundary'];
+  // SU CO 24/9: khong co tran nay, chon nhieu category (schema cho toi da 11) o
+  // detail_level cao la tu no da du de vuot tran output cua Gemini — hoan toan
+  // KHONG lien quan gi den kich thuoc tai lieu dinh kem. Tran chi GIAM perCategoryMin
+  // khi thuc su can (Math.min), khong bao gio TANG no, va khong bao gio ve duoi 1.
+  const perCategoryMin = input.category_floor_cap
+    ? Math.max(1, Math.min(nominalPerCategoryMin, Math.floor(input.category_floor_cap / categoriesForMin.length)))
+    : nominalPerCategoryMin;
   const minCases = perCategoryMin * categoriesForMin.length;
   
   const minStepsByDetail: Record<string, number> = { concise: 3, standard: 5, detailed: 7 };

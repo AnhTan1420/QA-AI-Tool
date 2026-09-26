@@ -445,3 +445,33 @@ Related, from Round 4: `AI_READER_CONCURRENCY`, `AI_READER_THINKING_LEVEL`, `AI_
 - Checkpoints live in the client's memory for the duration of one upload; a page reload mid-upload starts over. There is no server-side job table, so no migration is needed and the public `/projects/demo` sandbox (no login) works.
 - Only the document Reader is resumable so far. Generation/enhance/coverage-repair still use the per-call fallback.
 - A killed function loses at most the chunk(s) in flight, never completed ones.
+
+---
+
+## 11. Round 6 — Runtime incident 24/9: /api/ai/generate — 429 then repeated timeout, total failure
+
+**Symptom** (Vercel runtime log): `gemini-3.5-flash` hit 429 three times (transient, retried with backoff — fine), then failed over to `gemini-3.5-flash-lite`, which **timed out three times in a row** (60s abort → 808ms backoff → 60s abort → 1431ms backoff → 60s abort), ~186 seconds total, then `GeminiProviderError` — zero test cases returned. The screenshot showed the wizard's generic "Gemini không khả dụng trên tất cả model đã cấu hình" message.
+
+### Root causes
+1. **Same bug as Round 4, new call site.** `/api/ai/generate`'s call to `runGeminiTask` never set `retryOnTimeout: false`, so a genuine timeout was retried on the *same* model with the *same* timeout — three near-identical 60-second waits for the same outcome, instead of moving to the next model after the first.
+2. **The timeout itself was undersized for this task.** Generation shared the 60s default meant for lighter tasks (`document_extraction`), but a generation call must produce a 7-layer `analysis` object *and* several detailed test cases in one response — a fundamentally heavier payload.
+3. **The request had no upper bound on what it asked for.** The first generation call tried to cover *every* atom in the attached document *and* meet the per-category minimum for *however many* categories were selected, all in one shot, with no batching. Measuring the actual prompt/response size: a plausible real document (25–35 atoms) at `detail_level: 'standard'` already produces an estimated ~18–30K output tokens — past both `maxOutputTokens` (16,384) and any reasonable single-call time budget. Selecting many categories (the schema allows up to 11) independently pushes the same ceiling: at `standard`, 11 categories × the nominal per-category minimum alone is close to the cap with *zero* atoms involved; at `detailed` it's roughly double the cap. Neither dimension needs an unusually large input to trigger this — a normal document with a handful of extra categories selected is enough.
+
+### Fixes
+- `model-registry.ts`: new `getGenerationRequestTimeoutMs()` (default 100s, was 60s shared) for both `generation` and `coverage_repair` calls; new `getGenerationInitialAtomCap(detailLevel)` and `getGenerationCategoryFloorCap(detailLevel)`, both detail-level-aware (heavier `detailed` cases need smaller caps) with a single flat env override each.
+- `generate/route.ts`: the *first* generation call now sees at most `getGenerationInitialAtomCap()` atoms (`capDocumentAtomsForInitialGeneration`, in `generation-agent.ts`) and a capped per-category minimum (`category_floor_cap`, passed into `buildGenerationPrompt`) — the existing, already-tested coverage-repair loop backfills whatever the capped first pass didn't cover, exactly as it already does for atoms a model chose to skip. **Coverage/repair/validation always use the full, uncapped document set** — only the first prompt is bounded. `runGeminiTask` for `generation` now passes `timeoutMs: getGenerationRequestTimeoutMs()` and `retryOnTimeout: false`.
+- `coverage-repair.ts`: same `timeoutMs`/`retryOnTimeout: false` fix applied to its own `runGeminiTask` call (same task profile, same risk, reachable in the same request).
+- `generation-agent.ts`: `buildGenerationPrompt` gained an optional `category_floor_cap` field — omitted, it behaves exactly as before (safe default for any caller that doesn't know about it); when given, it lowers `perCategoryMin` (never below 1, never *raises* it) just enough to keep total category-floor-driven output bounded.
+
+### Known trade-off (by design, not a bug)
+The category-floor cap is deliberately conservative for `detail_level: 'detailed'`: even the common case of 3 selected categories gets fewer than the nominal 6 cases/category once the cap applies, because `detailed` cases are large enough (~2–3× a `standard` case) that 3 × 6 is already close to the output ceiling on its own, before any document atoms are added. This is an accepted trade-off — a smaller-than-requested case count that completes beats a request that times out and returns nothing. If this is too aggressive in practice, `AI_GENERATION_CATEGORY_FLOOR_CAP` and `AI_GENERATION_INITIAL_ATOM_CAP` are both tunable per environment.
+
+### Not fixed here (flagged, not evidenced by this incident)
+`getCoverageRepairBatchSize()` (default 35 atoms/call) is **not** detail-level-aware. At `detail_level: 'detailed'`, a full 35-atom repair batch could itself approach or exceed the output ceiling the same way the original generation call did. This wasn't touched in this round because it isn't what the incident showed and reworking an already-shipped, tested default carries its own risk — but it's the same failure shape and worth the same treatment if it's ever observed in practice.
+
+### New environment variables
+```
+AI_GENERATION_REQUEST_TIMEOUT_MS=100000   # was 60000 (shared default)
+AI_GENERATION_INITIAL_ATOM_CAP=0          # 0 = auto by detail_level (concise 24 / standard 15 / detailed 6)
+AI_GENERATION_CATEGORY_FLOOR_CAP=0        # 0 = auto by detail_level (concise 22 / standard 14 / detailed 7)
+```
