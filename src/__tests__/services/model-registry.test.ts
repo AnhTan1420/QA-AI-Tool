@@ -1,5 +1,5 @@
 /**
- * Unit tests cho services/ai/model-registry.ts + reconcileReviewCoverage.
+ * Unit tests cho services/ai/model-registry.ts.
  *
  * Hai thu nay tra loi 2 cau hoi khac nhau nhung cung 1 tinh than: cau hinh va
  * con so hien thi phai do UNG DUNG quyet dinh, khong phai do AI hay do mot bien
@@ -11,18 +11,16 @@ import {
   dedupeModels,
   describeModelRegistry,
   getEmbeddingModel,
+  getEnhanceMaxOutputTokens,
   getGenerationCategoryFloorCap,
   getGenerationInitialAtomCap,
   getGenerationRequestTimeoutMs,
   getModelChain,
   getModelPool,
   getResilienceConfig,
+  getReviewMaxOutputTokens,
   validateModelConfiguration,
 } from '@/services/ai/model-registry';
-import { reconcileReviewCoverage } from '@/services/ai/source-context';
-import { computeDocumentCoverage } from '@/services/documents/coverage';
-import type { ParsedDocument } from '@/models/validators/document';
-import type { GeneratedTestCase, ReviewResult } from '@/models/validators/test-case';
 
 const AI_ENV_KEYS = [
   'AI_MODEL_PRIMARY',
@@ -38,6 +36,8 @@ const AI_ENV_KEYS = [
   'AI_MODEL_PLAYWRIGHT_CODEGEN',
   'AI_MODEL_PLAYWRIGHT_HEAL',
   'AI_MODEL_EMBEDDING',
+  'AI_REVIEW_MAX_OUTPUT_TOKENS',
+  'AI_ENHANCE_MAX_OUTPUT_TOKENS',
   'AI_GENERATION_REQUEST_TIMEOUT_MS',
   'AI_GENERATION_INITIAL_ATOM_CAP',
   'AI_GENERATION_CATEGORY_FLOOR_CAP',
@@ -108,9 +108,55 @@ describe('model-registry', () => {
     }
   });
 
-  it('enhance thua ke model review khi chua cau hinh rieng', () => {
+  it('enhance KHONG BAO GIO thua ke AI_MODEL_REVIEW (chi AI_MODEL_ENHANCE -> pool)', () => {
     process.env.AI_MODEL_REVIEW = 'gemini-3.6-flash';
-    expect(getModelChain('enhance')[0]).toBe('gemini-3.6-flash');
+    process.env.AI_MODEL_PRIMARY = 'gemini-3.7-flash';
+    // Chua cau hinh AI_MODEL_ENHANCE: phai roi ve pool, KHONG phai model review.
+    expect(getModelChain('enhance')[0]).toBe('gemini-3.7-flash');
+    expect(getModelChain('enhance')).not.toContain('gemini-3.6-flash');
+  });
+
+  it('review KHONG BAO GIO thua ke AI_MODEL_ENHANCE (chi AI_MODEL_REVIEW -> pool)', () => {
+    process.env.AI_MODEL_ENHANCE = 'gemini-3.6-flash';
+    process.env.AI_MODEL_PRIMARY = 'gemini-3.7-flash';
+    expect(getModelChain('review')[0]).toBe('gemini-3.7-flash');
+    expect(getModelChain('review')).not.toContain('gemini-3.6-flash');
+  });
+
+  it('review va enhance giai model doc lap khi ca hai duoc cau hinh', () => {
+    process.env.AI_MODEL_REVIEW = 'model-review-x';
+    process.env.AI_MODEL_ENHANCE = 'model-enhance-y';
+    process.env.AI_MODEL_PRIMARY = 'model-primary';
+    process.env.AI_MODEL_FALLBACK_1 = 'model-fallback';
+    expect(getModelChain('review')).toEqual(['model-review-x', 'model-primary', 'model-fallback']);
+    expect(getModelChain('enhance')).toEqual(['model-enhance-y', 'model-primary', 'model-fallback']);
+  });
+
+  it('doi AI_MODEL_REVIEW khong lam doi chuoi enhance, va nguoc lai', () => {
+    process.env.AI_MODEL_PRIMARY = 'model-primary';
+    process.env.AI_MODEL_ENHANCE = 'model-enhance-y';
+    const enhanceBefore = getModelChain('enhance');
+    process.env.AI_MODEL_REVIEW = 'model-review-x';
+    expect(getModelChain('enhance')).toEqual(enhanceBefore);
+
+    const reviewBefore = getModelChain('review');
+    process.env.AI_MODEL_ENHANCE = 'model-enhance-z';
+    expect(getModelChain('review')).toEqual(reviewBefore);
+  });
+
+  it('review va enhance co ngan sach output rieng va Review nho hon Enhance', () => {
+    expect(getReviewMaxOutputTokens()).toBeLessThan(getEnhanceMaxOutputTokens());
+    process.env.AI_REVIEW_MAX_OUTPUT_TOKENS = '1024';
+    process.env.AI_ENHANCE_MAX_OUTPUT_TOKENS = '4096';
+    expect(getReviewMaxOutputTokens()).toBe(1024);
+    expect(getEnhanceMaxOutputTokens()).toBe(4096);
+    // Gioi han an toan: khong ha xuong duoi 512 / khong vuot tran.
+    process.env.AI_REVIEW_MAX_OUTPUT_TOKENS = '1';
+    expect(getReviewMaxOutputTokens()).toBe(512);
+    process.env.AI_REVIEW_MAX_OUTPUT_TOKENS = '999999';
+    expect(getReviewMaxOutputTokens()).toBe(8192);
+    delete process.env.AI_REVIEW_MAX_OUTPUT_TOKENS;
+    delete process.env.AI_ENHANCE_MAX_OUTPUT_TOKENS;
   });
 
   it('coverage_repair thua ke model generation khi chua cau hinh rieng', () => {
@@ -191,100 +237,6 @@ describe('dedupeModels', () => {
 
   it('cat khoang trang thua o hai dau', () => {
     expect(dedupeModels(['  gemini-3.7-flash  '])).toEqual(['gemini-3.7-flash']);
-  });
-});
-
-// ── Do phu deterministic PHAI thang diem AI tu cham ────────────────────────
-
-function makeDocument(atomCount: number): ParsedDocument {
-  return {
-    id: 'doc-1',
-    source_type: 'document',
-    title: 'FS',
-    summary: 'tóm tắt',
-    atoms: Array.from({ length: atomCount }, (_, i) => ({
-      atom_id: `FS-${i + 1}`,
-      atom_type: 'rule' as const,
-      label: `Rule ${i + 1}`,
-      detail: `Detail ${i + 1}`,
-    })),
-  };
-}
-
-function makeCase(code: string, atomIds: string[]): GeneratedTestCase {
-  return {
-    code,
-    title: `Test ${code}`,
-    category: 'positive',
-    priority: 'Normal',
-    preconditions: [],
-    test_data: {},
-    steps: [{ step_number: 1, action: 'Mở màn hình', expected_result: 'Hiển thị đúng' }],
-    final_expected_result: 'Trạng thái đúng',
-    source_requirement_ids: atomIds,
-  };
-}
-
-const AI_REVIEW: ReviewResult = {
-  coverage_score: 95,
-  requirement_gaps: [],
-  test_case_comments: [],
-};
-
-describe('reconcileReviewCoverage', () => {
-  beforeEach(() => {
-    // Bộ test này kiểm tra việc CHẶN TRẦN điểm review, không phải lớp bằng chứng
-    // ngữ nghĩa (đã có coverage-evidence.test.ts) — tắt nó để fixture đơn giản
-    // vẫn cho ra đúng 41/126 như tình huống thật đang mô phỏng.
-    process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE = 'false';
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
-  });
-  afterEach(() => {
-    delete process.env.COVERAGE_REQUIRE_SEMANTIC_EVIDENCE;
-    vi.restoreAllMocks();
-  });
-
-  it('chan tren diem review bang do phu tai lieu that (95% AI vs 32.5% code)', () => {
-    const doc = makeDocument(126);
-    const cases = doc.atoms.slice(0, 41).map((a, i) => makeCase(`TC_${i}`, [a.atom_id]));
-    const coverage = computeDocumentCoverage([doc], cases);
-
-    const result = reconcileReviewCoverage(AI_REVIEW, coverage);
-
-    expect(result.coverage_score).toBe(32.5);
-    expect(result.ai_reported_coverage_score).toBe(95);
-    expect(result.coverage_score_capped).toBe(true);
-    expect(result.document_coverage!.covered_atoms).toBe(41);
-  });
-
-  it('khong chan khi do phu tai lieu da dat 100%', () => {
-    const doc = makeDocument(10);
-    const cases = doc.atoms.map((a, i) => makeCase(`TC_${i}`, [a.atom_id]));
-    const coverage = computeDocumentCoverage([doc], cases);
-
-    const result = reconcileReviewCoverage(AI_REVIEW, coverage);
-
-    expect(result.coverage_score).toBe(95);
-    expect(result.coverage_score_capped).toBe(false);
-  });
-
-  it('giu nguyen diem AI khi khong dinh kem tai lieu', () => {
-    const result = reconcileReviewCoverage(AI_REVIEW, null);
-
-    expect(result.coverage_score).toBe(95);
-    expect(result.document_coverage).toBeNull();
-    expect(result.coverage_score_capped).toBe(false);
-  });
-
-  it('khong nang diem AI len khi AI tu cham THAP hon do phu tai lieu', () => {
-    const doc = makeDocument(10);
-    const cases = doc.atoms.map((a, i) => makeCase(`TC_${i}`, [a.atom_id]));
-    const coverage = computeDocumentCoverage([doc], cases);
-
-    const result = reconcileReviewCoverage({ ...AI_REVIEW, coverage_score: 60 }, coverage);
-
-    // Do phu tai lieu 100% khong co nghia chat luong test la 100%.
-    expect(result.coverage_score).toBe(60);
   });
 });
 

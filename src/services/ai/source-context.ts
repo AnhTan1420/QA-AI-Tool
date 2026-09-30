@@ -12,6 +12,14 @@
 //
 // Gio ca 4 luong nhan CUNG MOT `QAAISourceContext` va CUNG MOT ham format, nen
 // chung nhin thay chinh xac cung mot su that.
+//
+// NOTE (Review/Enhance re-architecture): Review and Enhance NO LONGER use these
+// full-context formatters. Review gets a compact coverage summary + case digests
+// (prompts/review-agent.ts) and Enhance gets only the flagged cases + findings
+// (prompts/enhance-agent.ts) — that is what keeps them bounded. Both are held to
+// the same generation standard via quality-standards.ts instead. Review also no
+// longer produces a coverage score, so reconcileReviewCoverage() was removed;
+// the application-computed document coverage is still returned with Review.
 // ============================================================================
 
 import type { ParsedDocument } from '@/models/validators/document';
@@ -48,9 +56,8 @@ export function countAtoms(documents: ParsedDocument[] | undefined | null): numb
 }
 
 /**
- * Render tai lieu + atom cho prompt. DUNG CHUNG boi generation-agent,
- * coverage-repair-agent, review-agent va enhance-agent — neu format nay doi,
- * ca 4 luong doi cung luc, khong the lech nhau nua.
+ * Render tai lieu + atom cho prompt (full atom list). Hien dung boi
+ * coverage-repair-agent; Review/Enhance co y KHONG dung (xem NOTE o dau file).
  */
 export function formatDocumentContextForPrompt(documents: ParsedDocument[]): string {
   if (documents.length === 0) {
@@ -151,55 +158,4 @@ export function formatUncoveredAtomsForPrompt(atoms: UncoveredAtom[]): string {
   source_document: ${atom.source_document}`,
     )
     .join('\n');
-}
-
-/**
- * Ket qua Review tra ve cho client. Diem QUAN TRONG: `document_coverage` va
- * `coverage_score` o day KHONG phai con so Gemini tu bao cao.
- *
- *   document_coverage        = do ung dung tinh (nguon su that)
- *   ai_reported_coverage_score = con so Gemini dua ra, giu lai de audit
- *   coverage_score           = da bi CHAN TREN boi do phu tai lieu that
- *
- * Vi sao phai chan tren: neu code do duoc 41/126 = 32.5% ma Gemini bao 95%, thi
- * 95% la mot loi khang dinh sai. Hien thi no se khien QA tin la bo test da du.
- */
-export type ReviewResultWithCoverage = ReviewResult & {
-  document_coverage: DocumentCoverageResult | null;
-  ai_reported_coverage_score: number;
-  coverage_score_capped: boolean;
-};
-
-/**
- * Ap tran do phu tai lieu len diem review cua AI. Chi ap dung khi CO tai lieu
- * dinh kem — khong co tai lieu thi khong ton tai con so deterministic de doi chieu.
- */
-export function reconcileReviewCoverage(
-  review: ReviewResult,
-  coverage: DocumentCoverageResult | null,
-): ReviewResultWithCoverage {
-  const aiScore = review.coverage_score;
-  if (!coverage) {
-    return {
-      ...review,
-      document_coverage: null,
-      ai_reported_coverage_score: aiScore,
-      coverage_score_capped: false,
-    };
-  }
-
-  const capped = Math.min(aiScore, coverage.coverage_percent);
-  if (capped < aiScore) {
-    console.warn(
-      `[Review] AI báo coverage ${aiScore}% nhưng độ phủ tài liệu thực tế là ${coverage.coverage_percent}% (${coverage.covered_atoms}/${coverage.total_atoms}) — đã chặn trần về ${capped}%.`,
-    );
-  }
-
-  return {
-    ...review,
-    coverage_score: capped,
-    document_coverage: coverage,
-    ai_reported_coverage_score: aiScore,
-    coverage_score_capped: capped < aiScore,
-  };
 }

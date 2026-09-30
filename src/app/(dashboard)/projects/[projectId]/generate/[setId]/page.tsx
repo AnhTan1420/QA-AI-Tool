@@ -64,7 +64,11 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
   }
 
   const requirement = Array.isArray(set.requirements) ? set.requirements[0] : set.requirements;
-  const coverageTone = review && review.coverage_score >= 80 ? 'text-success-600' : 'text-warning-600';
+  // coverage_score is nullable: new-format reviews store the application-computed
+  // document coverage (null when the set had no documents); old rows kept the AI score.
+  const hasCoverageScore = review != null && review.coverage_score != null;
+  const coverageTone = hasCoverageScore && review!.coverage_score >= 80 ? 'text-success-600' : 'text-warning-600';
+  const reviewStatus: string | undefined = review?.review_payload?.overall_status;
 
   return (
     <div className="space-y-6">
@@ -77,10 +81,16 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
             <h1 className="text-h1 mt-2">{requirement?.title ?? t.generateResult.requirementFallback}</h1>
             <p className="text-body mt-2 max-w-2xl">{requirement?.description}</p>
           </div>
-          {review && (
+          {hasCoverageScore && (
             <div className="rounded-[var(--radius-control)] bg-ink-50 px-4 py-2 text-right">
               <p className="text-[10px] font-bold uppercase tracking-wide text-ink-500">{t.generateResult.coverageLabel}</p>
-              <p className={`text-3xl font-black ${coverageTone}`}>{review.coverage_score}%</p>
+              <p className={`text-3xl font-black ${coverageTone}`}>{review!.coverage_score}%</p>
+            </div>
+          )}
+          {reviewStatus && (
+            <div className="rounded-[var(--radius-control)] bg-ink-50 px-4 py-2 text-right">
+              <p className="text-[10px] font-bold uppercase tracking-wide text-ink-500">Review</p>
+              <p className="text-xl font-black text-ink-800">{reviewStatus.replace(/_/g, ' ')}</p>
             </div>
           )}
         </div>
@@ -93,7 +103,7 @@ export default async function GenerateResultPage({ params }: { params: Promise<{
 
       {review?.review_payload?.summary && (
         <div className="rounded-2xl border border-brand-100 bg-brand-50/60 p-6 text-sm leading-6 text-ink-800">
-          <p className="mb-1 text-xs font-bold uppercase tracking-wide text-brand-700">Tóm tắt Review của AI</p>
+          <p className="mb-1 text-xs font-bold uppercase tracking-wide text-brand-700">Tóm tắt Review</p>
           {review.review_payload.summary}
         </div>
       )}

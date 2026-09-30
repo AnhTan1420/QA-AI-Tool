@@ -1,6 +1,6 @@
 'use client';
 
-import { Sparkles, Play, Loader2, ChevronDown, ChevronUp, Check, Plus, Download, Info } from 'lucide-react';
+import { Sparkles, Play, Loader2, ChevronDown, ChevronUp, Check, Download, Info } from 'lucide-react';
 import type { TestCaseCategory } from '@/models/validators/test-case';
 import type { TestCaseDiffEntry } from '@/services/test-case-diff';
 import type { Dictionary } from '@/lib/i18n/dictionaries/vi';
@@ -9,20 +9,27 @@ import { TestCaseCard } from './test-case-card';
 import { FileDropzone, AttachedFileChip } from './workspace-ui';
 import type { GenerateWorkspaceState } from '@/hooks/test-case/use-generate-workspace';
 
-const DIMENSION_LABELS: Record<string, string> = {
-  functional_positive: 'Functional Positive',
-  functional_negative: 'Functional Negative',
-  boundary_edge: 'Boundary/Edge',
-  state_transition: 'State Transition',
-  security: 'Security',
-  performance: 'Performance',
-  compatibility: 'Compatibility',
-  integration: 'Integration',
-  regression: 'Regression',
-  accessibility: 'Accessibility',
-  localization: 'Localization',
-  audit_compliance: 'Audit/Compliance',
+const STATUS_TONE: Record<string, string> = {
+  PASS: 'bg-success-50 text-success-600 border-success-600/20',
+  APPROPRIATE: 'bg-success-50 text-success-600 border-success-600/20',
+  SUPPORTED: 'bg-success-50 text-success-600 border-success-600/20',
+  NEEDS_IMPROVEMENT: 'bg-warning-50 text-warning-600 border-warning-600/20',
+  PARTIALLY_SUPPORTED: 'bg-warning-50 text-warning-600 border-warning-600/20',
+  OVER_DETAILED: 'bg-warning-50 text-warning-600 border-warning-600/20',
+  INSUFFICIENT_EVIDENCE: 'bg-ink-100 text-ink-600 border-ink-200',
+  NOT_APPLICABLE: 'bg-ink-100 text-ink-600 border-ink-200',
+  FAIL: 'bg-danger-50 text-danger-600 border-danger-600/20',
+  MISSING: 'bg-danger-50 text-danger-600 border-danger-600/20',
+  TOO_VAGUE: 'bg-danger-50 text-danger-600 border-danger-600/20',
 };
+
+function StatusBadge({ status, label }: { status: string; label: string }) {
+  return (
+    <span className={`inline-block shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${STATUS_TONE[status] ?? STATUS_TONE.INSUFFICIENT_EVIDENCE}`}>
+      {label}
+    </span>
+  );
+}
 
 const SEVERITY_STYLE: Record<string, string> = {
   Critical: 'bg-danger-50 text-danger-600 border-danger-600/20',
@@ -37,12 +44,6 @@ function SeverityBadge({ severity }: { severity?: string }) {
       {severity}
     </span>
   );
-}
-
-function dimensionScoreTone(score: number) {
-  if (score >= 80) return 'bg-success-600';
-  if (score >= 60) return 'bg-warning-600';
-  return 'bg-danger-600';
 }
 
 /** Preview "trước/sau" khi bấm Enhance — trước đây Enhance ghi đè testCases
@@ -80,6 +81,12 @@ function EnhanceDiffPreview({ workspace, t }: { workspace: GenerateWorkspaceStat
         </div>
       </div>
 
+      {diff && workspace.pendingEnhance && workspace.pendingEnhance.deferredCount > 0 && (
+        <p className="mb-2 rounded-xl bg-white p-3 text-xs text-warning-600">
+          {t.generateWorkspace.reviewPanel.enhanceDeferredNotice(workspace.pendingEnhance.deferredCount)}
+        </p>
+      )}
+
       {changed.length === 0 ? (
         <p className="rounded-xl bg-white p-3 text-xs italic text-ink-400">{ed.noChanges}</p>
       ) : (
@@ -106,31 +113,6 @@ function EnhanceDiffPreview({ workspace, t }: { workspace: GenerateWorkspaceStat
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-/** 12-dimension coverage radar as horizontal bars — the AI already computes these scores
- * on every review, they were just being discarded by the schema before; no charting lib
- * needed for 12 rows, plain bars read faster here anyway. */
-function DimensionScoresPanel({ scores, title }: { scores: Record<string, number>; title: string }) {
-  const entries = Object.entries(scores).filter(([, value]) => typeof value === 'number');
-  if (entries.length === 0) return null;
-
-  return (
-    <div className="rounded-2xl border border-ink-100 bg-white p-4">
-      <p className="mb-3 text-xs font-bold uppercase tracking-wide text-ink-500">{title}</p>
-      <div className="space-y-2">
-        {entries.map(([key, score]) => (
-          <div key={key} className="flex items-center gap-3">
-            <span className="w-32 shrink-0 text-[11px] font-semibold text-ink-600">{DIMENSION_LABELS[key] ?? key}</span>
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-100">
-              <div className={`h-full rounded-full ${dimensionScoreTone(score)}`} style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
-            </div>
-            <span className="w-9 shrink-0 text-right text-[11px] font-bold text-ink-700">{score}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -227,7 +209,7 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
 
       <EnhanceDiffPreview workspace={workspace} t={t} />
 
-      {/* Review result */}
+      {/* Review result — bounded findings only; fixing is Enhance's job. */}
       {activeReview && (
         <div className="animate-[fadeIn_0.25s_ease] mb-4 space-y-4">
           {activeReview.summary && (
@@ -238,54 +220,101 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
           )}
 
           <div className="flex items-center justify-between rounded-2xl bg-ink-50 px-4 py-3">
-            <span className="text-sm font-semibold text-ink-700">{t.generateWorkspace.coverageLabel}</span>
-            <span className={`text-2xl font-black ${activeReview.coverage_score >= 80 ? 'text-success-600' : 'text-warning-600'}`}>
-              {activeReview.coverage_score}%
-            </span>
+            <span className="text-sm font-semibold text-ink-700">{rp.overallStatusLabel}</span>
+            <StatusBadge status={activeReview.overall_status} label={rp.overallStatus[activeReview.overall_status]} />
           </div>
 
-          {activeReview.dimension_scores && <DimensionScoresPanel scores={activeReview.dimension_scores as Record<string, number>} title={rp.dimensionScoresTitle} />}
+          {activeReview.document_coverage && (
+            <p className="text-xs font-semibold text-ink-500">
+              {rp.documentCoverageLine(
+                activeReview.document_coverage.covered_atoms,
+                activeReview.document_coverage.total_atoms,
+                activeReview.document_coverage.coverage_percent,
+              )}
+            </p>
+          )}
 
-          {activeReview.requirement_gaps?.length > 0 && (
+          {/* Language & detail level */}
+          <div>
+            <p className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-ink-500">
+              {rp.languageDetailTitle}
+              <StatusBadge status={activeReview.language_detail.status} label={rp.detailStatus[activeReview.language_detail.status]} />
+            </p>
+            <p className="mb-2 text-[11px] text-ink-500">
+              {rp.detailStatus.TOO_VAGUE}: {activeReview.language_detail.counts.TOO_VAGUE} · {rp.detailStatus.APPROPRIATE}: {activeReview.language_detail.counts.APPROPRIATE} · {rp.detailStatus.OVER_DETAILED}: {activeReview.language_detail.counts.OVER_DETAILED}
+            </p>
+            <div className="space-y-2">
+              {activeReview.language_detail.issues.map((item) => (
+                <div key={item.test_case_code} className="rounded-xl border border-ink-200 bg-ink-50 p-3 text-sm">
+                  <p className="flex flex-wrap items-center gap-2 font-bold text-ink-900">
+                    <span className="font-mono text-brand-600">{item.test_case_code}</span>
+                    <StatusBadge status={item.status} label={rp.detailStatus[item.status]} />
+                  </p>
+                  <p className="mt-1 text-ink-600">{item.reason}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Required taxonomy support */}
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-500">{rp.taxonomyTitle}</p>
+            <div className="space-y-2">
+              {activeReview.taxonomy.map((item) => (
+                <div key={item.category} className="rounded-xl border border-ink-200 bg-white p-3 text-sm">
+                  <p className="flex flex-wrap items-center justify-between gap-2 font-bold text-ink-900">
+                    <span>{workspace.getCategoryLabel(item.category)}</span>
+                    <StatusBadge status={item.status} label={rp.taxonomyStatus[item.status]} />
+                  </p>
+                  <p className="mt-1 text-ink-600">
+                    {item.evidence}
+                    {item.supporting_codes.length > 0 && (
+                      <span className="ml-1 font-mono text-[11px] text-brand-600">[{item.supporting_codes.join(', ')}]</span>
+                    )}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {activeReview.issues.length > 0 && (
             <div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-warning-600">Requirement Gaps</p>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-warning-600">{rp.issuesTitle}</p>
               <div className="space-y-2">
-                {activeReview.requirement_gaps.map((gap, i) => (
+                {activeReview.issues.map((issue, i) => (
                   <div key={i} className="rounded-xl border border-warning-600/20 bg-warning-50 p-3 text-sm transition-shadow hover:shadow-[var(--shadow-soft)]">
                     <p className="font-bold text-ink-900">
-                      {gap.requirement_text}
-                      <SeverityBadge severity={gap.severity} />
-                      {gap.dimension && <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-warning-600">{gap.dimension}</span>}
+                      {issue.test_case_code && <span className="mr-1 font-mono text-brand-600">{issue.test_case_code}</span>}
+                      {issue.description}
+                      <SeverityBadge severity={issue.severity} />
+                      <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-warning-600">{issue.area}</span>
                     </p>
-                    {gap.suggested_test_case && (
-                      <button
-                        onClick={() => (workspace.reviewMode === 'generated' ? workspace.acceptSuggestedCase : workspace.acceptSuggestedImportedCase)(gap.suggested_test_case!)}
-                        className="btn-warning btn-sm mt-2"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                        {rp.addSuggestedCaseButton}
-                      </button>
-                    )}
+                    <p className="mt-1 text-ink-600">{issue.evidence}</p>
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {activeReview.test_case_comments?.length > 0 && (
+          {activeReview.recommendations.length > 0 && (
             <div>
-              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-500">Comments</p>
-              <div className="space-y-2">
-                {activeReview.test_case_comments.map((comment, i) => (
-                  <div key={i} className="rounded-xl border border-ink-200 bg-ink-50 p-3 text-sm transition-shadow hover:shadow-[var(--shadow-soft)]">
-                    <p className="font-bold text-ink-900">
-                      {comment.test_case_code} – <span className="text-brand-600">{comment.issue_type}</span>
-                      <SeverityBadge severity={comment.severity} />
-                    </p>
-                    <p className="mt-1 text-ink-600">{comment.comment}</p>
-                  </div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-500">{rp.recommendationsTitle}</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-ink-700">
+                {activeReview.recommendations.map((r, i) => (
+                  <li key={i}>{r}</li>
                 ))}
-              </div>
+              </ul>
+            </div>
+          )}
+
+          {activeReview.structure_errors && activeReview.structure_errors.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-danger-600">{rp.structureErrorsTitle}</p>
+              <ul className="list-disc space-y-1 pl-5 text-xs text-danger-600">
+                {activeReview.structure_errors.map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
             </div>
           )}
         </div>

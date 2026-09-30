@@ -20,7 +20,7 @@ import { VALID_CATEGORY_VALUES } from '@/views/test-case/generate-workspace/shar
 /** Trang thai ket thuc cua 1 luot goi AI co rang buoc do phu tai lieu. */
 export type AIRunStatus = 'completed' | 'coverage_incomplete' | 'validation_failed';
 
-/** Hinh dang phan hoi cua /api/ai/generate va /api/ai/enhance (mode: enhance). */
+/** Hinh dang phan hoi cua /api/ai/generate va /api/ai/enhance. */
 type AIGenerationResponse = {
   status: AIRunStatus;
   test_cases: GeneratedTestCase[];
@@ -36,7 +36,20 @@ type AIGenerationResponse = {
 /** Enhance tra ve them ban ghi "AI da sua gi" (mục 2: khong vut bo thong tin AI). */
 type AIEnhanceResponse = AIGenerationResponse & {
   analysis?: { gaps_addressed?: string[]; atoms_newly_covered?: string[]; total_cases_before?: number; total_cases_after?: number } | null;
-  restored_test_cases?: string[];
+  revised_test_cases?: string[];
+  added_test_cases?: string[];
+  rejected_changes?: { code: string; reason: string }[];
+  /** Cases with findings that did not fit this pass's cap — run Review/Enhance again. */
+  deferred_test_cases?: string[];
+  /** Set when Enhance skipped the model call (no actionable Review findings). */
+  note?: string;
+};
+
+/** /api/ai/review response: bounded findings + the application-computed document coverage. */
+export type ReviewResponse = ReviewResult & {
+  document_coverage?: DocumentCoverageResult | null;
+  model_used?: string;
+  truncated?: boolean;
 };
 
 /**
@@ -88,7 +101,7 @@ export function useGenerateWorkspace(projectId: string) {
 
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [analysis, setAnalysis] = useState<GenerationAnalysis | null>(null);
-  const [review, setReview] = useState<ReviewResult | null>(null);
+  const [review, setReview] = useState<ReviewResponse | null>(null);
   const [error, setError] = useState('');
   const [errorDetails, setErrorDetails] = useState<{ path: string; message: string }[]>([]);
   const [successMessage, setSuccessMessage] = useState('');
@@ -99,7 +112,7 @@ export function useGenerateWorkspace(projectId: string) {
   const [reviewMode, setReviewMode] = useState<'generated' | 'imported'>('generated');
   const [importedReviewCases, setImportedReviewCases] = useState<GeneratedTestCase[]>([]);
   const [importedReviewFileName, setImportedReviewFileName] = useState('');
-  const [importedReview, setImportedReview] = useState<ReviewResult | null>(null);
+  const [importedReview, setImportedReview] = useState<ReviewResponse | null>(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [reviewError, setReviewError] = useState('');
@@ -116,9 +129,11 @@ export function useGenerateWorkspace(projectId: string) {
     scope: 'generated' | 'imported';
     before: GeneratedTestCase[];
     after: GeneratedTestCase[];
-    /** Do phu tinh lai SAU enhance (da qua vong repair o server). */
+    /** Do phu tinh lai SAU enhance (ung dung tinh, khong co vong repair). */
     coverage: DocumentCoverageResult | null;
     status: AIRunStatus;
+    /** Cases that had findings but did not fit this pass. */
+    deferredCount: number;
   } | null>(null);
 
   // ── Right column: tab "Kết quả" vs "Review & Enhance" ──
@@ -164,7 +179,7 @@ export function useGenerateWorkspace(projectId: string) {
     }, {});
   }, [importedReviewCases]);
 
-  const coverageTone = review && review.coverage_score >= 80 ? 'text-success-600' : 'text-warning-600';
+  const coverageTone = review?.overall_status === 'PASS' ? 'text-success-600' : review?.overall_status === 'FAIL' ? 'text-danger-600' : 'text-warning-600';
   const isDemoProject = projectId === 'demo';
   const safeTestCasesCount = (testCases ?? []).length;
 
@@ -307,13 +322,14 @@ export function useGenerateWorkspace(projectId: string) {
 
     setIsReviewing(true);
     try {
-      // document_context la BAT BUOC o day: khong co no, Review khong nhin thay
-      // atom nao va se cham diem cao cho mot bo test case con bo sot tai lieu.
-      const data = await postJson<ReviewResult & { document_coverage: DocumentCoverageResult | null }>('/api/ai/enhance', {
-        mode: 'review',
+      // Review runs on its own endpoint/model chain (AI_MODEL_REVIEW). It gets the
+      // categories the set was generated for so it applies the SAME required-taxonomy
+      // rules as Generate; imported sets have no selection and use the default set.
+      const data = await postJson<ReviewResponse>('/api/ai/review', {
         requirement_description: getEffectiveRequirementDescription(),
         test_cases: casesToReview,
         document_context: documents,
+        ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
       }, t.generateWorkspace.errors.requestFailed);
@@ -344,12 +360,14 @@ export function useGenerateWorkspace(projectId: string) {
     setIsEnhancing(true);
     setReviewError('');
     try {
+      // Enhance runs on its own endpoint/model chain (AI_MODEL_ENHANCE) and receives
+      // the structured Review findings, not the review conversation.
       const enhanced = await postJson<AIEnhanceResponse>('/api/ai/enhance', {
-        mode: 'enhance',
         requirement_description: getEffectiveRequirementDescription(),
         test_cases: casesToEnhance,
         review_result: reviewToUse,
         document_context: documents,
+        ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
       }, t.generateWorkspace.errors.requestFailed);
@@ -363,6 +381,7 @@ export function useGenerateWorkspace(projectId: string) {
         after: enhanced.test_cases,
         coverage: enhanced.document_coverage,
         status: enhanced.status,
+        deferredCount: enhanced.deferred_test_cases?.length ?? 0,
       });
       setRepairRounds(enhanced.repair_rounds ?? 0);
       setProviderWarning(enhanced.provider_warning ?? '');
@@ -456,14 +475,6 @@ export function useGenerateWorkspace(projectId: string) {
     } finally {
       setIsSaving(false);
     }
-  }
-
-  function acceptSuggestedCase(testCase: GeneratedTestCase) {
-    setTestCases((current) => [...(current ?? []), { ...testCase, code: testCase.code || `TC-${String((current ?? []).length + 1).padStart(3, '0')}` }]);
-  }
-
-  function acceptSuggestedImportedCase(testCase: GeneratedTestCase) {
-    setImportedReviewCases((current) => [...(current ?? []), { ...testCase, code: testCase.code || `TC-${String((current ?? []).length + 1).padStart(3, '0')}` }]);
   }
 
   function exportExcel() {
@@ -730,7 +741,6 @@ export function useGenerateWorkspace(projectId: string) {
     review, coverageTone,
     exportExcel,
     isSaving, saveToLibrary,
-    acceptSuggestedCase,
 
     // Right column tabs
     rightTab, setRightTab,
@@ -744,7 +754,6 @@ export function useGenerateWorkspace(projectId: string) {
     handleReviewImportFile, clearImportedReviewFile, exportImportedExcel,
     runReview, runEnhance,
     pendingEnhance, enhanceDiff, applyEnhancement, discardEnhancement,
-    acceptSuggestedImportedCase,
   };
 }
 

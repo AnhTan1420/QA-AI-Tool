@@ -106,11 +106,13 @@ function getTaskModel(task: AITask): string | undefined {
     case 'coverage_repair':
       // Repair pass la 1 lan generate thu nho -> mac dinh dung dung model generation.
       return readEnv('AI_MODEL_COVERAGE_REPAIR') ?? readEnv('AI_MODEL_GENERATION');
+    // Review and Enhance are INDEPENDENT tasks: each resolves only its own
+    // variable and then the shared pool. Enhance must NEVER fall back to
+    // AI_MODEL_REVIEW (or vice versa) — changing one must not move the other.
     case 'review':
       return readEnv('AI_MODEL_REVIEW');
     case 'enhance':
-      // Enhance ban chat la 1 review + sua chua -> roi ve model review neu chua cau hinh rieng.
-      return readEnv('AI_MODEL_ENHANCE') ?? readEnv('AI_MODEL_REVIEW');
+      return readEnv('AI_MODEL_ENHANCE');
     case 'classification':
       return readEnv('AI_MODEL_CLASSIFICATION');
     case 'document_extraction':
@@ -241,6 +243,25 @@ export function getGenerationCategoryFloorCap(detailLevel: string): number {
   const override = readIntEnv('AI_GENERATION_CATEGORY_FLOOR_CAP', 0, 0, 200);
   if (override > 0) return override;
   return CATEGORY_FLOOR_CAP_BY_DETAIL[detailLevel] ?? CATEGORY_FLOOR_CAP_BY_DETAIL.standard;
+}
+
+/**
+ * Output-token budgets per task family (Gemini counts thinking tokens against
+ * maxOutputTokens, so these are deliberately not one shared number):
+ *
+ *   Generate -> large   (gemini.ts DEFAULT_MAX_OUTPUT_TOKENS = 16_384)
+ *   Enhance  -> moderate (returns only revised/new cases, not the whole suite)
+ *   Review   -> small   (returns compact evaluation metadata only)
+ *
+ * Do NOT raise the Review budget to "fix" long Review output — shrink the
+ * prompt/schema/limits in quality-standards.ts (REVIEW_LIMITS) instead.
+ */
+export function getReviewMaxOutputTokens(): number {
+  return readIntEnv('AI_REVIEW_MAX_OUTPUT_TOKENS', 3_072, 512, 8_192);
+}
+
+export function getEnhanceMaxOutputTokens(): number {
+  return readIntEnv('AI_ENHANCE_MAX_OUTPUT_TOKENS', 8_192, 1_024, 16_384);
 }
 
 /** So atom toi da gui trong 1 lan goi repair (batch theo tai lieu/section). */

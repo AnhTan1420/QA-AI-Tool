@@ -124,8 +124,8 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
         </div>
         {workspace.review && (
           <div className="rounded-[var(--radius-control)] bg-ink-50 px-4 py-2 text-right">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-ink-500">{t.generateWorkspace.coverageLabel}</p>
-            <p className={`text-3xl font-black ${workspace.coverageTone}`}>{workspace.review.coverage_score}%</p>
+            <p className="text-[10px] font-bold uppercase tracking-wide text-ink-500">{t.generateWorkspace.reviewPanel.overallStatusLabel}</p>
+            <p className={`text-xl font-black ${workspace.coverageTone}`}>{t.generateWorkspace.reviewPanel.overallStatus[workspace.review.overall_status]}</p>
           </div>
         )}
       </div>

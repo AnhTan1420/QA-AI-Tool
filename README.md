@@ -1,7 +1,7 @@
 Built by **Jordan Le** (Le Van Anh Tan)
 # QAJD — AI Test Case Generator & QA Toolkit
 
-> Internal QA platform: AI test case generation with an independent Senior QA Review Agent, a project-based test case library with RAG-powered old-case retrieval and Requirement Traceability, an AI-grounded Playwright automation agent (single-case and batch), and a client-side QA Utility Toolkit.
+> Internal QA platform: AI test case generation with a bounded QA Review and a separate targeted Enhance step, a project-based test case library with RAG-powered old-case retrieval and Requirement Traceability, an AI-grounded Playwright automation agent (single-case and batch), and a client-side QA Utility Toolkit.
 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue)](https://www.typescriptlang.org/)
@@ -58,7 +58,7 @@ npm run dev
 |---------|-------------|
 | AI Test Case Generation | Structured test cases from a natural-language requirement, via Gemini-only multi-model failover |
 | 100% Document Traceability | Every document atom is deterministically checked against `source_requirement_ids`; uncovered atoms trigger an automatic Gemini repair pass before the run is reported complete |
-| Senior QA Review & Enhance | Independent agent scores coverage, flags gaps/comments, and can rewrite the set based on its own review |
+| QA Review & Enhance | **Review** checks the set against the same quality standard Generate uses (language/detail level + required taxonomy) and returns compact findings; **Enhance** is a separate task/model that improves only the cases Review flagged |
 | Test Case Library | Search, paginate, bulk-delete, version history, threaded comments |
 | Old-Cases Import (Excel) | Upload an existing `.xlsx` suite to review or feed as generation reference |
 | RAG Retrieval | Old test cases auto-embed on upload and are auto-retrieved by semantic similarity during generation |
@@ -169,7 +169,7 @@ test_cases (1:N) ──► automation_runs (pass/fail history, screenshot_url)
 2. `/api/ai/generate` calls Gemini (primary model → retry → fallback models) with the requirement, any RAG-retrieved old cases, and any document atoms.
 3. All AI output is validated against `models/validators/test-case.ts` **and** the semantic validator in `services/ai/test-case-validation.ts` before reaching the client.
 4. The route then computes `document_coverage` **in code** and, if any atom is uncovered, runs the **Coverage Repair loop** (`services/ai/coverage-repair.ts`) until coverage is 100% — see [Document coverage](#document-coverage-100-is-the-only-complete-state).
-5. Optional: run the **Review Agent** (`/api/ai/enhance`, `mode: "review"`). It receives the same document atoms and the deterministic coverage number, and its self-reported score is capped by that number. Optionally **Enhance** to close the gaps it found.
+5. Optional: run **Review** (`POST /api/ai/review`, model `AI_MODEL_REVIEW`) — a bounded evaluation against the same standard Generate used. Optionally **Enhance** (`POST /api/ai/enhance`, model `AI_MODEL_ENHANCE`) to fix the cases Review flagged.
 6. **Save to Library** persists the set via `/api/test-case-sets` + `/api/test-cases/bulk`.
 
 ### Single-Case Automation
@@ -218,8 +218,8 @@ AI_MODEL_FALLBACK_2=gemini-3.5-flash
 # Per-task overrides — optional, each falls back to the pool above.
 AI_MODEL_GENERATION=gemini-3.7-flash
 AI_MODEL_COVERAGE_REPAIR=gemini-3.7-flash        # defaults to AI_MODEL_GENERATION
-AI_MODEL_REVIEW=gemini-3.7-flash
-AI_MODEL_ENHANCE=gemini-3.7-flash                # defaults to AI_MODEL_REVIEW
+AI_MODEL_REVIEW=gemini-3.7-flash                 # Review only. Chain: AI_MODEL_REVIEW -> pool
+AI_MODEL_ENHANCE=gemini-3.7-flash                # Enhance only. Chain: AI_MODEL_ENHANCE -> pool. NEVER inherits AI_MODEL_REVIEW
 AI_MODEL_CLASSIFICATION=gemini-3.6-flash
 AI_MODEL_DOCUMENT_EXTRACTION=gemini-3.7-flash    # must support multimodal input (Vision)
 AI_MODEL_PLAYWRIGHT_CODEGEN=gemini-3.7-flash
@@ -231,6 +231,12 @@ GEMINI_REQUEST_TIMEOUT_MS=120000     # hard timeout per request (AbortController
 GEMINI_MAX_RETRIES_PER_MODEL=2       # retries on the SAME model before moving to the next one
 GEMINI_BACKOFF_BASE_MS=1000          # exponential backoff base
 GEMINI_BACKOFF_MAX_MS=8000           # backoff ceiling (jitter is always applied)
+
+# Output-token budgets. Generate is large (16384), Review small, Enhance moderate.
+# Thinking tokens count against these, so Review also runs at thinkingLevel "low".
+# Don't raise the Review budget to hide a verbose prompt — shrink REVIEW_LIMITS instead.
+AI_REVIEW_MAX_OUTPUT_TOKENS=3072     # default 3072, clamped to 512–8192
+AI_ENHANCE_MAX_OUTPUT_TOKENS=8192    # default 8192, clamped to 1024–16384
 
 # Document coverage repair loop (services/ai/coverage-repair.ts)
 AI_MAX_COVERAGE_REPAIR_ROUNDS=4      # hard stop; the loop also stops early if a round makes no progress
@@ -352,16 +358,25 @@ The loop is bounded twice: by `AI_MAX_COVERAGE_REPAIR_ROUNDS`, and by a progress
 
 If the loop cannot reach 100%, the API returns `status: "coverage_incomplete"` together with the cases it did produce (partial work is never silently thrown away), and the UI shows the gap instead of a success state.
 
-### Generate → Review → Enhance share one source of truth
-
-All three flows operate on the same `QAAISourceContext` and the same prompt formatters (`services/ai/source-context.ts`):
+### Generate → Review → Enhance
 
 ```
-Requirement description + ParsedDocument[] + DocumentAtom[] + RAG cases
-+ GenerationAnalysis + current test cases + DocumentCoverageResult + ReviewResult
+                 services/ai/quality-standards.ts
+       (detail-level rules · taxonomy definitions · vague/placeholder rules · limits)
+                               │
+        ┌──────────────────────┼───────────────────────┐
+     GENERATE               REVIEW                  ENHANCE
+  AI_MODEL_GENERATION    AI_MODEL_REVIEW        AI_MODEL_ENHANCE
+   (large budget)      (small, bounded)       (moderate, targeted)
 ```
 
-Review receives the documents and the deterministic coverage number, and its self-reported `coverage_score` is **capped** by that number — if code measures 32.5% and Gemini claims 95%, the API and UI show 32.5% and keep 95% only as `ai_reported_coverage_score` for auditing. Enhance receives the same context plus the review findings, may not delete an existing atom mapping, and its result is run back through the coverage repair loop.
+**One standard.** `services/ai/quality-standards.ts` holds the step bounds per detail level, the per-category minimum, the taxonomy definitions (keyed by the same `CATEGORY_VALUES` Generate validates against) and the vague-wording rules. Generate's prompt reads its numbers from there; Review and Enhance embed the identical block. "Generate says valid, Review says invalid" cannot happen through diverging constants.
+
+**Review = bounded evaluation, decided mostly by code.** `services/ai/review-analysis.ts` computes everything measurable deterministically (step counts, over-/under-detail, placeholder wording, cases per required category, structure, overall `PASS | NEEDS_IMPROVEMENT | FAIL`). The model is asked only for semantic judgment and receives compact case digests, not full cases. Its output can make a finding *worse* than the rules say, never better (a category with zero cases stays `MISSING`; `SUPPORTED` needs evidence). Findings are clamped to `REVIEW_LIMITS` (max 5 issues, 160-char evidence…), findings that cite a nonexistent case or carry no evidence are dropped, and there is no reasoning/analysis/score/suggested-test-case field to spend tokens on.
+
+Review result: `language_detail` (`TOO_VAGUE | APPROPRIATE | OVER_DETAILED`), `taxonomy[]` (`SUPPORTED | PARTIALLY_SUPPORTED | MISSING | NOT_APPLICABLE | INSUFFICIENT_EVIDENCE` per **required** category — the categories the set was generated for, else Generate's default `positive/negative/boundary`), `issues[]`, `recommendations[]`.
+
+**Enhance = targeted improvement, boundaries enforced in code.** `services/ai/enhance-merge.ts` picks a focused set of target cases (those with rule or Review findings, max 12 per pass; the rest are reported as deferred) and sends only those + their findings + the source requirement — not the suite, not Review's prose. The model returns only revised/new cases; the application then keeps each case's category, priority and document-atom mapping, restores `test_data`/`preconditions` the model omitted, rejects changes to non-flagged cases, and allows **new** cases only for a proven `MISSING`/`PARTIALLY_SUPPORTED` required category, within a small budget. `INSUFFICIENT_EVIDENCE` is not a gap. Enhance does not run the coverage-repair loop (that is a Generate-side task); document coverage is still computed and reported honestly.
 
 ---
 
@@ -370,7 +385,8 @@ Review receives the documents and the deterministic coverage number, and its sel
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/ai/generate` | `POST` | Generate test cases from a requirement |
-| `/api/ai/enhance` | `POST` | Review (`mode: "review"`) or rewrite (`mode: "enhance"`) a set |
+| `/api/ai/review` | `POST` | Bounded evaluation of a set against the generation standard (`AI_MODEL_REVIEW`) |
+| `/api/ai/enhance` | `POST` | Targeted improvement from Review findings (`AI_MODEL_ENHANCE`) |
 | `/api/ai/documents/parse` | `POST` | AI Document Reader — atomize Figma/MD/PDF/DOCX/image into `DocumentAtom`s |
 | `/api/ai/embed` | `POST` | Create a raw vector embedding |
 | `/api/test-case-imports` | `POST` | RAG auto-embed: save + embed an uploaded old-test-case file |
@@ -407,9 +423,9 @@ curl -X POST http://localhost:3000/api/ai/generate \
   -d '{"requirement_description":"User can add items to cart and checkout","selected_categories":["positive","negative","boundary"],"language":"English","detail_level":"standard","retrieved_old_test_cases":[]}'
 
 # Review
-curl -X POST http://localhost:3000/api/ai/enhance \
+curl -X POST http://localhost:3000/api/ai/review \
   -H "Content-Type: application/json" \
-  -d '{"mode":"review","requirement_description":"User can add items to cart and checkout","test_cases":[{"code":"TC_CART_001","title":"Add single item to cart","...":"..."}]}'
+  -d '{"selected_categories":["positive","negative","boundary"],"detail_level":"standard","requirement_description":"User can add items to cart and checkout","test_cases":[{"code":"TC_CART_001","title":"Add single item to cart","...":"..."}]}'
 
 # Enqueue batch automation
 curl -X POST http://localhost:3000/api/automation/batch-run \
@@ -423,7 +439,7 @@ curl -X POST http://localhost:3000/api/automation/batch-run \
 ## Core Principles
 
 1. **Never trust raw AI JSON** — an HTTP 200 proves nothing. Every Gemini response passes Zod schema validation *and* semantic validation (`services/ai/test-case-validation.ts`) before it reaches the DB or the client.
-2. **Review Agent is independent, not blind** — it shares no conversation history or generation prompt with the Generation Agent, but it MUST receive the same documents, atoms and deterministic coverage number. An auditor that cannot see the specification cannot audit against it.
+2. **Review and Enhance are separate tasks with separate models, judged by the Generate standard** — Review never rewrites and Enhance never re-judges; each resolves only its own `AI_MODEL_*` (then the shared pool), and both are held to `services/ai/quality-standards.ts`, the same source Generate reads.
 3. **No hard-coded model IDs in business logic** — model selection lives *only* in `services/ai/model-registry.ts`. No feature file may name a model. Provider chain: Gemini task model → `AI_MODEL_PRIMARY` → `AI_MODEL_FALLBACK_1` → `AI_MODEL_FALLBACK_2`.
 4. **Document coverage is computed, never reported** — the number shown to the user always comes from `computeDocumentCoverage()`, never from anything the model said about itself.
 5. **Test cases join through sets** — `test_cases` has no `project_id`; join via `test_case_sets`.

@@ -1,169 +1,116 @@
-import type { GeneratedTestCase, ReviewResult } from '@/models/validators/test-case';
+import type { TestCaseCategory } from '@/models/validators/test-case';
 import type { ParsedDocument } from '@/models/validators/document';
-import type { DocumentCoverageResult } from '@/services/documents/coverage';
-import {
-  formatCoverageForPrompt,
-  formatDocumentContextForPrompt,
-  formatTestCasesForPrompt,
-} from '../source-context';
+import type { EnhancePlan } from '../enhance-merge';
+import { ENHANCE_LIMITS, renderQualityStandardsForPrompt } from '../quality-standards';
+import { truncate } from '../review-analysis';
+
+// ============================================================================
+// Enhance = TARGETED improvement of existing test cases.
+//
+//   Runs on AI_MODEL_ENHANCE — a separate model chain from Review.
+//   Receives: source requirement + the specific cases with findings + those
+//             findings (structured). NOT the whole suite, NOT Review's full
+//             response, NOT any earlier reasoning.
+//   Returns:  only the revised (and, for proven taxonomy gaps, new) cases.
+//             The application merges them and enforces the boundaries
+//             (services/ai/enhance-merge.ts), so the rules below are backed by
+//             code, not just by the prompt.
+// ============================================================================
+
+export const ENHANCE_SYSTEM_PROMPT = `You are improving an existing QA test case.
+
+Use the SAME quality standard used by the Generate workflow (given in the user message).
+
+Use the supplied Review findings as targeted guidance.
+
+Improve only where justified by source requirements and review findings.
+
+Rules:
+- Preserve valid behavior: keep each case's code, category, priority and scenario. Fix its quality, not its purpose.
+- Do not invent unsupported requirements. Every value, rule and expected result must come from the source requirement or the case itself.
+- Do not add unrelated scenarios. New cases are allowed ONLY for the listed taxonomy gaps, up to the stated limit.
+- Do not return cases that have no finding.
+- Split merged steps, replace generic wording with the concrete field/button/value from test_data, make expected results observable. Trim repetition and prose when a case is over-detailed. Do not pad.
+- Do not provide lengthy reasoning. Return only the required structure.
+- All JSON keys stay in English; text values keep the language of the original test cases.`;
 
 export type EnhancePromptInput = {
   requirement_description: string;
-  test_cases: GeneratedTestCase[];
-  review_result: ReviewResult;
-  /** Enhance nhin thay DUNG bo tai lieu ma Generate va Review da nhin thay. */
+  detail_level: string;
+  required_categories: readonly TestCaseCategory[];
+  per_category_min: number;
+  plan: EnhancePlan;
+  /** Titles of the whole suite, only used to avoid duplicating a scenario when adding gap cases. */
+  suite_index: { code: string; title: string; category: TestCaseCategory }[];
+  /** Grounding for new gap cases only. */
   documents: ParsedDocument[];
-  /** Do phu do ung dung tinh — day la danh sach gap PHAI dong. */
-  document_coverage: DocumentCoverageResult | null;
 };
 
-export function buildEnhancePrompt(input: EnhancePromptInput) {
-  const hasDocuments = input.documents.length > 0;
-  const uncoveredCount = input.document_coverage?.uncovered.length ?? 0;
+const MAX_REQUIREMENT_CHARS = 6_000;
+const MAX_INDEX_LINES = 60;
+const MAX_ATOMS = 20;
 
-  return `You are a Senior QA Lead performing SURGICAL REFINEMENT on a test suite. You do not rewrite everything — you fix precisely what is broken, fill exactly what is missing, and remove only what is redundant.
-
-══════════════════════════════════════════════════════════════════
-TRANSLATION & LANGUAGE RULES (CRITICAL)
-══════════════════════════════════════════════════════════════════
-• All JSON Keys MUST remain strictly in English as defined in the schema.
-• Values inside JSON (titles, actions, expected results, preconditions) MUST preserve the primary language used in the Requirement Description and original Test Cases.
-
-══════════════════════════════════════════════════════════════════
-PRIORITY ORDER (work top-down — do not skip ahead)
-══════════════════════════════════════════════════════════════════
-
-1. UNCOVERED DOCUMENT ATOMS${hasDocuments ? ` — ${uncoveredCount} atom(s) currently have ZERO test coverage. This is the highest priority and is measured by the application, not by opinion.` : ' — (no documents attached, skip)'}
-2. Critical requirement gaps reported by the audit below.
-3. Incorrect mappings: a test case citing an atom_id it does not actually verify.
-4. Missing negative / boundary / state-transition / integration cases.
-5. Weak or ambiguous steps (non-atomic, no concrete target).
-6. Duplicate cases.
-7. Poor expected results (not observable, not measurable).
-8. Weak test data (placeholders instead of realistic values).
-
-══════════════════════════════════════════════════════════════════
-ENHANCEMENT PROTOCOL: 4-PHASE SURGICAL PROCESS
-══════════════════════════════════════════════════════════════════
-
-PHASE 1 — GAP ANALYSIS (Understand Before Touching)
-Review the audit feedback carefully:
-• Audit coverage score: ${input.review_result.coverage_score}%
-• Requirement gaps: ${JSON.stringify(input.review_result.requirement_gaps, null, 2)}
-• Case comments: ${JSON.stringify(input.review_result.test_case_comments, null, 2)}
-
-For each gap, determine:
-• Is it a MISSING case? → Create new case with full detail.
-• Is it a BROKEN case? → Fix the specific issue (don't rewrite unrelated parts).
-• Is it a SHALLOW case? → Deepen expected results and add verification steps.
-• Is it a REDUNDANT case? → Remove it entirely.
-
-PHASE 2 — SURGICAL RULES (What You Can and Cannot Do)
-✅ YOU MAY:
-• Add new test cases for gaps and for uncovered document atoms.
-• Modify expected_result to be more precise and observable.
-• Split combined steps into atomic steps.
-• Add missing preconditions or test data.
-• Add a missing, GENUINELY VERIFIED atom_id to an existing case's source_requirement_ids.
-• Change priority if risk analysis justifies it.
-• Remove truly duplicate cases (same condition, different title).
-
-❌ YOU MUST NOT:
-• Omit untouched existing test cases. The final output MUST contain the ENTIRE test suite (existing valid cases + fixed cases + newly created cases).
-• REMOVE an existing atom_id from source_requirement_ids unless that case genuinely does not verify it. Deleting a mapping destroys coverage the suite already had.
-• Invent atom IDs. Only IDs present in the SOURCE DOCUMENTS section below are valid.
-• Claim more than 8 atoms on a single test case, or create a generic "verify all document requirements" case — the application rejects both.
-• Change the code (TC_XXX) of existing cases unless merging duplicates.
-• Change the core scenario of an existing case — fix its quality, not its purpose.
-• Remove cases just because they are "simple" — only if they are truly redundant.
-• Add markdown or explanation outside the JSON object.
-
-PHASE 3 — QUALITY GATES FOR NEW/MODIFIED CASES
-Every case in the final output MUST pass:
-
-GATE 1 — Traceability
-• Can I point to the exact requirement sentence or document atom this case validates?
-• If NO → reject or rewrite.
-
-GATE 2 — Observability
-• Can a tester verify the expected result with a screenshot, API call, DB query, or log entry?
-• If NO → make it concrete and measurable.
-
-GATE 3 — Atomicity
-• Does each step contain EXACTLY ONE action?
-• If NO → split the step.
-• Does each step's "action" name a CONCRETE field/button/screen label and a real value (not "nhập dữ liệu hợp lệ", "submit form", "verify result")?
-• If NO → rewrite the action with the actual label/value, pulling the value from that case's own test_data.
-
-GATE 4 — Data Concreteness
-• Is every test data field filled with a real, specific value (realistic email, phone, date, ID, amount)?
-• If NO → fill it.
-
-GATE 5 — Adversarial Depth
-• For Critical/Major cases: does it test at least one "what if things go wrong" scenario?
-• If NO → add negative step or create companion negative case.
-
-PHASE 4 — FINAL VERIFICATION CHECKLIST
-Before outputting, verify:
-□ Every atom listed as UNCOVERED below now appears in the source_requirement_ids of at least one case that truly verifies it.
-□ Every atom already covered is STILL covered.
-□ Total cases ≥ original count (unless removing true duplicates).
-□ Every gap from the audit is addressed (either fixed or new case added).
-□ No case has vague expected results.
-□ Step numbers run 1..n with no gaps.
-□ JSON is a valid pure object with a "test_cases" array, no markdown.
-
-══════════════════════════════════════════════════════════════════
-OUTPUT SCHEMA (INVIOLABLE)
-══════════════════════════════════════════════════════════════════
-
-Output MUST be a valid JSON OBJECT containing "analysis" and "test_cases".
-
-{
-  "analysis": {
-    "gaps_addressed": ["Specific description of gaps fixed"],
-    "atoms_newly_covered": ["atom_id values this pass brings from uncovered to covered"],
-    "total_cases_before": number,
-    "total_cases_after": number
-  },
-  "test_cases": [
-    {
-      "code": "TC_XXX",
-      "title": "string — specific condition, not generic",
-      "category": "positive | negative | boundary | ui_ux | compatibility | performance | security | integration | regression | accessibility | localization",
-      "priority": "Critical | Major | Normal",
-      "preconditions": ["specific system state, user role, data setup"],
-      "test_data": {"field_name": "concrete_value_string"},
-      "steps": [
-        {"step_number": 1, "action": "ONE atomic action", "expected_result": "OBSERVABLE and MEASURABLE result"}
-      ],
-      "final_expected_result": "End-state of system, DB, UI, logs, side effects",
-      "source_requirement_ids": ["exact atom_id values only"]
-    }
-  ]
+function formatTargets(plan: EnhancePlan): string {
+  if (plan.targets.length === 0) return '(none — only taxonomy gaps below)';
+  return plan.targets
+    .map((tc) => {
+      const notes = (plan.findings.get(tc.code) ?? []).map((n) => `    - ${n}`).join('\n');
+      return `### ${tc.code}
+FINDINGS:
+${notes}
+CURRENT CASE:
+${JSON.stringify(tc)}`;
+    })
+    .join('\n\n');
 }
 
-══════════════════════════════════════════════════════════════════
-INPUT DATA
-══════════════════════════════════════════════════════════════════
+function formatGaps(plan: EnhancePlan): string {
+  if (plan.taxonomy_gaps.length === 0) return '(none — do NOT add any new test case)';
+  return plan.taxonomy_gaps
+    .map(
+      (g) =>
+        `- ${g.category}: ${g.status}. ${g.evidence} Existing: ${g.existing_codes.join(', ') || '(none)'}. You may add at most ${g.allowed_new} new case(s) with category "${g.category}".`,
+    )
+    .join('\n');
+}
 
-[REQUIREMENT]
-${input.requirement_description}
+function formatGrounding(documents: ParsedDocument[]): string {
+  const atoms = documents.flatMap((d) => d.atoms).slice(0, MAX_ATOMS);
+  if (atoms.length === 0) return '';
+  return `\n[SOURCE DOCUMENT ATOMS — grounding for new cases only; cite an id in source_requirement_ids only if it is listed here]\n${atoms
+    .map((a) => `  [${a.atom_id}] ${truncate(a.label, 70)} — ${truncate(a.detail, 110)}`)
+    .join('\n')}`;
+}
 
-[SOURCE DOCUMENTS — AI Document Reader]
-${formatDocumentContextForPrompt(input.documents)}
+export function buildEnhancePrompt(input: EnhancePromptInput): string {
+  const { plan } = input;
+  const allowNew = plan.taxonomy_gaps.length > 0;
+  const index = allowNew
+    ? `\n[EXISTING SCENARIOS — do not duplicate]\n${input.suite_index
+        .slice(0, MAX_INDEX_LINES)
+        .map((c) => `  ${c.code} [${c.category}] ${truncate(c.title, 80)}`)
+        .join('\n')}`
+    : '';
 
-[DOCUMENT COVERAGE — computed by the application, authoritative]
-${formatCoverageForPrompt(input.document_coverage)}
+  return `${renderQualityStandardsForPrompt({
+    detailLevel: input.detail_level,
+    requiredCategories: input.required_categories,
+    perCategoryMin: input.per_category_min,
+  })}
 
-[CURRENT TEST CASES]
-${formatTestCasesForPrompt(input.test_cases)}
+[SOURCE REQUIREMENT]
+${truncate(input.requirement_description, MAX_REQUIREMENT_CHARS)}${formatGrounding(input.documents)}
 
-[REVIEW FEEDBACK]
-Audit score: ${input.review_result.coverage_score}%
-Gaps: ${JSON.stringify(input.review_result.requirement_gaps, null, 2)}
-Comments: ${JSON.stringify(input.review_result.test_case_comments, null, 2)}
+[TEST CASES TO IMPROVE — return a revised version of each, same code]
+${formatTargets(plan)}
 
-══════════════════════════════════════════════════════════════════
-OUTPUT: Pure JSON Object strictly following the schema above.`;
+[TAXONOMY GAPS — the only reason a new case may be added]
+${formatGaps(plan)}${index}
+
+OUTPUT (JSON object, exactly these keys):
+{
+  "test_cases": [ <full test case object, same schema as the current cases> ],
+  "changes": [ "<=${ENHANCE_LIMITS.maxChangeSummaryChars} chars: TC_X — what you improved" ]
+}
+Return ONLY revised target cases and allowed new cases. "changes" has at most ${ENHANCE_LIMITS.maxChangeSummaries} entries. Steps are numbered 1..n.`;
 }

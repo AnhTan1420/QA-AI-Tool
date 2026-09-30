@@ -164,71 +164,109 @@ export const retrievedTestCaseSchema = z.object({
   source_requirement_ids: z.array(z.string()).optional(),
 });
 
-// Cac field o duoi day (dimension_scores, severity, dimension, summary) DA duoc
-// review-agent.ts yeu cau AI sinh ra tu truoc, nhung schema cu KHONG khai bao nen
-// Zod (che do "strip" mac dinh) am tham vut bo ngay khi parse - AI van tra tien
-// token de tinh 12 diem theo dimension + severity tung gap/comment + tom tat, ma
-// khong noi nao trong app doc lai duoc. Fix: khai bao de giu lai + hien thi o UI
-// (xem review-panel.tsx) va luu vao ai_reviews.review_payload.
-// Tat ca deu .optional() (khong .min(1)/khong bat buoc) vi runAIAgent('review')
-// KHONG dung Gemini responseSchema (chi tac vu 'generation' co) - review hoan
-// toan dua vao prompt text, nen neu model bo sot 1 field o day thi request van
-// khong nen fail (giu nguyen hanh vi cu, chi "nang cap" chu khong "sua nghiem").
+// ── Review result (bounded QA evaluation) ─────────────────────────────────
+// Review EVALUATES against the generation standard (services/ai/quality-standards.ts)
+// and returns compact findings only. It deliberately has NO free-form
+// "analysis"/reasoning field, NO score, and NO suggested/rewritten test cases:
+// those were what made the old Review consume the whole output-token budget and
+// blur the line between Review (what is wrong) and Enhance (fix it).
+//
+// JSON keys are snake_case like every other payload in this codebase.
+
+export const detailStatusSchema = z.enum(['TOO_VAGUE', 'APPROPRIATE', 'OVER_DETAILED']);
+export const taxonomyStatusSchema = z.enum([
+  'SUPPORTED',
+  'PARTIALLY_SUPPORTED',
+  'MISSING',
+  'NOT_APPLICABLE',
+  'INSUFFICIENT_EVIDENCE',
+]);
+export const reviewOverallStatusSchema = z.enum(['PASS', 'NEEDS_IMPROVEMENT', 'FAIL']);
 const severitySchema = z.enum(['Critical', 'Major', 'Minor']);
-
-const dimensionScoresSchema = z
-  .object({
-    functional_positive: z.number().min(0).max(100),
-    functional_negative: z.number().min(0).max(100),
-    boundary_edge: z.number().min(0).max(100),
-    state_transition: z.number().min(0).max(100),
-    security: z.number().min(0).max(100),
-    performance: z.number().min(0).max(100),
-    compatibility: z.number().min(0).max(100),
-    integration: z.number().min(0).max(100),
-    regression: z.number().min(0).max(100),
-    accessibility: z.number().min(0).max(100),
-    localization: z.number().min(0).max(100),
-    audit_compliance: z.number().min(0).max(100),
-  })
-  .partial();
-
-// Phan tich 6 lop cua Review Agent. TRUOC DAY schema nay KHONG khai bao
-// `analysis`, nen Zod (che do "strip" mac dinh) vut bo toan bo no ngay sau khi
-// parse: model ton token that su de viet ra layer1..layer6 (phan gia tri nhat
-// cua mot ban audit — no chi ra *tai sao* diem so nhu vay) roi khong noi nao
-// trong app doc lai duoc. Dung `record` thay vi liet ke cung 6 key de model doi
-// ten lop khong lam mat du lieu.
-const reviewAnalysisSchema = z.record(
-  z.preprocess(
-    (value) => (typeof value === 'string' ? [value] : value),
-    z.array(z.string()),
-  ),
-);
-export type ReviewAnalysis = z.infer<typeof reviewAnalysisSchema>;
+export const reviewIssueAreaSchema = z.enum(['language_detail', 'taxonomy', 'executability', 'consistency']);
 
 export const reviewResultSchema = z.object({
-  coverage_score: z.number().min(0).max(100),
+  overall_status: reviewOverallStatusSchema,
+  /** One deterministic line built by the application (no model tokens). */
   summary: z.string().optional(),
-  analysis: reviewAnalysisSchema.optional(),
-  dimension_scores: dimensionScoresSchema.optional(),
-  requirement_gaps: z.array(
+  language_detail: z.object({
+    status: detailStatusSchema,
+    counts: z.object({
+      TOO_VAGUE: z.number().int().min(0),
+      APPROPRIATE: z.number().int().min(0),
+      OVER_DETAILED: z.number().int().min(0),
+    }),
+    issues: z.array(
+      z.object({
+        test_case_code: z.string().min(1),
+        status: detailStatusSchema,
+        reason: z.string(),
+        source: z.enum(['rule', 'ai']).optional(),
+      }),
+    ),
+  }),
+  taxonomy: z.array(
     z.object({
-      requirement_text: z.string().min(1),
-      severity: severitySchema.optional(),
-      dimension: z.string().optional(),
-      suggested_test_case: generatedTestCaseSchema.optional(),
+      category: testCaseCategorySchema,
+      status: taxonomyStatusSchema,
+      evidence: z.string(),
+      supporting_codes: z.array(z.string()).default([]),
     }),
   ),
-  test_case_comments: z.array(
+  issues: z.array(
     z.object({
-      test_case_code: z.string().min(1),
-      issue_type: z.enum(['missing_step', 'ambiguous_expected', 'duplicate', 'priority_mismatch']),
-      severity: severitySchema.optional(),
-      comment: z.string().min(1),
+      test_case_code: z.string().optional(),
+      severity: severitySchema,
+      area: reviewIssueAreaSchema,
+      description: z.string().min(1),
+      evidence: z.string().min(1),
     }),
   ),
+  recommendations: z.array(z.string()),
+  /** Structural errors found by deterministic validation (duplicate codes etc.). */
+  structure_errors: z.array(z.string()).optional(),
 });
+
+/**
+ * What the MODEL returns for Review — deliberately lenient (every array
+ * defaults to []) so a response salvaged after truncation still parses. The
+ * application then clamps, filters and merges it with deterministic findings
+ * (services/ai/review-analysis.ts finalizeReview) before anything is returned.
+ */
+export const reviewModelOutputSchema = z.object({
+  language_detail: z
+    .array(
+      z.object({
+        test_case_code: z.string().default(''),
+        status: detailStatusSchema.catch('TOO_VAGUE'),
+        reason: z.string().default(''),
+      }),
+    )
+    .default([]),
+  taxonomy: z
+    .array(
+      z.object({
+        category: z.string().default(''),
+        status: taxonomyStatusSchema.catch('INSUFFICIENT_EVIDENCE'),
+        evidence: z.string().default(''),
+        supporting_codes: z.array(z.string()).default([]),
+      }),
+    )
+    .default([]),
+  issues: z
+    .array(
+      z.object({
+        test_case_code: z.string().optional(),
+        severity: severitySchema.catch('Minor'),
+        area: reviewIssueAreaSchema.catch('consistency'),
+        description: z.string().default(''),
+        evidence: z.string().default(''),
+      }),
+    )
+    .default([]),
+  recommendations: z.array(z.string()).default([]),
+});
+export type ReviewModelOutput = z.infer<typeof reviewModelOutputSchema>;
 
 // Analysis cua Enhance Agent — cung mot loi cu: prompt yeu cau model liet ke
 // dung nhung gap nao da duoc dong va atom nao vua chuyen tu uncovered sang
@@ -243,7 +281,8 @@ export const enhanceAnalysisSchema = z.object({
 export type EnhanceAnalysis = z.infer<typeof enhanceAnalysisSchema>;
 
 export type ReviewSeverity = z.infer<typeof severitySchema>;
-export type DimensionScores = z.infer<typeof dimensionScoresSchema>;
+export type DetailStatusValue = z.infer<typeof detailStatusSchema>;
+export type TaxonomyStatusValue = z.infer<typeof taxonomyStatusSchema>;
 
 // generationAnalysisSchema — validate PHASE 0 "analysis" tu Generation Agent (xem
 // lib/ai/prompts/generation-agent.ts + generation-response-schema.ts). Truoc day
@@ -323,11 +362,6 @@ export const generateRequestSchema = z
       });
     }
   });
-
-export const reviewRequestSchema = z.object({
-  requirement_description: z.string().min(20),
-  generated_test_cases: generatedTestCasesSchema,
-});
 
 export type TestCaseCategory = z.infer<typeof testCaseCategorySchema>;
 export type GeneratedTestCase = z.infer<typeof generatedTestCaseSchema>;

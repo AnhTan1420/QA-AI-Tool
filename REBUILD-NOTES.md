@@ -475,3 +475,18 @@ AI_GENERATION_REQUEST_TIMEOUT_MS=100000   # was 60000 (shared default)
 AI_GENERATION_INITIAL_ATOM_CAP=0          # 0 = auto by detail_level (concise 24 / standard 15 / detailed 6)
 AI_GENERATION_CATEGORY_FLOOR_CAP=0        # 0 = auto by detail_level (concise 22 / standard 14 / detailed 7)
 ```
+
+
+---
+
+# Review / Enhance re-architecture
+
+**Problem.** Review used its own 12-dimension model (Generate has 11 categories and per-detail-level step rules), an "adversarial" multi-layer prompt with a free-form `analysis` field, per-gap `suggested_test_case` objects (i.e. regeneration) and the full atom list — so it neither matched Generate's standard nor stayed within an output budget. Enhance was a mode of the same route and its model **fell back to `AI_MODEL_REVIEW`**.
+
+**Change.**
+- `services/ai/quality-standards.ts` is now the single source of the generation standard; Generate consumes it, Review/Enhance embed it. Generate is additionally told the max steps per case (`DETAIL_LEVEL_RULES.*.maxSteps`, new — needed so `OVER_DETAILED` is measurable and Generate can't emit what Review would call over-detailed).
+- `POST /api/ai/review` (new, `AI_MODEL_REVIEW`) and `POST /api/ai/enhance` (`AI_MODEL_ENHANCE`) are separate routes/prompts/budgets. **Breaking:** `/api/ai/enhance` no longer accepts `mode: "review"`; it requires `review_result` in the new shape.
+- Review result has no `coverage_score`, `dimension_scores`, `requirement_gaps`, `test_case_comments`, `analysis` or suggested test cases. `ai_reviews.coverage_score` now stores the application-computed document coverage percent (nullable). Old rows are unchanged; the saved-set page tolerates both shapes. `reconcileReviewCoverage` was removed (nothing left to cap).
+- Enhance no longer runs the document coverage-repair loop and no longer adds atom mappings. Coverage is still computed and returned (`status: coverage_incomplete`).
+
+**Vercel.** Set `AI_MODEL_REVIEW` and `AI_MODEL_ENHANCE` independently. If `AI_MODEL_ENHANCE` is unset, Enhance uses `AI_MODEL_PRIMARY` (not the Review model). Optional: `AI_REVIEW_MAX_OUTPUT_TOKENS`, `AI_ENHANCE_MAX_OUTPUT_TOKENS`.

@@ -3,13 +3,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/services/supabase/server';
 import { reviewResultSchema } from '@/models/validators/test-case';
 
+// Review no longer produces a score. `coverage_score` (nullable column) now holds
+// the APPLICATION-computed document coverage percent, or null when the set had
+// no documents. Older rows keep whatever the previous Review agent stored.
 const persistReviewSchema = z.object({
   set_id: z.string().uuid(),
-  review: reviewResultSchema,
+  review: reviewResultSchema.extend({
+    document_coverage: z.object({ coverage_percent: z.number().min(0).max(100) }).passthrough().nullable().optional(),
+    model_used: z.string().optional(),
+  }),
 });
 
 /**
- * Luu ket qua Senior QA Review Agent (da chay tu /api/ai/review) vao DB, gan voi
+ * Luu ket qua Review (da chay tu /api/ai/review) vao DB, gan voi
  * 1 test_case_set cu the - de xem lai coverage score sau nay ma khong can goi lai AI.
  */
 export async function POST(req: NextRequest) {
@@ -21,8 +27,9 @@ export async function POST(req: NextRequest) {
       .from('ai_reviews')
       .insert({
         set_id: payload.set_id,
-        coverage_score: payload.review.coverage_score,
+        coverage_score: payload.review.document_coverage?.coverage_percent ?? null,
         review_payload: payload.review,
+        model_used: payload.review.model_used ?? null,
       })
       .select()
       .single();

@@ -195,3 +195,29 @@ export function buildTestCasesOnlyResponseSchema(): GeminiSchema {
     propertyOrdering: ['test_cases'],
   };
 }
+
+/**
+ * Schema for ENHANCE: only the revised/new cases plus a short list of what
+ * changed. Shares TEST_CASE_ITEM_SCHEMA so a case can never have a different
+ * shape in Enhance than in Generate. `maxChanges` bounds the change list.
+ */
+export function buildEnhanceResponseSchema(maxChanges: number): GeminiSchema {
+  return {
+    type: 'OBJECT',
+    properties: {
+      test_cases: {
+        type: 'ARRAY',
+        description: 'ONLY the revised existing cases and any allowed new cases. Do not return untouched cases.',
+        items: TEST_CASE_ITEM_SCHEMA,
+      },
+      changes: {
+        type: 'ARRAY',
+        maxItems: maxChanges,
+        description: 'One short line per change made (code + what was improved).',
+        items: { type: 'STRING' },
+      },
+    },
+    required: ['test_cases', 'changes'],
+    propertyOrdering: ['test_cases', 'changes'],
+  };
+}

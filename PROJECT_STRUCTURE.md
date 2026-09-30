@@ -60,7 +60,8 @@ QA-AI-Tool/
 │   │   ├── 📁 api/                      # API controllers — call into services/, return JSON
 │   │   │   ├── 📁 ai/
 │   │   │   │   ├── 📁 generate/route.ts       # POST: Generation Agent
-│   │   │   │   ├── 📁 enhance/route.ts        # POST: Review/Enhance Agent
+│   │   │   │   ├── 📁 review/route.ts         # POST: bounded Review (AI_MODEL_REVIEW)
+│   │   │   │   ├── 📁 enhance/route.ts        # POST: targeted Enhance (AI_MODEL_ENHANCE)
 │   │   │   │   ├── 📁 documents/parse/route.ts  # POST: AI Document Reader
 │   │   │   │   ├── 📁 embed/route.ts          # POST: create vector embeddings
 │   │   │   │   └── 📁 playwright/route.ts     # POST: Playwright Codegen Agent
@@ -134,7 +135,10 @@ QA-AI-Tool/
 │   │   │   ├── errors.ts                # Error classification + GeminiProviderError
 │   │   │   ├── coverage-repair.ts       # Deterministic 100%-document-coverage repair loop
 │   │   │   ├── test-case-validation.ts  # Semantic validation + mechanical normalization
-│   │   │   ├── source-context.ts        # QAAISourceContext shared by Generate/Review/Enhance/Repair
+│   │   │   ├── quality-standards.ts     # SINGLE source of generation quality rules (Generate/Review/Enhance)
+│   │   │   ├── review-analysis.ts       # deterministic pre/post-processing for Review
+│   │   │   ├── enhance-merge.ts         # Enhance target planning + guarded merge
+│   │   │   ├── source-context.ts        # QAAISourceContext shared by Generate/Enhance/Repair
 │   │   │   ├── parse.ts                 # JSON extraction + Zod guard for AI responses
 │   │   │   └── 📁 prompts/
 │   │   │       ├── generation-agent.ts, review-agent.ts, enhance-agent.ts
@@ -255,7 +259,8 @@ app/api/<resource>/
 ### 5. AI Model Chain (Services layer) — Gemini only
 
 ```
-Task-specific Gemini model        (AI_MODEL_GENERATION, AI_MODEL_REVIEW, ...)
+Task-specific Gemini model        (AI_MODEL_GENERATION, AI_MODEL_REVIEW, AI_MODEL_ENHANCE, ...)
+                                  Review and Enhance NEVER inherit each other's model.
         ↓
 AI_MODEL_PRIMARY                  (gemini-3.7-flash)
         ↓

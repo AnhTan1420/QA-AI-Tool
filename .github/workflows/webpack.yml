@@ -1,0 +1,34 @@
+# Ping Supabase mỗi 3 ngày để dự án free-tier không bị tự động "pause" sau
+# 7 ngày không hoạt động. Có thể chạy tay bất cứ lúc nào qua tab Actions
+# ("Run workflow") nhờ workflow_dispatch bên dưới.
+name: Supabase keep-alive
+
+on:
+  schedule:
+    # 03:00 UTC (10:00 giờ VN), lặp lại mỗi 3 ngày.
+    # Cú pháp cron chuẩn không hỗ trợ "every N days" trực tiếp, nên liệt kê
+    # ngày-trong-tháng cách nhau 3 (1,4,7,...,31) — thực tế sẽ chạy không đúng
+    # tuyệt đối mỗi 3 ngày quanh mốc cuối/đầu tháng, nhưng luôn đảm bảo
+    # khoảng cách giữa 2 lần chạy KHÔNG BAO GIỜ vượt quá 7 ngày (yêu cầu duy
+    # nhất để tránh bị Supabase pause).
+    - cron: "0 3 1,4,7,10,13,16,19,22,25,28,31 * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Cài @supabase/supabase-js
+        run: npm install @supabase/supabase-js --no-save
+
+      - name: Ping Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/keep-supabase-alive.mjs

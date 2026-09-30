@@ -1,5 +1,10 @@
 import type { GeneratedTestCase, TestCaseCategory } from '@/models/validators/test-case';
 import type { ParsedDocument } from '@/models/validators/document';
+import {
+  DEFAULT_REQUIRED_CATEGORIES,
+  getDetailLevelRules,
+  resolvePerCategoryMin,
+} from '../quality-standards';
 
 export type GenerationPromptInput = {
   requirement_description: string;
@@ -65,20 +70,19 @@ export function buildGenerationPrompt(input: GenerationPromptInput) {
     ? input.selected_categories.join(', ')
     : 'Any valid category from the schema';
 
-  const perCategoryMinByDetail: Record<string, number> = { concise: 2, standard: 4, detailed: 6 };
-  const nominalPerCategoryMin = perCategoryMinByDetail[input.detail_level] ?? 4;
-  const categoriesForMin = input.selected_categories.length > 0 ? input.selected_categories : ['positive', 'negative', 'boundary'];
+  // Detail-level numbers come from quality-standards.ts — the SAME source Review
+  // and Enhance evaluate against. Do not re-introduce literals here.
+  const detailRules = getDetailLevelRules(input.detail_level);
+  const categoriesForMin = input.selected_categories.length > 0 ? input.selected_categories : [...DEFAULT_REQUIRED_CATEGORIES];
   // SU CO 24/9: khong co tran nay, chon nhieu category (schema cho toi da 11) o
   // detail_level cao la tu no da du de vuot tran output cua Gemini — hoan toan
   // KHONG lien quan gi den kich thuoc tai lieu dinh kem. Tran chi GIAM perCategoryMin
   // khi thuc su can (Math.min), khong bao gio TANG no, va khong bao gio ve duoi 1.
-  const perCategoryMin = input.category_floor_cap
-    ? Math.max(1, Math.min(nominalPerCategoryMin, Math.floor(input.category_floor_cap / categoriesForMin.length)))
-    : nominalPerCategoryMin;
+  const perCategoryMin = resolvePerCategoryMin(input.detail_level, categoriesForMin.length, input.category_floor_cap);
   const minCases = perCategoryMin * categoriesForMin.length;
-  
-  const minStepsByDetail: Record<string, number> = { concise: 3, standard: 5, detailed: 7 };
-  const minSteps = minStepsByDetail[input.detail_level] ?? 5;
+
+  const minSteps = detailRules.minSteps;
+  const maxSteps = detailRules.maxSteps;
 
   // Tối ưu số lượng Token Output cho level 'concise' để tránh lỗi đứt gãy JSON
   const omitComplexAnalysis = input.detail_level === 'concise' 
@@ -273,7 +277,7 @@ PHASE 2: GENERATION STANDARDS (INVIOLABLE)
    • GOOD: {"email": "tran.thi.b@gmail.com", "amount": "150000", "card_number": "4111111111111111 (Luhn-valid)"}
 
 6. STEPS — GRANULARITY BAR (this is the #1 quality gate; a case failing this gets INSTANT REJECTION):
-   • MINIMUM ${minSteps} steps per test case at this detail_level (setup/navigation steps count). A case with fewer steps almost always means 2+ actions got silently merged into one — split it.
+   • MINIMUM ${minSteps} and MAXIMUM ${maxSteps} steps per test case at this detail_level (setup/navigation steps count). A case with fewer steps almost always means 2+ actions got silently merged into one — split it; a case with more is padded with repetition — trim it.
    • ONE atomic user/system action per step. NEVER combine actions.
    • Every "action" MUST name the CONCRETE UI element/target, not a generic verb:
      - Reference the exact screen/page/section name.

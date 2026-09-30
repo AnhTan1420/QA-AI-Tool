@@ -19,6 +19,7 @@
 import type { GeneratedTestCase, GenerationAnalysis } from '@/models/validators/test-case';
 import type { ParsedDocument } from '@/models/validators/document';
 import { collectAtomInventory, stripInvalidAtomReferences } from '@/services/documents/coverage';
+import { isPlaceholder } from '@/services/ai/quality-standards';
 
 export type SemanticIssueCode =
   | 'duplicate_test_case_code'
@@ -32,7 +33,9 @@ export type SemanticIssueCode =
   | 'planned_atom_not_covered'
   | 'planned_code_missing'
   | 'truncated_response'
-  | 'weak_evidence_mapping';
+  | 'weak_evidence_mapping'
+  | 'unrequested_change_rejected'
+  | 'enhance_still_below_standard';
 
 export type SemanticIssue = {
   code: SemanticIssueCode;
@@ -50,44 +53,9 @@ export type SemanticIssue = {
  */
 export const MAX_ATOMS_PER_TEST_CASE = 8;
 
-const PLACEHOLDER_TOKENS = new Set([
-  'n/a',
-  'na',
-  'tbd',
-  'todo',
-  'string',
-  'abc',
-  'xxx',
-  '...',
-  '-',
-  '--',
-  'none',
-  'no',
-  'ok',
-  'test',
-  'value',
-  'step',
-  'action',
-  'expected',
-  'expected result',
-  'as expected',
-  'works correctly',
-  'work correctly',
-  'hoat dong dung',
-  'hoạt động đúng',
-  'thanh cong',
-  'thành công',
-  'đúng như mong đợi',
-  'không có lỗi',
-]);
-
-function isPlaceholder(value: string): boolean {
-  const normalized = value.trim().toLowerCase().replace(/\s+/g, ' ');
-  if (normalized.length === 0) return true;
-  if (PLACEHOLDER_TOKENS.has(normalized)) return true;
-  // Chuoi qua ngan de la 1 hanh dong/ket qua quan sat duoc.
-  return normalized.length < 4;
-}
+// Placeholder detection lives in quality-standards.ts so Review and validation
+// use one definition of "vague". Re-exported for existing importers.
+export { isPlaceholder };
 
 // ── Cap phat ma test case ──────────────────────────────────────────────────
 
