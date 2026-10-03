@@ -500,6 +500,9 @@ const vi = {
     ],
     // Trang thai ket thuc cua 1 luot Generate/Enhance — xem results-panel.tsx.
     runStatus: {
+      partialTitle: 'Quá trình sinh chưa hoàn tất',
+      partialBody: (remainingCategories: number, needsRepair: boolean) =>
+        `${remainingCategories > 0 ? `Còn ${remainingCategories} category chưa được sinh. ` : ''}${needsRepair ? 'Vòng bù độ phủ tài liệu chưa chạy. ' : ''}Phần đã hoàn thành được giữ lại bên dưới; ứng dụng sẽ tự tiếp tục, hoặc bấm Generate để thử lại.`,
       coverageIncompleteTitle: 'Chưa đạt 100% độ phủ tài liệu',
       coverageIncompleteBody: (count: number) =>
         `AI đã sinh test case nhưng chưa phủ hết tài liệu. Còn ${count} mục tài liệu chưa được test case nào kiểm tra — danh sách ở ngay bên dưới. Hãy chạy lại Generate hoặc dùng Review & Enhance để bổ sung.`,
@@ -543,6 +546,8 @@ const vi = {
       saveFailed: 'Không thể lưu vào thư viện',
       savedSuccess: (count: number) => `Đã lưu ${count} test case vào thư viện project.`,
       requestFailed: (url: string) => `Yêu cầu tới ${url} thất bại`,
+      requestTimedOut: 'Máy chủ dừng trước khi kịp trả lời (hết giới hạn thời gian). Các test case đã sinh được vẫn được giữ bên dưới — bấm Generate lần nữa để tiếp tục, hoặc giảm số category/tài liệu.',
+      requestTooLarge: 'Yêu cầu quá lớn so với giới hạn của máy chủ. Hãy giảm tài liệu đính kèm hoặc độ dài mô tả yêu cầu.',
       noSheet: 'File Excel không có sheet nào.',
       noDataRows: 'File không có dòng dữ liệu nào (chỉ có header hoặc rỗng).',
       skippedRows: (count: number) => `Đã bỏ qua ${count} dòng trống trong file.`,

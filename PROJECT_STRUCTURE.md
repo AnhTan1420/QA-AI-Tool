@@ -135,6 +135,12 @@ QA-AI-Tool/
 │   │   │   ├── errors.ts                # Error classification + GeminiProviderError
 │   │   │   ├── coverage-repair.ts       # Deterministic 100%-document-coverage repair loop
 │   │   │   ├── test-case-validation.ts  # Semantic validation + mechanical normalization
+│   │   │   ├── execution-budget.ts      # ONE time budget per request, passed down to every AI call
+│   │   │   ├── retry-policy.ts          # classifyFailure() + decideNext(): the ONLY place retry/fallback is decided
+│   │   │   ├── ai-telemetry.ts          # bounded, prompt-free JSON events per attempt/task
+│   │   │   ├── output-budget.ts         # output-size estimates, batch planning, per-call timeout/maxOutputTokens
+│   │   │   ├── generation-orchestrator.ts # bounded, resumable Generate batches (split once, keep progress)
+│   │   │   ├── concurrency.ts           # mapWithConcurrency(): bounded fan-out with a stop condition
 │   │   │   ├── quality-standards.ts     # SINGLE source of generation quality rules (Generate/Review/Enhance)
 │   │   │   ├── review-analysis.ts       # deterministic pre/post-processing for Review
 │   │   │   ├── enhance-merge.ts         # Enhance target planning + guarded merge

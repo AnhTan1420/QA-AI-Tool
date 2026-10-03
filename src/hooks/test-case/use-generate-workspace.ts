@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { TEST_CASE_CATEGORIES } from '@/models/test-case-taxonomy';
 import type { GeneratedTestCase, GenerationAnalysis, ReviewResult, TestCaseCategory } from '@/models/validators/test-case';
+import { runGenerationPasses } from '@/lib/ai/generation-resume';
 import type { ParsedDocument } from '@/models/validators/document';
 import type { DocumentCoverageResult } from '@/services/documents/coverage';
 import { useLanguage } from '@/lib/i18n/language-context';
@@ -18,7 +19,7 @@ import { diffTestCaseSets, type TestCaseDiffEntry } from '@/services/test-case-d
 import { VALID_CATEGORY_VALUES } from '@/views/test-case/generate-workspace/shared';
 
 /** Trang thai ket thuc cua 1 luot goi AI co rang buoc do phu tai lieu. */
-export type AIRunStatus = 'completed' | 'coverage_incomplete' | 'validation_failed';
+export type AIRunStatus = 'completed' | 'partial' | 'coverage_incomplete' | 'validation_failed';
 
 /** Hinh dang phan hoi cua /api/ai/generate va /api/ai/enhance. */
 type AIGenerationResponse = {
@@ -30,8 +31,18 @@ type AIGenerationResponse = {
   provider_warning?: string | null;
   /** Phan hoi AI bi cat cut -> ket qua CHUA day du. */
   truncated?: boolean;
+  /** Present on /api/ai/generate: what is done / left when a pass ran out of time budget. */
+  progress?: {
+    partial: boolean;
+    completed_categories: TestCaseCategory[];
+    remaining_categories: TestCaseCategory[];
+    needs_repair: boolean;
+  };
   issues?: { code: string; severity: 'error' | 'warning'; message: string; atom_id?: string; test_case_code?: string }[];
 };
+
+/** Max automatic continuation passes after the first request (each gets a fresh server time budget). */
+const MAX_AUTO_CONTINUES = 6;
 
 /** Enhance tra ve them ban ghi "AI da sua gi" (mục 2: khong vut bo thong tin AI). */
 type AIEnhanceResponse = AIGenerationResponse & {
@@ -91,6 +102,8 @@ export function useGenerateWorkspace(projectId: string) {
   // van hien ra nhu "thanh cong". Gio server tra ve `status` va so vong repair
   // da chay, UI phai phan anh dung (xem muc 46/47).
   const [generationStatus, setGenerationStatus] = useState<AIRunStatus | null>(null);
+  const [partialRemainingCategories, setPartialRemainingCategories] = useState(0);
+  const [partialNeedsRepair, setPartialNeedsRepair] = useState(false);
   const [repairRounds, setRepairRounds] = useState(0);
   const [providerWarning, setProviderWarning] = useState('');
   const [wasTruncated, setWasTruncated] = useState(false);
@@ -259,23 +272,39 @@ export function useGenerateWorkspace(projectId: string) {
     const existingCodes = new Set(oldCases.map((c) => c.code));
     const mergedOldCases = [...oldCases, ...ragCases.filter((c) => !existingCodes.has(c.code))];
 
-    const result = await postJson<AIGenerationResponse>('/api/ai/generate', {
+    const baseBody = {
       requirement_description: description,
       selected_categories: selectedCategories,
       language,
       detail_level: detailLevel,
       retrieved_old_test_cases: mergedOldCases,
       document_context: documents,
-    }, t.generateWorkspace.errors.requestFailed);
+    };
+    const requestMessages = {
+      timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
+      tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,
+    };
 
-    setTestCases(result.test_cases);
-    setDocumentCoverage(result.document_coverage);
-    setAnalysis(result.analysis ?? null);
-    setGenerationStatus(result.status);
-    setRepairRounds(result.repair_rounds ?? 0);
-    setProviderWarning(result.provider_warning ?? '');
-    setWasTruncated(Boolean(result.truncated));
-    setRunIssues(result.issues ?? []);
+    // One HTTP request has a fixed server time budget. A 'partial' pass is CONTINUED (not retried):
+    // see lib/ai/generation-resume.ts — bounded passes, stops as soon as a pass adds nothing.
+    await runGenerationPasses<GeneratedTestCase, TestCaseCategory, AIGenerationResponse>({
+      maxContinues: MAX_AUTO_CONTINUES,
+      runPass: (carry) =>
+        postJson<AIGenerationResponse>('/api/ai/generate', { ...baseBody, ...carry }, t.generateWorkspace.errors.requestFailed, requestMessages),
+      // Show progress immediately: if a later pass fails, completed work stays on screen.
+      onPass: (result) => {
+        setTestCases(result.test_cases);
+        setDocumentCoverage(result.document_coverage);
+        setAnalysis((prev) => result.analysis ?? prev);
+        setGenerationStatus(result.status);
+        setRepairRounds(result.repair_rounds ?? 0);
+        setProviderWarning(result.provider_warning ?? '');
+        setWasTruncated((prev) => prev || Boolean(result.truncated));
+        setRunIssues(result.issues ?? []);
+        setPartialRemainingCategories(result.progress?.remaining_categories.length ?? 0);
+        setPartialNeedsRepair(Boolean(result.progress?.needs_repair));
+      },
+    });
   }
 
   function handleGenerateClick() {
@@ -332,7 +361,10 @@ export function useGenerateWorkspace(projectId: string) {
         ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
-      }, t.generateWorkspace.errors.requestFailed);
+      }, t.generateWorkspace.errors.requestFailed, {
+        timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
+        tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,
+      });
 
       if (reviewMode === 'generated') {
         setReview(data);
@@ -370,7 +402,10 @@ export function useGenerateWorkspace(projectId: string) {
         ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
-      }, t.generateWorkspace.errors.requestFailed);
+      }, t.generateWorkspace.errors.requestFailed, {
+        timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
+        tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,
+      });
 
       // KHONG ghi de testCases/importedReviewCases ngay - giu lai o pendingEnhance
       // de nguoi dung xem diff truoc/sau va tu quyet dinh Áp dụng hay Hủy (xem
@@ -515,14 +550,16 @@ export function useGenerateWorkspace(projectId: string) {
     if (isDemoProject) return;
     setIsEmbeddingOldCases(true);
     try {
-      const result = await postJson<{ embeddedCount: number; failedCount: number }>('/api/test-case-imports', {
+      const result = await postJson<{ embeddedCount: number; failedCount: number; skippedCount?: number }>('/api/test-case-imports', {
         project_id: projectId,
         file_name: fileName,
         test_cases: parsed,
       }, t.generateWorkspace.errors.requestFailed);
       setEmbeddedOldCasesCount(result.embeddedCount);
-      if (result.failedCount > 0) {
-        setOldCasesWarning(t.generateWorkspace.errors.embedPartialFailure(result.failedCount));
+      // Cases skipped (time budget spent / provider failing repeatedly) are just as un-embedded as failed ones.
+      const notEmbedded = result.failedCount + (result.skippedCount ?? 0);
+      if (notEmbedded > 0) {
+        setOldCasesWarning(t.generateWorkspace.errors.embedPartialFailure(notEmbedded));
       }
     } catch (err) {
       setEmbeddedOldCasesCount(null);
@@ -728,7 +765,7 @@ export function useGenerateWorkspace(projectId: string) {
     handleDocumentFile, handleFigmaImport, removeDocument,
 
     // Generate action + status
-    isPending, handleGenerateClick, generatingStep,
+    isPending, handleGenerateClick, generatingStep, partialRemainingCategories, partialNeedsRepair,
     canGenerate, hasRequirementInput, hasDocumentInput, hasEnoughInputToGenerate, generateValidationMessage,
     error, errorDetails, successMessage,
 

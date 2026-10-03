@@ -23,7 +23,50 @@ export type GenerationPromptInput = {
    * chon AN TOAN NGUOC cho bat ky caller nao chua biet den tham so nay.
    */
   category_floor_cap?: number;
+  /**
+   * Scenarios ALREADY produced earlier in this same run (previous category
+   * batches). Rendered as a compact index so a later batch does not repeat them.
+   */
+  already_generated?: { code: string; title: string; category: string }[];
+  /** Position of this call in a multi-batch run (informational). */
+  batch?: { index: number; total: number };
 };
+
+/**
+ * Hard bounds on the RAG reference cases embedded in the prompt. The request
+ * schema used to accept any number of them and each was rendered with every
+ * step, so input size grew with whatever the client sent. They only teach
+ * STYLE (PHASE 1), so a few well-formed examples are enough; the rest are
+ * dropped in RAG-rank order and the omission is stated in the prompt.
+ */
+export const REFERENCE_CASE_LIMITS = { maxCases: 6, maxStepsPerCase: 6, maxChars: 9_000 } as const;
+
+export function formatReferenceCases(cases: GeneratedTestCase[]): { text: string; omitted: number } {
+  if (cases.length === 0) return { text: '(No old test cases were imported)', omitted: 0 };
+  const blocks: string[] = [];
+  let chars = 0;
+  for (const tc of cases.slice(0, REFERENCE_CASE_LIMITS.maxCases)) {
+    const steps = (tc.steps || []).slice(0, REFERENCE_CASE_LIMITS.maxStepsPerCase);
+    const block = `
+=== REFERENCE TEST CASE #${blocks.length + 1} ===
+Code: ${tc.code}
+Title: ${tc.title}
+Category: ${tc.category}
+Priority: ${tc.priority}
+Preconditions: ${(tc.preconditions || []).join('; ')}
+Test Data: ${JSON.stringify(tc.test_data || {})}
+Steps:
+${steps.map((s) => `  ${s.step_number}. ${s.action}\n     Expected: ${s.expected_result}`).join('\n')}${(tc.steps || []).length > steps.length ? `\n  … (${tc.steps.length - steps.length} more steps omitted)` : ''}
+Final Expected Result: ${tc.final_expected_result}
+=== END #${blocks.length + 1} ===
+`;
+    if (blocks.length > 0 && chars + block.length > REFERENCE_CASE_LIMITS.maxChars) break;
+    blocks.push(block);
+    chars += block.length;
+  }
+  const omitted = cases.length - blocks.length;
+  return { text: blocks.join('\n') + (omitted > 0 ? `\n(${omitted} further reference case(s) omitted to keep this prompt bounded — the style above is representative.)` : ''), omitted };
+}
 
 /**
  * Cat bot atom cua `documents` xuong toi da `atomCap` TONG (gop tren moi tai
@@ -122,21 +165,15 @@ export function buildGenerationPrompt(input: GenerationPromptInput) {
 }`;
 
   // ── 3. CHUẨN BỊ DỮ LIỆU ĐẦU VÀO ───────────────────────────────────────────
-  const oldCasesFormatted = input.retrieved_old_test_cases.length > 0
-    ? input.retrieved_old_test_cases.map((tc, idx) => `
-=== REFERENCE TEST CASE #${idx + 1} ===
-Code: ${tc.code}
-Title: ${tc.title}
-Category: ${tc.category}
-Priority: ${tc.priority}
-Preconditions: ${(tc.preconditions || []).join('; ')}
-Test Data: ${JSON.stringify(tc.test_data || {})}
-Steps:
-${(tc.steps || []).map(s => `  ${s.step_number}. ${s.action}\n     Expected: ${s.expected_result}`).join('\n')}
-Final Expected Result: ${tc.final_expected_result}
-=== END #${idx + 1} ===
-`).join('\n')
-    : '(No old test cases were imported)';
+  const oldCasesFormatted = formatReferenceCases(input.retrieved_old_test_cases).text;
+
+  const alreadyGenerated = (input.already_generated ?? []).slice(0, 80);
+  const batchNote = input.batch && input.batch.total > 1
+    ? `\nThis is batch ${input.batch.index} of ${input.batch.total} of ONE test-suite run. Cover ONLY the selected categories listed in this request; the other categories are produced by other batches. Do not generate cases for any category that is not selected here.`
+    : '';
+  const alreadyGeneratedBlock = alreadyGenerated.length > 0
+    ? `\n\nSCENARIOS ALREADY GENERATED EARLIER IN THIS RUN (do NOT repeat or restate them; find different conditions):\n${alreadyGenerated.map((c) => `  ${c.code} [${c.category}] ${c.title}`).join('\n')}`
+    : '';
 
   const documentContextFormatted = input.document_context.length > 0
     ? input.document_context.map((doc, idx) => `
@@ -228,7 +265,7 @@ MANDATORY MAPPING RULE — 100% ATOM COVERAGE (skip this block entirely if no do
 PHASE 1: LEARN FROM OLD TEST CASES (RAG)
 ══════════════════════════════════════════════════════════════════
 
-${oldCasesFormatted}
+${oldCasesFormatted}${alreadyGeneratedBlock}${batchNote}
 
 Rules for RAG:
 • Learn the WRITING STYLE, STRUCTURE, and GRANULARITY of preconditions/steps/expected_result.

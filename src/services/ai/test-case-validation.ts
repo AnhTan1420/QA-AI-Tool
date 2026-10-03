@@ -35,7 +35,10 @@ export type SemanticIssueCode =
   | 'truncated_response'
   | 'weak_evidence_mapping'
   | 'unrequested_change_rejected'
-  | 'enhance_still_below_standard';
+  | 'enhance_still_below_standard'
+  | 'generation_deferred'
+  | 'batch_split'
+  | 'repair_atoms_stuck';
 
 export type SemanticIssue = {
   code: SemanticIssueCode;
@@ -346,16 +349,27 @@ export function validateGeneratedTestCases(
  *   • danh lai so step cho case moi
  *   • cat bo phan tuyen bo atom vuot nguong chong-an-gian
  */
+/** Title identity for duplicate detection: case, diacritics-insensitive, punctuation/space-insensitive. */
+export function titleKey(title: string | undefined): string {
+  return (title ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/gi, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 export function mergeTestCases(
   existing: GeneratedTestCase[],
   additions: GeneratedTestCase[],
 ): { test_cases: GeneratedTestCase[]; added: GeneratedTestCase[] } {
   const allocator = new TestCaseCodeAllocator(existing);
-  const existingTitles = new Set(existing.map((t) => t.title.trim().toLowerCase()));
+  const existingTitles = new Set(existing.map((t) => titleKey(t.title)));
   const added: GeneratedTestCase[] = [];
 
   for (const candidate of additions) {
-    const title = candidate.title?.trim().toLowerCase() ?? '';
+    const title = titleKey(candidate.title);
     // Trung y het kich ban da co -> bo qua, tranh nhan ban scenario giua cac batch.
     if (title && existingTitles.has(title)) continue;
     existingTitles.add(title);

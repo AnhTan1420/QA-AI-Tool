@@ -1,8 +1,26 @@
 export type ApiErrorDetail = { path: string; message: string };
 
+export type ApiErrorKind = 'timeout' | 'too_large' | 'http';
+
 export class ApiError extends Error {
   details?: ApiErrorDetail[];
+  /** HTTP status when the failure came from the transport/platform rather than our handler. */
+  status?: number;
+  kind?: ApiErrorKind;
 }
+
+export type PostJsonOptions = {
+  /**
+   * Message for a platform-level timeout (502/504/408 whose body is not our JSON envelope —
+   * i.e. the serverless function was killed before it could answer). Without it the user only
+   * saw a generic "request failed" and assumed the AI had silently stopped.
+   */
+  timedOutMessage?: string;
+  /** Message for HTTP 413 (request body over the platform limit). */
+  tooLargeMessage?: string;
+};
+
+const PLATFORM_TIMEOUT_STATUSES = new Set([408, 502, 504]);
 
 /**
  * POSTs JSON to `url` and unwraps the app's `{ success, data }` / `{ success, error }`
@@ -12,6 +30,7 @@ export async function postJson<T>(
   url: string,
   body: unknown,
   requestFailedMessage: (url: string) => string,
+  options: PostJsonOptions = {},
 ): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
@@ -30,11 +49,25 @@ export async function postJson<T>(
   try {
     payload = await response.json();
   } catch {
-    throw new ApiError(requestFailedMessage(url));
+    // Not our envelope: the platform answered (or the function was killed). Say which.
+    const err = new ApiError(requestFailedMessage(url));
+    err.status = response.status;
+    if (PLATFORM_TIMEOUT_STATUSES.has(response.status) && options.timedOutMessage) {
+      err.message = options.timedOutMessage;
+      err.kind = 'timeout';
+    } else if (response.status === 413 && options.tooLargeMessage) {
+      err.message = options.tooLargeMessage;
+      err.kind = 'too_large';
+    } else {
+      err.kind = 'http';
+    }
+    throw err;
   }
 
   if (!response.ok || !payload.success) {
     const err = new ApiError(payload.error ?? requestFailedMessage(url));
+    err.status = response.status;
+    err.kind = 'http';
     if (Array.isArray(payload.details)) err.details = payload.details;
     throw err;
   }

@@ -148,7 +148,7 @@ export function extractStatus(error: unknown): number | undefined {
   return undefined;
 }
 
-function errorText(error: unknown): string {
+export function errorText(error: unknown): string {
   if (!error) return '';
   if (typeof error === 'string') return error.toLowerCase();
   const err = error as Record<string, unknown>;
@@ -211,6 +211,37 @@ export class GeminiTimeoutError extends Error {
 }
 
 /**
+ * Failure taxonomy used by the retry policy, telemetry and user messages.
+ * Finer than GeminiErrorKind on purpose: 429 / 5xx / timeout were all
+ * "transient" and invalid-JSON / validation / truncation were all
+ * "bad_response", so they all got the same handling — which is exactly how a
+ * deterministic failure (an oversized request, a truncated output) got replayed
+ * against every model. Each code has ONE handling rule (see retry-policy.ts).
+ */
+export type FailureCode =
+  | 'AUTH_ERROR'
+  | 'RATE_LIMIT'
+  | 'TRANSIENT_PROVIDER_ERROR'
+  | 'MODEL_UNAVAILABLE'
+  | 'TIMEOUT'
+  | 'SCHEMA_ERROR'
+  | 'INVALID_JSON'
+  | 'VALIDATION_ERROR'
+  | 'OUTPUT_TRUNCATED'
+  | 'REQUEST_TOO_LARGE'
+  | 'SERVER_BUDGET_EXHAUSTED'
+  | 'NO_PROGRESS'
+  | 'UNKNOWN';
+
+/** Thrown by the engine itself when the remaining execution budget cannot fund another attempt. */
+export class GeminiBudgetExhaustedError extends Error {
+  readonly name = 'GeminiBudgetExhaustedError';
+  constructor(readonly remainingMs: number, readonly neededMs: number) {
+    super(`Insufficient execution budget: ${Math.max(0, Math.round(remainingMs))}ms left, ${Math.round(neededMs)}ms needed.`);
+  }
+}
+
+/**
  * Loi CUOI CUNG tra ra khi da di het model pool. Chua du thong tin de log/audit
  * nhung message hien cho nguoi dung thi trung tinh (xem `userMessage`) — khong
  * lo stack trace SDK, khong lo API key, khong lo ten model noi bo.
@@ -225,6 +256,10 @@ export class GeminiProviderError extends Error {
       lastKind: GeminiErrorKind;
       lastStatus?: number;
       cause?: unknown;
+      /** Fine-grained reason (see FailureCode) — what callers should branch on. */
+      failure?: FailureCode;
+      /** Wall time the whole call consumed, for diagnostics. */
+      elapsedMs?: number;
     },
   ) {
     super(message);
@@ -232,6 +267,20 @@ export class GeminiProviderError extends Error {
 
   /** Thong bao an toan de hien thi truc tiep cho nguoi dung. */
   get userMessage(): string {
+    switch (this.meta.failure) {
+      case 'SERVER_BUDGET_EXHAUSTED':
+        return 'Không còn đủ thời gian xử lý trong một lượt. Phần đã hoàn thành được giữ lại — hãy tiếp tục để xử lý phần còn lại.';
+      case 'REQUEST_TOO_LARGE':
+        return 'Yêu cầu quá lớn so với giới hạn của AI. Hãy giảm số category/tài liệu hoặc chia nhỏ đầu vào.';
+      case 'OUTPUT_TRUNCATED':
+        return 'Phản hồi của AI vượt giới hạn độ dài và bị cắt cụt. Hãy giảm số lượng yêu cầu trong một lượt.';
+      case 'RATE_LIMIT':
+        return 'Gemini đang giới hạn tốc độ (quá nhiều yêu cầu). Vui lòng đợi vài giây rồi thử lại.';
+      case 'TIMEOUT':
+        return 'Gemini phản hồi quá chậm cho yêu cầu này. Hãy thử lại hoặc giảm khối lượng công việc.';
+      default:
+        break;
+    }
     if (this.meta.lastKind === 'auth') {
       return 'Cấu hình Gemini API key không hợp lệ hoặc không có quyền truy cập. Vui lòng liên hệ quản trị viên.';
     }

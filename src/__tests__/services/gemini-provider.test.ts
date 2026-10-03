@@ -409,7 +409,9 @@ describe('xử lý phản hồi bị cắt cụt (không im lặng chấp nhận
   // JSON bị cắt giữa phần tử thứ 3 — repairTruncatedJson vá được 2 phần tử đầu.
   const TRUNCATED = '{"test_cases":[{"code":"TC_001"},{"code":"TC_002"},{"code":"TC_0';
 
-  it('RETRY khi phản hồi bị cắt cụt, thay vì trả luôn phần đã vá', async () => {
+  it('KHÔNG replay y hệt request sau khi bị cắt cụt: trả phần đã vá ngay (truncated=true) để caller CHIA NHỎ', async () => {
+    // Trước đây: retry cùng prompt + cùng maxOutputTokens (xác định -> cắt cụt lại) rồi
+    // lặp lại trên MỌI model — tối đa ~12 lần gọi giống hệt nhau cho 1 hành động.
     const { client, calls } = scriptedClient([
       { kind: 'ok', text: TRUNCATED },
       { kind: 'ok', text: '{"test_cases":[{"code":"TC_001"},{"code":"TC_002"},{"code":"TC_003"}]}' },
@@ -422,9 +424,27 @@ describe('xử lý phản hồi bị cắt cụt (không im lặng chấp nhận
       userPrompt: 'user',
     });
 
-    expect(calls).toHaveLength(2);
-    expect(result.truncated).toBe(false);
-    expect(result.data.test_cases).toHaveLength(3);
+    expect(calls).toHaveLength(1);
+    expect(result.truncated).toBe(true);
+    expect(result.data.test_cases).toHaveLength(2);
+  });
+
+  it('cắt cụt mà phần vá không qua validate -> dừng với failure=OUTPUT_TRUNCATED, không thử lại', async () => {
+    const { client, calls } = scriptedClient([{ kind: 'ok', text: TRUNCATED }]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    const error = await generateWithGeminiResilient({
+      task: 'generation',
+      systemPrompt: 'sys',
+      userPrompt: 'user',
+      validate: () => {
+        throw new Error('invalid');
+      },
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(GeminiProviderError);
+    expect(error.meta.failure).toBe('OUTPUT_TRUNCATED');
+    expect(calls).toHaveLength(1);
   });
 
   it('khi hết lượt thì trả phần đã vá NHƯNG đánh dấu truncated = true', async () => {
@@ -533,7 +553,7 @@ describe('thinkingLevel + retryOnTimeout', () => {
     expect('thinkingConfig' in calls[1].config).toBe(false);
   });
 
-  it('mặc định VẪN retry cùng model sau timeout (không đổi hành vi của các caller khác)', async () => {
+  it('MẶC ĐỊNH không retry cùng model sau timeout: sang ngay model kế tiếp (timeout T gần như chắc chắn timeout lại)', async () => {
     const { client, calls } = recordingClient([
       { kind: 'throw', error: timeoutError() },
       { kind: 'ok', text: OK_JSON },
@@ -541,6 +561,17 @@ describe('thinkingLevel + retryOnTimeout', () => {
     __setGeminiClientFactoryForTests(() => client);
 
     await generateWithGeminiResilient(base);
+    expect(calls.map((c) => c.model)).toEqual(['gemini-3.5-flash', 'gemini-2.5-flash']);
+  });
+
+  it('retryOnTimeout=true (opt-in rõ ràng): thử lại cùng model', async () => {
+    const { client, calls } = recordingClient([
+      { kind: 'throw', error: timeoutError() },
+      { kind: 'ok', text: OK_JSON },
+    ]);
+    __setGeminiClientFactoryForTests(() => client);
+
+    await generateWithGeminiResilient({ ...base, retryOnTimeout: true });
     expect(calls.map((c) => c.model)).toEqual(['gemini-3.5-flash', 'gemini-3.5-flash']);
   });
 

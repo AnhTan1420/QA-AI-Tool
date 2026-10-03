@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/services/supabase/server';
 import { retrievedTestCaseSchema } from '@/models/validators/test-case';
 import { importAndEmbedTestCases } from '@/services/rag/test-case-rag';
+import { createRouteBudget } from '@/services/ai/execution-budget';
 
 export const runtime = 'nodejs';
 // Embedding tung test case la N lan goi Gemini Embedding API tuan tu (co gioi
@@ -48,6 +49,7 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await importAndEmbedTestCases({
+      budget: createRouteBudget(maxDuration, 'test-case-import'),
       supabase,
       projectId: payload.project_id,
       requirementId: payload.requirement_id,

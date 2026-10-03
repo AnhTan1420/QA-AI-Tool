@@ -233,16 +233,18 @@ export function getGenerationInitialAtomCap(detailLevel: string): number {
  *
  * AI_GENERATION_CATEGORY_FLOOR_CAP (neu > 0) ap dung cho MOI detail_level.
  */
-const CATEGORY_FLOOR_CAP_BY_DETAIL: Record<string, number> = {
-  concise: 22,
-  standard: 14,
-  detailed: 7,
-};
-
-export function getGenerationCategoryFloorCap(detailLevel: string): number {
+/**
+ * OPERATOR-SET cap on total cases spent on the per-category minimums, or
+ * `undefined` (the default). The old built-in table (concise 22 / standard 14 /
+ * detailed 7) is gone: it LOWERED the required cases per category to squeeze one
+ * giant response under the output limit. Generation now splits categories into
+ * bounded batches instead (output-budget.ts planCategoryBatches), so every
+ * category keeps its full minimum. Setting AI_GENERATION_CATEGORY_FLOOR_CAP
+ * still applies the cap, for operators who want the cheaper/smaller behaviour.
+ */
+export function getExplicitCategoryFloorCap(): number | undefined {
   const override = readIntEnv('AI_GENERATION_CATEGORY_FLOOR_CAP', 0, 0, 200);
-  if (override > 0) return override;
-  return CATEGORY_FLOOR_CAP_BY_DETAIL[detailLevel] ?? CATEGORY_FLOOR_CAP_BY_DETAIL.standard;
+  return override > 0 ? override : undefined;
 }
 
 /**
@@ -262,6 +264,20 @@ export function getReviewMaxOutputTokens(): number {
 
 export function getEnhanceMaxOutputTokens(): number {
   return readIntEnv('AI_ENHANCE_MAX_OUTPUT_TOKENS', 8_192, 1_024, 16_384);
+}
+
+/**
+ * Assumed Gemini output speed (tokens/second) used ONLY to size per-attempt
+ * timeouts from the estimated output (output-budget.ts). Deliberately
+ * conservative; lower it if your model is slower, raise it to fail faster.
+ */
+export function getAssumedOutputTokensPerSecond(): number {
+  return readIntEnv('AI_ASSUMED_OUTPUT_TPS', 90, 20, 400);
+}
+
+/** Output-token ceiling for ONE generation / repair call (Generate-sized, see gemini.ts default). */
+export function getGenerationMaxOutputTokens(): number {
+  return readIntEnv('AI_GENERATION_MAX_OUTPUT_TOKENS', 16_384, 4_096, 65_536);
 }
 
 /** So atom toi da gui trong 1 lan goi repair (batch theo tai lieu/section). */

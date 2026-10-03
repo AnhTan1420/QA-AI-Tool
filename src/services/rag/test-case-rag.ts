@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createEmbedding } from '@/services/ai/provider';
+import { mapWithConcurrency } from '@/services/ai/concurrency';
+import { GeminiProviderError } from '@/services/ai/errors';
+import type { ExecutionBudget } from '@/services/ai/execution-budget';
 import type { GeneratedTestCase } from '@/models/validators/test-case';
 
 // ============================================================================
@@ -18,6 +21,10 @@ import type { GeneratedTestCase } from '@/models/validators/test-case';
 // ============================================================================
 
 const MAX_EMBED_CONCURRENCY = 4;
+/** Stop launching embeddings after this many CONSECUTIVE provider-side failures (circuit breaker). */
+const MAX_CONSECUTIVE_PROVIDER_FAILURES = 5;
+/** Below this much usable budget, do not start another embedding. */
+const MIN_EMBED_BUDGET_MS = 4_000;
 
 /** Gom title/category/priority/preconditions/steps/final_expected_result thanh
  * 1 doan text de embed - can day du ngu nghia nghiep vu (khong chi title) de
@@ -40,27 +47,12 @@ export function buildEmbeddingContent(testCase: GeneratedTestCase): string {
     .join('\n');
 }
 
-/** Chay tac vu embed voi gioi han so luong song song, tranh dot ngot ban het
- * rate limit cua Gemini Embedding API khi file .xlsx co vai chuc/tram dong. */
-async function embedWithConcurrencyLimit<T>(
-  items: T[],
-  worker: (item: T, index: number) => Promise<void>,
-  concurrency: number = MAX_EMBED_CONCURRENCY,
-): Promise<void> {
-  let cursor = 0;
-  async function runNext(): Promise<void> {
-    const index = cursor++;
-    if (index >= items.length) return;
-    await worker(items[index], index);
-    await runNext();
-  }
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runNext()));
-}
-
 export type ImportAndEmbedResult = {
   importId: string;
   embeddedCount: number;
   failedCount: number;
+  /** Cases NOT attempted because the time budget ran out or the provider was failing repeatedly. */
+  skippedCount: number;
 };
 
 /**
@@ -77,8 +69,10 @@ export async function importAndEmbedTestCases(params: {
   fileName: string;
   testCases: GeneratedTestCase[];
   importedBy: string;
+  /** Shared time budget of the calling route; stops new embeddings when it runs low. */
+  budget?: ExecutionBudget;
 }): Promise<ImportAndEmbedResult> {
-  const { supabase, projectId, requirementId, fileName, testCases, importedBy } = params;
+  const { supabase, projectId, requirementId, fileName, testCases, importedBy, budget } = params;
 
   const { data: importRow, error: importError } = await supabase
     .from('test_case_imports')
@@ -98,28 +92,41 @@ export async function importAndEmbedTestCases(params: {
 
   let embeddedCount = 0;
   let failedCount = 0;
+  let consecutiveProviderFailures = 0;
 
-  await embedWithConcurrencyLimit(testCases, async (testCase) => {
-    try {
-      const content = buildEmbeddingContent(testCase);
-      const embedding = await createEmbedding(content);
+  const { skipped } = await mapWithConcurrency(
+    testCases,
+    MAX_EMBED_CONCURRENCY,
+    async (testCase) => {
+      try {
+        const content = buildEmbeddingContent(testCase);
+        const embedding = await createEmbedding(content, budget);
 
-      const { error: insertError } = await supabase.from('test_case_embeddings').insert({
-        test_case_import_id: importRow.id,
-        content_snippet: content.slice(0, 2000),
-        raw_case: testCase,
-        embedding,
-      });
+        const { error: insertError } = await supabase.from('test_case_embeddings').insert({
+          test_case_import_id: importRow.id,
+          content_snippet: content.slice(0, 2000),
+          raw_case: testCase,
+          embedding,
+        });
 
-      if (insertError) throw new Error(insertError.message);
-      embeddedCount += 1;
-    } catch (error) {
-      console.error('[rag] Embed thất bại cho 1 test case cũ:', error);
-      failedCount += 1;
-    }
-  });
+        if (insertError) throw new Error(insertError.message);
+        embeddedCount += 1;
+        consecutiveProviderFailures = 0;
+      } catch (error) {
+        console.error('[rag] Embed thất bại cho 1 test case cũ:', error instanceof Error ? error.message : 'unknown');
+        failedCount += 1;
+        // Only PROVIDER-side failures feed the breaker (a bad row insert says nothing about Gemini).
+        if (error instanceof GeminiProviderError) consecutiveProviderFailures += 1;
+      }
+    },
+    {
+      shouldStop: () =>
+        consecutiveProviderFailures >= MAX_CONSECUTIVE_PROVIDER_FAILURES ||
+        (budget !== undefined && !budget.canAfford(MIN_EMBED_BUDGET_MS)),
+    },
+  );
 
-  return { importId: importRow.id as string, embeddedCount, failedCount };
+  return { importId: importRow.id as string, embeddedCount, failedCount, skippedCount: skipped };
 }
 
 export type RetrievedTestCaseMatch = {

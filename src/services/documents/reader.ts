@@ -19,6 +19,7 @@
 
 import { createHash } from 'crypto';
 import { runGeminiTask } from '@/services/ai/provider';
+import { ExecutionBudget } from '@/services/ai/execution-budget';
 import type { GeminiThinkingLevel } from '@/services/ai/gemini';
 import { getModelChain } from '@/services/ai/model-registry';
 import {
@@ -70,7 +71,7 @@ export function isReaderAuditPassEnabled(): boolean {
 }
 
 // ============================================================================
-// NGAN SACH THOI GIAN (wall-clock budget) — bai hoc tu su co that:
+// NGAN SACH THOI GIAN (wall-clock budget; nay dung ExecutionBudget CHUNG) — bai hoc tu su co that:
 // ----------------------------------------------------------------------------
 // Truoc ban sua nay, readTextDocument() lap qua tung chunk ma KHONG HE biet
 // route dang chay trong bao nhieu giay tong cong. Ket qua thuc te: 1 tai lieu
@@ -169,23 +170,9 @@ export function getAgentCooldownMs(): number {
 /** Thoi gian toi thieu con lai de con dang thu 1 lan goi nua (attempt + margin xu ly). */
 const MIN_TIME_FOR_ONE_ATTEMPT_MS = 8_000;
 
-class ReaderBudget {
-  private readonly deadline: number;
-  constructor(totalMs: number) {
-    this.deadline = Date.now() + totalMs;
-  }
-  remainingMs(): number {
-    return this.deadline - Date.now();
-  }
-  hasTimeForAnotherCall(): boolean {
-    return this.remainingMs() >= MIN_TIME_FOR_ONE_ATTEMPT_MS;
-  }
-  /** Timeout cho attempt ke tiep: nho hon giua (cau hinh Reader, ngan sach con lai - margin). */
-  timeoutForNextCall(): number {
-    const configured = getReaderRequestTimeoutMs();
-    const safe = Math.max(1_000, this.remainingMs() - 2_000);
-    return Math.min(configured, safe);
-  }
+/** Timeout for the next reader attempt: the configured one, capped by what the shared budget has left. */
+function timeoutForNextCall(budget: ExecutionBudget): number {
+  return Math.min(getReaderRequestTimeoutMs(), Math.max(1_000, budget.remainingMs() - 2_000));
 }
 
 export type TextChunk = { index: number; total: number; text: string };
@@ -364,7 +351,7 @@ export class ReaderProviderUnavailableError extends Error {
 async function extractAtoms(
   prompt: string,
   label: string,
-  options: { agent: string; timeoutMs?: number; maxRetriesPerModel?: number },
+  options: { agent: string; timeoutMs?: number; maxRetriesPerModel?: number; budget?: ExecutionBudget },
 ): Promise<{ data: ExtractedChunk; truncated: boolean }> {
   try {
     const result = await runGeminiTask({
@@ -374,6 +361,7 @@ async function extractAtoms(
       models: [options.agent],
       timeoutMs: options.timeoutMs,
       maxRetriesPerModel: options.maxRetriesPerModel,
+      budget: options.budget,
       thinkingLevel: getReaderThinkingLevel(),
       // Timeout o T giay thi thu lai voi cung T giay gan nhu chac chan timeout
       // lai — sang ngay agent ke tiep (xem GeminiCallOptions.retryOnTimeout).
@@ -469,7 +457,9 @@ export async function readTextDocument(input: {
 
   // Ngan sach thoi gian cho TOAN BO ham nay — xem ReaderBudget o tren. Day la
   // phong tuyen CUOI CUNG truoc khi nen tang serverless tu tay giet function.
-  const budget = new ReaderBudget(getReaderTotalBudgetMs());
+  // The SAME budget primitive every other AI workflow uses (services/ai/execution-budget.ts),
+  // and it is passed to the engine below so each attempt is capped by what is left.
+  const budget = new ExecutionBudget(getReaderTotalBudgetMs(), { label: 'reader' });
   const retryOverride = { maxRetriesPerModel: getReaderMaxRetriesPerModel() };
   const auditEnabled = isReaderAuditPassEnabled();
   const auditSkippedForBudget = new Set<string>();
@@ -488,7 +478,7 @@ export async function readTextDocument(input: {
     concurrency: getReaderConcurrency(),
     demoteAfter: getAgentDemoteAfter(),
     cooldownMs: getAgentCooldownMs(),
-    hasTime: () => budget.hasTimeForAnotherCall(),
+    hasTime: () => budget.canAfford(MIN_TIME_FOR_ONE_ATTEMPT_MS),
     onEvent: (event) => {
       if (!input.onEvent) return;
       switch (event.type) {
@@ -513,7 +503,7 @@ export async function readTextDocument(input: {
     execute: async (ctx) => {
       const chunk = chunkById.get(ctx.stepId)!;
       const label = `chunk ${chunk.index}/${chunk.total}`;
-      const callOptions = () => ({ agent: ctx.agent, timeoutMs: budget.timeoutForNextCall(), ...retryOverride });
+      const callOptions = () => ({ agent: ctx.agent, timeoutMs: timeoutForNextCall(budget), budget, ...retryOverride });
 
       // Trang thai nhan tu agent truoc / checkpoint cu: neu pha 1 da co thi KHONG lam lai.
       let state: ReaderChunkState = ctx.previous ?? {};
@@ -541,7 +531,7 @@ export async function readTextDocument(input: {
       if (!needsAudit) return { state, complete: true };
 
       // Chi chay audit neu con du ngan sach — bo qua co canh bao ro rang, giu pha 1.
-      if (!budget.hasTimeForAnotherCall()) {
+      if (!budget.canAfford(MIN_TIME_FOR_ONE_ATTEMPT_MS)) {
         auditSkippedForBudget.add(ctx.stepId);
         return { state, complete: false };
       }

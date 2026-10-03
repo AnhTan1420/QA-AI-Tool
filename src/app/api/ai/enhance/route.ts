@@ -15,7 +15,9 @@ import {
 import { parsedDocumentSchema } from '@/models/validators/document';
 import { unwrapArrayResponse, validateAIJson } from '@/services/ai/parse';
 import { computeDocumentCoverage } from '@/services/documents/coverage';
-import { getEnhanceMaxOutputTokens, getGenerationCategoryFloorCap } from '@/services/ai/model-registry';
+import { getAssumedOutputTokensPerSecond, getEnhanceMaxOutputTokens, getExplicitCategoryFloorCap } from '@/services/ai/model-registry';
+import { createRouteBudget } from '@/services/ai/execution-budget';
+import { computeAttemptTimeoutMs, estimateCasesTokens } from '@/services/ai/output-budget';
 import {
   ENHANCE_LIMITS,
   getRequiredCategories,
@@ -61,6 +63,7 @@ const enhanceModelOutputSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const budget = createRouteBudget(maxDuration, 'enhance');
   try {
     const payload = requestSchema.parse(await request.json());
     const documents = payload.document_context ?? [];
@@ -72,7 +75,7 @@ export async function POST(request: Request) {
     const perCategoryMin = resolvePerCategoryMin(
       detailLevel,
       requiredCategories.length,
-      getGenerationCategoryFloorCap(detailLevel),
+      getExplicitCategoryFloorCap(),
     );
 
     // Same deterministic rules Review used — recomputed, not trusted from the client.
@@ -107,6 +110,12 @@ export async function POST(request: Request) {
       });
     }
 
+    // Timeout sized to the expected output (targets rewritten + any allowed new cases).
+    const expectedCases = plan.targets.length + plan.taxonomy_gaps.reduce((n, g) => n + g.allowed_new, 0);
+    const enhanceTimeoutMs = computeAttemptTimeoutMs(estimateCasesTokens(detailLevel, expectedCases) + 400, {
+      tokensPerSecond: getAssumedOutputTokensPerSecond(),
+    });
+
     const enhanced = await runGeminiTask<{ test_cases: GeneratedTestCase[]; changes: string[] }>({
       task: 'enhance',
       systemPrompt: ENHANCE_SYSTEM_PROMPT,
@@ -121,6 +130,9 @@ export async function POST(request: Request) {
       }),
       responseSchema: buildEnhanceResponseSchema(ENHANCE_LIMITS.maxChangeSummaries),
       maxOutputTokens: getEnhanceMaxOutputTokens(),
+      timeoutMs: enhanceTimeoutMs,
+      minAttemptMs: Math.round(enhanceTimeoutMs * 0.5),
+      budget,
       thinkingLevel: 'low',
       validate: (raw) => {
         const obj = validateAIJson(enhanceModelOutputSchema, raw && typeof raw === 'object' ? raw : {}, 'enhance result');
@@ -206,7 +218,12 @@ export async function POST(request: Request) {
         revised_test_cases: applied.revised_codes,
         added_test_cases: applied.added_codes,
         rejected_changes: applied.rejected,
-        deferred_test_cases: plan.deferred_codes,
+        // Targets the model did not get to (truncated reply) are reported as deferred so the
+        // user can run Enhance again, instead of silently looking "done".
+        deferred_test_cases: [
+          ...plan.deferred_codes,
+          ...(enhanced.truncated ? plan.targets.map((t) => t.code).filter((code) => !applied.revised_codes.includes(code)) : []),
+        ],
         model_used: enhanced.model,
         truncated: enhanced.truncated,
         issues,

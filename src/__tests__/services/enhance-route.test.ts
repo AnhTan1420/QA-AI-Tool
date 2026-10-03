@@ -259,3 +259,56 @@ describe('Enhance does not invent requirements or unrelated scenarios (enforced 
     expect(json.data.test_cases).toHaveLength(5);
   });
 });
+
+describe('Enhance under load and partial failure', () => {
+  it('a truncated reply keeps the cases that came back complete and reports the rest as deferred', async () => {
+    const many = Array.from({ length: 8 }, (_, i) => vagueCase(`TC_V_${String(i + 1).padStart(3, '0')}`, 'positive'));
+    // The model returns 3 complete revisions and then runs out of tokens mid-JSON.
+    const full = JSON.stringify({
+      test_cases: many.slice(0, 3).map((c) => goodCase(c.code, 'positive')),
+      changes: ['x'],
+    });
+    const cut = full.slice(0, full.length - 40) + '{"code":"TC_V_004","ti';
+    const client = {
+      models: {
+        generateContent: async () => ({ text: cut, candidates: [{ finishReason: 'MAX_TOKENS' }] }),
+        embedContent: async () => ({ embeddings: [{ values: [0] }] }),
+      },
+    };
+    __setGeminiClientFactoryForTests(() => client);
+
+    const { status, json } = await callEnhance({ test_cases: [...goodPositives, ...many], selected_categories: ['positive'] });
+    expect(status).toBe(200);
+    expect(json.data.truncated).toBe(true);
+    expect(json.data.test_cases).toHaveLength(12); // nothing lost
+    const returned = json.data.revised_test_cases as string[];
+    expect(returned.length).toBeGreaterThan(0);
+    expect(returned.length).toBeLessThan(8);
+    // every flagged case the model did not get to is surfaced as deferred, not silently "done"
+    const deferred = json.data.deferred_test_cases as string[];
+    expect([...returned, ...deferred].sort()).toEqual(many.map((c) => c.code).sort());
+  });
+
+  it('with a huge suite, only a bounded set of cases reaches the model and the prompt stays small', async () => {
+    const suite = [
+      ...Array.from({ length: 250 }, (_, i) => goodCase(`TC_P_${String(i + 1).padStart(3, '0')}`, 'positive')),
+      vagueCase('TC_V_001', 'positive'),
+    ];
+    const { fake, calls } = fakeGemini(() => ({ test_cases: [], changes: [] }));
+    __setGeminiClientFactoryForTests(() => fake);
+    await callEnhance({ test_cases: suite, selected_categories: ['positive'] });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prompt.length).toBeLessThan(20_000); // 251 cases in, a few KB of prompt out
+    expect(calls[0].prompt).toContain('### TC_V_001');
+    expect(calls[0].prompt).not.toContain('TC_P_250');
+  });
+
+  it('is handed the shared time budget and a timeout sized to the (small) work', async () => {
+    const { fake, calls } = fakeGemini(() => ({ test_cases: [], changes: [] }));
+    __setGeminiClientFactoryForTests(() => fake);
+    await callEnhance({ test_cases: [...goodPositives, vagueCase('TC_V_001', 'positive')], selected_categories: ['positive'] });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].config.maxOutputTokens).toBe(getEnhanceMaxOutputTokens());
+  });
+});

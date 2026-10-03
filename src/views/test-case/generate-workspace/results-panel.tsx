@@ -138,12 +138,18 @@ export function ResultsPanel({ workspace }: { workspace: GenerateWorkspaceState 
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
             <p className="font-bold">
-              {status === 'coverage_incomplete' ? gs.coverageIncompleteTitle : gs.validationFailedTitle}
+              {status === 'partial'
+                ? gs.partialTitle
+                : status === 'coverage_incomplete'
+                  ? gs.coverageIncompleteTitle
+                  : gs.validationFailedTitle}
             </p>
             <p className="mt-1 text-xs">
-              {status === 'coverage_incomplete'
-                ? gs.coverageIncompleteBody(workspace.documentCoverage?.uncovered.length ?? 0)
-                : gs.validationFailedBody}
+              {status === 'partial'
+                ? gs.partialBody(workspace.partialRemainingCategories, workspace.partialNeedsRepair)
+                : status === 'coverage_incomplete'
+                  ? gs.coverageIncompleteBody(workspace.documentCoverage?.uncovered.length ?? 0)
+                  : gs.validationFailedBody}
             </p>
             {workspace.providerWarning && (
               <p className="mt-1 text-xs text-ink-600">{workspace.providerWarning}</p>

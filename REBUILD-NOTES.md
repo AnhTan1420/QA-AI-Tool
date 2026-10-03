@@ -490,3 +490,28 @@ AI_GENERATION_CATEGORY_FLOOR_CAP=0        # 0 = auto by detail_level (concise 22
 - Enhance no longer runs the document coverage-repair loop and no longer adds atom mappings. Coverage is still computed and returned (`status: coverage_incomplete`).
 
 **Vercel.** Set `AI_MODEL_REVIEW` and `AI_MODEL_ENHANCE` independently. If `AI_MODEL_ENHANCE` is unset, Enhance uses `AI_MODEL_PRIMARY` (not the Review model). Optional: `AI_REVIEW_MAX_OUTPUT_TOKENS`, `AI_ENHANCE_MAX_OUTPUT_TOKENS`.
+
+
+---
+
+# AI reliability: budgets, retry ownership, bounded generation
+
+**Symptom.** AI tasks stopped mid-flight: timeouts, truncated/invalid JSON, 429/503, and the whole task (and any finished work) lost.
+
+**Root causes found in the code (not "Gemini is slow").**
+1. *No total deadline.* Worst case per call = models x attempts x 60-100 s (~12 min) inside routes with `maxDuration` 120/300 s. Vercel killed the function mid-retry; the client saw only "request failed". Only the document reader had a local deadline.
+2. *Deterministic failures were replayed.* Truncation was retried with the identical prompt and `maxOutputTokens` (and again on every model); oversized requests and generic 400s walked the whole chain; timeouts retried on the same model by default.
+3. *Coarse failure taxonomy.* 429 / 5xx / timeout were all "transient"; invalid JSON / validation / truncation all "bad_response"; "request too large" did not exist; `finishReason: MAX_TOKENS` was ignored.
+4. *Input overload.* Coverage repair embedded **every document's atoms on every batch** (and listed the batch's atoms again); `retrieved_old_test_cases` was unbounded and rendered in full.
+5. *One giant output.* Generate asked for every category in one response; a static "floor cap" avoided the limit by **lowering required cases per category**.
+6. *Repair loop* was sequential with no budget check, re-sent atoms it could not cover, and aborted the whole loop on one bad batch; an empty reply was treated as a provider error.
+7. *Client:* no distinction between "server killed" and a normal error; a failed generate discarded everything.
+
+**Changes.** See README "Failover behaviour" and "Execution budgets, batching and resume". Behaviour changes worth knowing:
+- `retryOnTimeout` now defaults to **false** (opt in per call).
+- Truncation is **not retried**; callers split or accept the flagged salvage.
+- Built-in category floor cap removed (`getGenerationCategoryFloorCap`); `AI_GENERATION_CATEGORY_FLOOR_CAP` is now an explicit opt-in. Review/Enhance therefore demand the nominal per-category minimum.
+- `/api/ai/generate` may return `status: "partial"` + `progress`; it accepts `existing_test_cases` + `completed_categories`. New hard input bounds (see README).
+- `ParsedDocument` reader now uses the shared `ExecutionBudget` instead of its private deadline class.
+
+**Not done / follow-ups.** Embedding calls are still one request per case (the `embedContent` batch contract was not verifiable offline). Resume state lives in the client request, not a DB table, so a closed tab loses it (no migration was added). Playwright codegen/heal got a budget but are single non-resumable calls.

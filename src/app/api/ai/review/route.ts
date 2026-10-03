@@ -17,7 +17,9 @@ import {
 import { parsedDocumentSchema } from '@/models/validators/document';
 import { validateAIJson } from '@/services/ai/parse';
 import { computeDocumentCoverage } from '@/services/documents/coverage';
-import { getGenerationCategoryFloorCap, getReviewMaxOutputTokens } from '@/services/ai/model-registry';
+import { getAssumedOutputTokensPerSecond, getExplicitCategoryFloorCap, getReviewMaxOutputTokens } from '@/services/ai/model-registry';
+import { createRouteBudget } from '@/services/ai/execution-budget';
+import { computeAttemptTimeoutMs } from '@/services/ai/output-budget';
 import { getRequiredCategories, normalizeDetailLevel, resolvePerCategoryMin } from '@/services/ai/quality-standards';
 import { analyzeTestCases, finalizeReview } from '@/services/ai/review-analysis';
 
@@ -44,6 +46,7 @@ const requestSchema = z.object({
 });
 
 export async function POST(request: Request) {
+  const budget = createRouteBudget(maxDuration, 'review');
   try {
     const payload = requestSchema.parse(await request.json());
     const documents = payload.document_context ?? [];
@@ -54,7 +57,7 @@ export async function POST(request: Request) {
     const perCategoryMin = resolvePerCategoryMin(
       detailLevel,
       requiredCategories.length,
-      getGenerationCategoryFloorCap(detailLevel),
+      getExplicitCategoryFloorCap(),
     );
 
     // 1) Deterministic pass — everything measurable is decided here, not by the model.
@@ -68,6 +71,7 @@ export async function POST(request: Request) {
     const coverage = computeDocumentCoverage(documents, cases);
 
     // 2) Bounded AI pass — semantic judgment only.
+    const reviewTimeoutMs = computeAttemptTimeoutMs(getReviewMaxOutputTokens(), { tokensPerSecond: getAssumedOutputTokensPerSecond() });
     const result = await runGeminiTask<ReviewModelOutput>({
       task: 'review',
       systemPrompt: REVIEW_SYSTEM_PROMPT,
@@ -82,6 +86,11 @@ export async function POST(request: Request) {
       }),
       responseSchema: buildReviewResponseSchema(requiredCategories.length),
       maxOutputTokens: getReviewMaxOutputTokens(),
+      // Timeout sized to the (small) output instead of a flat 60s; the shared budget keeps
+      // retries/fallbacks from outliving the route.
+      timeoutMs: reviewTimeoutMs,
+      minAttemptMs: Math.round(reviewTimeoutMs * 0.5),
+      budget,
       // Thinking tokens count against maxOutputTokens; Review needs judgment, not deliberation.
       thinkingLevel: 'low',
       temperature: 0.1,

@@ -89,6 +89,20 @@ function fakeClient(behave: (prompt: string, model: string, n: number) => string
   return { fake, calls };
 }
 
+function okResult() {
+  return {
+    data: { analysis: null, test_cases: [testCase('TC_GEN_001')] },
+    model: PRIMARY,
+    truncated: false,
+    attempts: 1,
+    elapsed_ms: 1,
+    input_tokens_est: 1,
+    output_tokens_est: 1,
+    schema_degraded: false,
+    models_attempted: [PRIMARY],
+  };
+}
+
 function post(body: Record<string, unknown>) {
   return POST(
     new Request('http://localhost/api/ai/generate', {
@@ -143,11 +157,30 @@ describe('POST /api/ai/generate', () => {
       });
       __setGeminiClientFactoryForTests(() => forced.fake);
 
-      const res = await post({});
+      // 1 category = không thể chia nhỏ hơn -> chỉ còn đúng 1 lượt cho mỗi model.
+      const res = await post({ selected_categories: ['positive'] });
       expect(res.status).toBe(503); // cả 2 model đều hỏng → 503 (khớp hành vi log cũ)
 
       const secondaryCalls = forced.calls.filter((c) => c.model === SECONDARY && !c.isRepair);
       expect(secondaryCalls).toHaveLength(1); // TRƯỚC bản sửa: sẽ là 3 (1 + 2 retry cùng model)
+    });
+
+    it('nhiều category + timeout kéo dài: chia nhỏ TỐI ĐA 1 lần rồi dừng (không nổ thành 1+2+4+8 lô)', async () => {
+      const forced = fakeClient((_, model) => {
+        if (model === PRIMARY) throw Object.assign(new Error('model not found'), { status: 404 });
+        throw timeoutError();
+      });
+      __setGeminiClientFactoryForTests(() => forced.fake);
+
+      const res = await post({
+        selected_categories: ['positive', 'negative', 'boundary', 'security', 'integration', 'regression', 'ui_ux', 'accessibility'],
+        detail_level: 'standard', // ~3 category/lô -> lô đầu CÓ THỂ chia đôi
+      });
+      expect(res.status).toBe(503);
+
+      // Lô gốc (1) + MỘT nửa thất bại (1) rồi dừng = đúng 2 lần gọi model phụ — không phải ~15+.
+      const secondaryCalls = forced.calls.filter((c) => c.model === SECONDARY && !c.isRepair);
+      expect(secondaryCalls).toHaveLength(2);
     });
 
     it('model chính 429 rồi model phụ trả lời TỐT: generation vẫn hoàn tất bình thường (failover hoạt động)', async () => {
@@ -174,42 +207,33 @@ describe('POST /api/ai/generate', () => {
   // `timeoutMs` mà route.ts truyền vào runGeminiTask.
   // ==========================================================================
   describe('kích thước timeout dành riêng cho generation', () => {
-    it('route truyền ĐÚNG getGenerationRequestTimeoutMs() (không phải mặc định 60s dùng chung) vào lời gọi generation', async () => {
+    it('AI_GENERATION_REQUEST_TIMEOUT_MS là TRẦN: timeout mỗi lần gọi được tính theo khối lượng nhưng không vượt trần', async () => {
       process.env.AI_GENERATION_REQUEST_TIMEOUT_MS = '42000';
       const providerModule = await import('@/services/ai/provider');
-      const spy = vi
-        .spyOn(providerModule, 'runGeminiTask')
-        .mockResolvedValue({
-          data: { analysis: null, test_cases: [testCase('TC_GEN_001')] },
-          model: PRIMARY,
-          truncated: false,
-          attempts: 1,
-          schema_degraded: false,
-          models_attempted: [PRIMARY],
-        });
+      const spy = vi.spyOn(providerModule, 'runGeminiTask').mockResolvedValue(okResult());
 
       await post({});
 
-      expect(spy).toHaveBeenCalledWith(expect.objectContaining({ task: 'generation', timeoutMs: 42_000, retryOnTimeout: false }));
+      const call = spy.mock.calls[0][0];
+      expect(call.task).toBe('generation');
+      expect(call.timeoutMs).toBeLessThanOrEqual(42_000);
+      expect(call.timeoutMs).toBeGreaterThanOrEqual(30_000);
+      expect(call.budget).toBeDefined(); // ngân sách chung được truyền xuống engine
+      expect(call.minAttemptMs).toBeGreaterThan(0);
       spy.mockRestore();
     });
 
-    it('không đặt env: dùng đúng mặc định 100_000ms của getGenerationRequestTimeoutMs(), không phải 60_000ms dùng chung', async () => {
+    it('khối lượng NHỎ nhận timeout NHỎ hơn trần 100s (thất bại nhanh), khối lượng lớn nhận nhiều hơn', async () => {
       const providerModule = await import('@/services/ai/provider');
-      const spy = vi
-        .spyOn(providerModule, 'runGeminiTask')
-        .mockResolvedValue({
-          data: { analysis: null, test_cases: [testCase('TC_GEN_001')] },
-          model: PRIMARY,
-          truncated: false,
-          attempts: 1,
-          schema_degraded: false,
-          models_attempted: [PRIMARY],
-        });
+      const spy = vi.spyOn(providerModule, 'runGeminiTask').mockResolvedValue(okResult());
 
-      await post({});
+      await post({ selected_categories: ['positive'], detail_level: 'concise' });
+      await post({ selected_categories: ['positive', 'negative', 'boundary'], detail_level: 'standard' });
 
-      expect(spy).toHaveBeenCalledWith(expect.objectContaining({ task: 'generation', timeoutMs: 100_000 }));
+      const small = spy.mock.calls[0][0].timeoutMs!;
+      const large = spy.mock.calls[1][0].timeoutMs!;
+      expect(small).toBeLessThan(large);
+      expect(large).toBeLessThanOrEqual(100_000);
       spy.mockRestore();
     });
   });

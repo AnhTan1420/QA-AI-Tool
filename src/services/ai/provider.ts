@@ -23,6 +23,7 @@ import {
   type VisionImageInput,
 } from './gemini';
 import type { AITask } from './model-registry';
+import type { ExecutionBudget } from './execution-budget';
 
 export type { VisionImageInput, AITask };
 export { GeminiProviderError } from './errors';
@@ -54,8 +55,13 @@ export async function runGeminiTask<T>(options: {
   maxRetriesPerModel?: number;
   /** Gioi han thinking (Gemini 3.x) — xem GeminiCallOptions.thinkingLevel. */
   thinkingLevel?: GeminiThinkingLevel;
-  /** false = khong thu lai cung model sau timeout — xem GeminiCallOptions.retryOnTimeout. */
+  /** true = opt-in thu lai cung model sau timeout (mac dinh false) — xem GeminiCallOptions.retryOnTimeout. */
   retryOnTimeout?: boolean;
+  /** Ngan sach thoi gian chung cua request — xem GeminiCallOptions.budget. */
+  budget?: ExecutionBudget;
+  minAttemptMs?: number;
+  /** Ngu canh khoi luong cho telemetry (batch_size, repair_round...). */
+  telemetry?: Record<string, number | string>;
 }): Promise<GeminiCallResult<T>> {
   return generateWithGeminiResilient<T>({
     task: options.task,
@@ -71,6 +77,9 @@ export async function runGeminiTask<T>(options: {
     maxRetriesPerModel: options.maxRetriesPerModel,
     thinkingLevel: options.thinkingLevel,
     retryOnTimeout: options.retryOnTimeout,
+    budget: options.budget,
+    minAttemptMs: options.minAttemptMs,
+    telemetry: options.telemetry,
   });
 }
 
@@ -83,7 +92,7 @@ export async function runAIAgent(
   fullPrompt: string,
   task: AITask = 'generation',
   responseSchema?: Record<string, unknown>,
-  overrides?: { timeoutMs?: number; maxRetriesPerModel?: number; label?: string },
+  overrides?: { timeoutMs?: number; maxRetriesPerModel?: number; label?: string; budget?: ExecutionBudget },
 ): Promise<unknown> {
   const result = await generateWithGeminiResilient<unknown>({
     task,
@@ -93,6 +102,7 @@ export async function runAIAgent(
     timeoutMs: overrides?.timeoutMs,
     maxRetriesPerModel: overrides?.maxRetriesPerModel,
     label: overrides?.label,
+    budget: overrides?.budget,
   });
   return result.data;
 }
@@ -105,6 +115,7 @@ export async function runAIAgent(
 export async function runDocumentVisionAgent(
   fullPrompt: string,
   images: VisionImageInput[],
+  budget?: ExecutionBudget,
 ): Promise<unknown> {
   if (images.length === 0) {
     throw new Error('Cần ít nhất 1 ảnh để phân tích.');
@@ -118,11 +129,12 @@ export async function runDocumentVisionAgent(
     temperature: 0.15,
     maxOutputTokens: 8192,
     label: 'vision',
+    budget,
   });
   return result.data;
 }
 
 /** Vector embedding cho RAG — Gemini only (AI_MODEL_EMBEDDING). */
-export async function createEmbedding(content: string): Promise<number[]> {
-  return createGeminiEmbedding(content);
+export async function createEmbedding(content: string, budget?: ExecutionBudget): Promise<number[]> {
+  return createGeminiEmbedding(content, { budget });
 }

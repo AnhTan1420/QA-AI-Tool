@@ -159,3 +159,46 @@ export function formatUncoveredAtomsForPrompt(atoms: UncoveredAtom[]): string {
     )
     .join('\n');
 }
+
+/**
+ * Narrow documents to ONLY what a repair batch needs: the atoms being repaired
+ * plus a bounded number of their same-section neighbours (a field and the rule
+ * that governs it live in the same section, and the model should see both).
+ *
+ * Coverage repair used to embed EVERY atom of EVERY document on EVERY batch
+ * call — and then list the batch's uncovered atoms again — so input size grew
+ * with documents x batches x rounds. Nothing is dropped from the source of
+ * truth: coverage is still computed on the full documents; this only decides
+ * what is re-sent in one prompt.
+ */
+export function scopeDocumentsToAtoms(
+  documents: ParsedDocument[],
+  atomIds: ReadonlySet<string>,
+  options: { maxContextAtomsPerDocument?: number; maxSummaryChars?: number } = {},
+): ParsedDocument[] {
+  const maxContext = options.maxContextAtomsPerDocument ?? 20;
+  const maxSummary = options.maxSummaryChars ?? 600;
+
+  return documents
+    .map((doc) => {
+      const targets = doc.atoms.filter((a) => atomIds.has(a.atom_id));
+      if (targets.length === 0) return null;
+      const sections = new Set(targets.map((a) => a.screen_or_section ?? ''));
+      let contextLeft = maxContext;
+      const keep = new Set(targets.map((a) => a.atom_id));
+      for (const atom of doc.atoms) {
+        if (contextLeft <= 0) break;
+        if (keep.has(atom.atom_id)) continue;
+        if (sections.has(atom.screen_or_section ?? '')) {
+          keep.add(atom.atom_id);
+          contextLeft--;
+        }
+      }
+      return {
+        ...doc,
+        summary: doc.summary.length > maxSummary ? `${doc.summary.slice(0, maxSummary)}…` : doc.summary,
+        atoms: doc.atoms.filter((a) => keep.has(a.atom_id)),
+      };
+    })
+    .filter((doc): doc is ParsedDocument => doc !== null);
+}

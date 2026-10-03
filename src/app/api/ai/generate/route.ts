@@ -1,43 +1,20 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
-import { runGeminiTask } from '@/services/ai/provider';
 import { GeminiProviderError } from '@/services/ai/errors';
-import {
-  buildGenerationPrompt,
-  capDocumentAtomsForInitialGeneration,
-} from '@/services/ai/prompts/generation-agent';
-import {
-  getGenerationCategoryFloorCap,
-  getGenerationInitialAtomCap,
-  getGenerationRequestTimeoutMs,
-} from '@/services/ai/model-registry';
+import { capDocumentAtomsForInitialGeneration } from '@/services/ai/prompts/generation-agent';
+import { getGenerationInitialAtomCap } from '@/services/ai/model-registry';
 import { countAtoms } from '@/services/ai/source-context';
-import { buildGenerationResponseSchema } from '@/services/ai/prompts/generation-response-schema';
-import {
-  generateRequestSchema,
-  generatedTestCasesSchema,
-  generationAnalysisSchema,
-  type GeneratedTestCase,
-  type GenerationAnalysis,
-} from '@/models/validators/test-case';
-import { unwrapArrayResponse, validateAIJson } from '@/services/ai/parse';
+import { generateRequestSchema, type GeneratedTestCase } from '@/models/validators/test-case';
 import { computeDocumentCoverage } from '@/services/documents/coverage';
-import { repairDocumentCoverage } from '@/services/ai/coverage-repair';
-import {
-  normalizeGeneratedTestCases,
-  validateGeneratedTestCases,
-  type SemanticIssue,
-} from '@/services/ai/test-case-validation';
+import { repairDocumentCoverage, MIN_REPAIR_BUDGET_MS } from '@/services/ai/coverage-repair';
+import { runBoundedGeneration } from '@/services/ai/generation-orchestrator';
+import { createRouteBudget } from '@/services/ai/execution-budget';
+import { validateGeneratedTestCases, type SemanticIssue } from '@/services/ai/test-case-validation';
 
 // Cho phép Vercel Function chạy tối đa 5 phút (Vercel Pro). Vòng repair coverage
 // có thể cần vài lượt gọi Gemini nối tiếp nhau nên cần trọn hạn mức này.
 export const maxDuration = 300;
 export const runtime = 'nodejs';
-
-type GenerationPayload = {
-  analysis: GenerationAnalysis | null;
-  test_cases: GeneratedTestCase[];
-};
 
 /**
  * Generation Agent — sinh bộ test case từ requirement + AI Document Reader atoms
@@ -52,21 +29,31 @@ type GenerationPayload = {
  *   ✓ document_coverage = 100%
  * Thiếu bất kỳ điều kiện nào → KHÔNG báo thành công (`status !== 'completed'`),
  * nhưng vẫn trả về phần kết quả đã sinh để người dùng không mất công (mục 38).
+ *
+ * KIẾN TRÚC CÓ GIỚI HẠN + TIẾP TỤC ĐƯỢC (xem services/ai/generation-orchestrator.ts):
+ *   category -> các lô nhỏ vừa ngân sách output -> mỗi lô 1 lần gọi engine
+ *   -> validate/merge -> (hết ngân sách? trả KẾT QUẢ TỪNG PHẦN + progress)
+ *   -> khi đã sinh đủ: coverage repair có ngân sách riêng.
+ * Hết ngân sách thời gian KHÔNG làm mất việc đã xong: response `status: 'partial'`
+ * kèm `progress`; client gửi lại `existing_test_cases` + `completed_categories`
+ * để làm TIẾP (không làm lại từ đầu, không tạo bản ghi trùng).
  */
 export async function POST(req: Request) {
+  // ONE time budget for the whole request, passed down to every AI call. Without it a
+  // slow provider could burn the entire maxDuration inside retries and lose all work.
+  const budget = createRouteBudget(maxDuration, 'generate');
   try {
     const rawBody = await req.json();
 
     // 1) Validate INPUT từ client trước khi xử lý.
     const input = generateRequestSchema.parse(rawBody);
     // `documents` (DAY DU, KHONG cat) la nguon su that cho coverage/repair/validate
-    // ben duoi. `initialDocuments` (co the bi cat bot atom) CHI dung cho PROMPT
-    // GOI DAU TIEN — xem comment o capDocumentAtomsForInitialGeneration va su co
-    // /api/ai/generate ngay 24/9 (429 roi timeout lap lai 3 lan, ~180s, that bai
-    // hoan toan: 1 lan goi duoc yeu cau gong ganh QUA NHIEU atom + category CUNG
-    // LUC, vuot ca tran maxOutputTokens lan thoi gian hop ly cho 1 request).
+    // ben duoi. `initialDocuments` (co the bi cat bot atom) CHI dung cho PROMPT cua
+    // cac lo sinh — phan con lai do vong coverage repair doc tiep.
     const documents = input.document_context ?? [];
-    const issuesFromTruncation: SemanticIssue[] = [];
+    const existing = input.existing_test_cases as GeneratedTestCase[];
+    const completedBefore = new Set(input.completed_categories);
+    const remainingCategories = input.selected_categories.filter((c) => !completedBefore.has(c));
 
     const initialAtomCap = getGenerationInitialAtomCap(input.detail_level);
     const initialDocuments = capDocumentAtomsForInitialGeneration(documents, initialAtomCap);
@@ -74,80 +61,57 @@ export async function POST(req: Request) {
     const includedAtoms = countAtoms(initialDocuments);
     if (includedAtoms < totalAtoms) {
       console.info(
-        `[ai/generate] lần gọi đầu tiên chỉ nhận ${includedAtoms}/${totalAtoms} atom (cap=${initialAtomCap}, detail_level=${input.detail_level}) — phần còn lại sẽ do vòng coverage repair đọc tiếp.`,
+        `[ai/generate] prompt sinh chỉ nhận ${includedAtoms}/${totalAtoms} atom (cap=${initialAtomCap}, detail_level=${input.detail_level}) — phần còn lại do vòng coverage repair đọc tiếp.`,
       );
     }
 
-    const promptString = buildGenerationPrompt({
+    // 2) Sinh theo lô có giới hạn (engine lo retry/fallback cho từng lô; orchestrator
+    //    CHIA NHỎ khi lỗi là loại mà gửi lại y hệt không thể thành công).
+    const generation = await runBoundedGeneration({
       requirement_description: input.requirement_description,
-      retrieved_old_test_cases: input.retrieved_old_test_cases,
-      selected_categories: input.selected_categories,
+      retrieved_old_test_cases: input.retrieved_old_test_cases as GeneratedTestCase[],
       language: input.language,
       detail_level: input.detail_level,
-      document_context: initialDocuments,
-      category_floor_cap: getGenerationCategoryFloorCap(input.detail_level),
+      categories: remainingCategories,
+      prompt_documents: initialDocuments,
+      all_documents: documents,
+      existing,
+      budget,
     });
+    const issues: SemanticIssue[] = [...generation.issues];
+    const completedCategories = [...new Set([...input.completed_categories, ...generation.completed_categories])];
 
-    // 2) Gọi Gemini qua lớp resilient (retry → backoff+jitter → model kế tiếp).
-    //    `validate` chạy NGAY trong engine: nếu JSON sai schema, engine coi đó là
-    //    phản hồi hỏng và tự thử lại thay vì trả rác về đây.
-    //    timeoutMs: 100s thay vì mặc định 60s dùng chung cho tác vụ nhẹ — payload
-    //    của generation (object "analysis" + nhiều test case chi tiết) NẶNG HƠN
-    //    hẳn. retryOnTimeout=false: một khi ĐÃ timeout, thử lại CÙNG model với
-    //    CÙNG giới hạn thời gian gần như chắc chắn timeout lần nữa — chuyển NGAY
-    //    sang model kế tiếp thay vì đốt thêm 100s để nhận lại đúng kết quả đó.
-    const generation = await runGeminiTask<GenerationPayload>({
-      task: 'generation',
-      prompt: promptString,
-      responseSchema: buildGenerationResponseSchema(),
-      timeoutMs: getGenerationRequestTimeoutMs(),
-      retryOnTimeout: false,
-      validate: (raw): GenerationPayload => {
-        const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-        const testCases = validateAIJson(
-          generatedTestCasesSchema,
-          unwrapArrayResponse(obj.test_cases ?? raw),
-          'generation test_cases',
-        );
-        // "analysis" là dữ liệu audit-trail, KHÔNG phải điều kiện thành công:
-        // thiếu/sai vài field thì bỏ qua chứ không làm hỏng cả request.
-        const parsedAnalysis = generationAnalysisSchema.safeParse(obj.analysis);
-        return { analysis: parsedAnalysis.success ? parsedAnalysis.data : null, test_cases: testCases };
-      },
-    });
+    // 3) Coverage — tính hoàn toàn bằng code, trên TOÀN BỘ bộ đã gộp.
+    const initialCoverage = computeDocumentCoverage(documents, generation.test_cases);
 
-    // 2b) Phản hồi bị cắt cụt => KẾT QUẢ CHƯA ĐẦY ĐỦ. Không im lặng chấp nhận.
-    //     Vòng repair độ phủ bên dưới sẽ bù lại các atom bị mất cùng với nó,
-    //     nhưng người dùng vẫn phải được biết điều này đã xảy ra.
-    if (generation.truncated) {
-      issuesFromTruncation.push({
-        code: 'truncated_response',
+    // 4) Vòng sửa chữa độ phủ — CHỈ khi đã sinh đủ category VÀ còn đủ ngân sách. Nếu thiếu
+    //    ngân sách thì trả về tiến độ để client tiếp tục (lượt sau có ngân sách mới).
+    const needsRepair = Boolean(initialCoverage && !initialCoverage.is_complete);
+    const generationDone = generation.remaining_categories.length === 0;
+    const canRepairNow = needsRepair && generationDone && budget.canAfford(MIN_REPAIR_BUDGET_MS);
+
+    const repair = canRepairNow
+      ? await repairDocumentCoverage({
+          requirement_description: input.requirement_description,
+          documents,
+          test_cases: generation.test_cases,
+          language: input.language,
+          detail_level: input.detail_level,
+          budget,
+        })
+      : null;
+    if (repair) issues.push(...repair.issues);
+
+    const finalTestCases = repair?.test_cases ?? generation.test_cases;
+    const finalCoverage = repair?.document_coverage ?? initialCoverage;
+    const repairPending = needsRepair && generationDone && !repair;
+    if (repairPending) {
+      issues.push({
+        code: 'generation_deferred',
         severity: 'warning',
-        message:
-          'Phản hồi của AI bị cắt cụt vì vượt giới hạn token đầu ra — một phần test case đã bị mất. Hệ thống đã giữ lại phần hợp lệ và sẽ sinh bù ở vòng kiểm tra độ phủ.',
+        message: 'Đã sinh xong các category nhưng chưa còn đủ thời gian để bù độ phủ tài liệu trong lượt này — tiếp tục để chạy vòng bù độ phủ.',
       });
     }
-
-    // 3) Chuẩn hóa cơ học: bỏ atom_id bịa đặt, khử trùng mã, đánh lại số step.
-    const normalized = normalizeGeneratedTestCases(generation.data.test_cases, documents);
-    const issues: SemanticIssue[] = [...issuesFromTruncation, ...normalized.issues];
-
-    // 4) Coverage lần đầu — tính hoàn toàn bằng code.
-    const initialCoverage = computeDocumentCoverage(documents, normalized.test_cases);
-
-    // 5) Vòng sửa chữa: nếu còn atom chưa cover, gọi Gemini sinh bổ sung cho tới
-    //    khi đạt 100% (hoặc hết vòng / không còn tiến triển).
-    const repair = await repairDocumentCoverage({
-      requirement_description: input.requirement_description,
-      documents,
-      test_cases: normalized.test_cases,
-      language: input.language,
-      detail_level: input.detail_level,
-    });
-    issues.push(...repair.issues);
-
-    const finalTestCases = repair.test_cases;
-    const finalCoverage = repair.document_coverage ?? initialCoverage;
 
     // Mapping GIẢ: atom được trích dẫn nhưng test case không thực sự kiểm tra nó.
     // Đây là phát hiện quan trọng nhất của lớp bằng chứng ngữ nghĩa — nếu không
@@ -165,21 +129,24 @@ export async function POST(req: Request) {
     // 6) Validate ngữ nghĩa lần cuối trên bộ kết quả đã merge.
     const semantic = validateGeneratedTestCases(finalTestCases, {
       documents,
-      analysis: generation.data.analysis,
+      analysis: generation.analysis,
     });
     issues.push(...semantic.issues);
 
     // 7) Quyết định trạng thái cuối. Có tài liệu mà chưa 100% => KHÔNG thành công.
     const coverageComplete = !finalCoverage || finalCoverage.is_complete;
-    const status: 'completed' | 'coverage_incomplete' | 'validation_failed' = !semantic.is_valid
-      ? 'validation_failed'
-      : coverageComplete
-        ? 'completed'
-        : 'coverage_incomplete';
+    const isPartial = generation.remaining_categories.length > 0 || repairPending;
+    const status: 'completed' | 'partial' | 'coverage_incomplete' | 'validation_failed' = isPartial
+      ? 'partial'
+      : !semantic.is_valid
+        ? 'validation_failed'
+        : coverageComplete
+          ? 'completed'
+          : 'coverage_incomplete';
 
     if (status !== 'completed') {
       console.warn(
-        `[ai/generate] kết thúc với trạng thái "${status}" — coverage ${finalCoverage?.covered_atoms ?? 0}/${finalCoverage?.total_atoms ?? 0}, repair rounds: ${repair.rounds_run}, stop: ${repair.stop_reason}`,
+        `[ai/generate] kết thúc với trạng thái "${status}" — coverage ${finalCoverage?.covered_atoms ?? 0}/${finalCoverage?.total_atoms ?? 0}, repair rounds: ${repair?.rounds_run ?? 0}, stop: ${repair?.stop_reason ?? 'not_run'}`,
       );
     }
 
@@ -189,12 +156,21 @@ export async function POST(req: Request) {
         status,
         test_cases: finalTestCases,
         document_coverage: finalCoverage,
-        analysis: generation.data.analysis,
-        model_used: generation.model,
+        analysis: generation.analysis,
+        model_used: generation.models_used[0] ?? repair?.models_used?.[0] ?? null,
         truncated: generation.truncated,
-        repair_rounds: repair.rounds_run,
-        repair_stop_reason: repair.stop_reason,
-        provider_warning: repair.provider_error ?? null,
+        repair_rounds: repair?.rounds_run ?? 0,
+        repair_stop_reason: repair?.stop_reason ?? null,
+        provider_warning: repair?.provider_error ?? null,
+        // Tiến độ để client TIẾP TỤC khi lượt này hết ngân sách (status 'partial').
+        progress: {
+          partial: isPartial,
+          completed_categories: completedCategories,
+          remaining_categories: generation.remaining_categories,
+          needs_repair: needsRepair && !repair,
+          batches: generation.batches,
+          stop_failure: generation.stop_failure ?? null,
+        },
         // Trả ĐỦ cảnh báo/lỗi ngữ nghĩa — hữu ích để QA lead audit, không lộ
         // chi tiết hạ tầng provider. Cắt danh sách này ở N phần tử sẽ giấu đi
         // đúng phần đuôi vào lúc kết quả có nhiều vấn đề nhất.

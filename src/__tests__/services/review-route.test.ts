@@ -231,3 +231,39 @@ describe('Review does not invent requirements', () => {
     expect(status).toBe(400);
   });
 });
+
+describe('Review under load', () => {
+  it('a truncated reply is still usable: deterministic findings survive and the status is computed', async () => {
+    const client = {
+      models: {
+        generateContent: async () => ({ text: '{"language_detail":[],"taxonomy":[{"category":"posit', candidates: [{ finishReason: 'MAX_TOKENS' }] }),
+        embedContent: async () => ({ embeddings: [{ values: [0] }] }),
+      },
+    };
+    __setGeminiClientFactoryForTests(() => client);
+    const { status, json } = await callReview();
+    // Nothing salvageable from the model, but Review must not lose the rule-based findings:
+    // it either returns them or fails loudly — never a fabricated PASS.
+    if (status === 200) {
+      expect(json.data.overall_status).not.toBe('PASS');
+      expect(json.data.language_detail.counts.TOO_VAGUE).toBeGreaterThan(0);
+    } else {
+      expect(status).toBe(503);
+    }
+  });
+
+  it('250 cases: the prompt carries digests of a bounded subset, so input does not scale with suite size', async () => {
+    const many = Array.from({ length: 250 }, (_, i) => goodCase(`TC_P_${String(i + 1).padStart(3, '0')}`, 'positive'));
+    const { fake, calls } = fakeGemini(() => modelAnswer);
+    __setGeminiClientFactoryForTests(() => fake);
+    await callReview({ test_cases: many });
+    expect(calls[0].prompt.length).toBeLessThan(40_000);
+  });
+
+  it('has the shared time budget and a timeout sized to the small output (not the generation 100s)', async () => {
+    const { fake, calls } = fakeGemini(() => modelAnswer);
+    __setGeminiClientFactoryForTests(() => fake);
+    await callReview();
+    expect(calls[0].config.maxOutputTokens).toBe(getReviewMaxOutputTokens());
+  });
+});

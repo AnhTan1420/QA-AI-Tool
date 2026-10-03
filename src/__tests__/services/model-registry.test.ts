@@ -12,7 +12,9 @@ import {
   describeModelRegistry,
   getEmbeddingModel,
   getEnhanceMaxOutputTokens,
-  getGenerationCategoryFloorCap,
+  getExplicitCategoryFloorCap,
+  getAssumedOutputTokensPerSecond,
+  getGenerationMaxOutputTokens,
   getGenerationInitialAtomCap,
   getGenerationRequestTimeoutMs,
   getModelChain,
@@ -309,30 +311,41 @@ describe('getGenerationInitialAtomCap', () => {
   });
 });
 
-describe('getGenerationCategoryFloorCap', () => {
+describe('getExplicitCategoryFloorCap', () => {
   beforeEach(() => {
-    for (const key of AI_ENV_KEYS) delete process.env[key];
-  });
-  afterEach(() => {
-    for (const key of AI_ENV_KEYS) delete process.env[key];
+    delete process.env.AI_GENERATION_CATEGORY_FLOOR_CAP;
   });
 
-  it('mặc định theo detail_level: detailed < standard < concise', () => {
-    const detailed = getGenerationCategoryFloorCap('detailed');
-    const standard = getGenerationCategoryFloorCap('standard');
-    const concise = getGenerationCategoryFloorCap('concise');
-    expect(detailed).toBeLessThan(standard);
-    expect(standard).toBeLessThan(concise);
-    expect(detailed).toBeGreaterThanOrEqual(3);
+  it('mặc định KHÔNG có cap: generation chia lô thay vì hạ số case tối thiểu mỗi category', () => {
+    // Trước đây bảng cứng (concise 22 / standard 14 / detailed 7) HẠ số case tối thiểu để nhét
+    // mọi category vào 1 response. Giờ output được chia lô (output-budget.ts) nên không cần.
+    expect(getExplicitCategoryFloorCap()).toBeUndefined();
   });
 
-  it('AI_GENERATION_CATEGORY_FLOOR_CAP > 0 ghi đè CHO MỌI detail_level', () => {
+  it('AI_GENERATION_CATEGORY_FLOOR_CAP > 0 vẫn được tôn trọng (operator chủ động chọn)', () => {
     process.env.AI_GENERATION_CATEGORY_FLOOR_CAP = '40';
-    expect(getGenerationCategoryFloorCap('concise')).toBe(40);
-    expect(getGenerationCategoryFloorCap('detailed')).toBe(40);
+    expect(getExplicitCategoryFloorCap()).toBe(40);
   });
 
-  it('detail_level không nhận diện được -> rơi về mức "standard"', () => {
-    expect(getGenerationCategoryFloorCap('???')).toBe(getGenerationCategoryFloorCap('standard'));
+  it('giá trị rác/âm/0 -> không cap', () => {
+    for (const bad of ['abc', '-5', '0', '']) {
+      process.env.AI_GENERATION_CATEGORY_FLOOR_CAP = bad;
+      expect(getExplicitCategoryFloorCap()).toBeUndefined();
+    }
+  });
+});
+
+describe('knobs for sizing AI work', () => {
+  it('assumed output speed and generation output ceiling have safe defaults and clamps', () => {
+    delete process.env.AI_ASSUMED_OUTPUT_TPS;
+    delete process.env.AI_GENERATION_MAX_OUTPUT_TOKENS;
+    expect(getAssumedOutputTokensPerSecond()).toBe(90);
+    expect(getGenerationMaxOutputTokens()).toBe(16_384);
+    process.env.AI_ASSUMED_OUTPUT_TPS = '1';
+    expect(getAssumedOutputTokensPerSecond()).toBe(20);
+    process.env.AI_GENERATION_MAX_OUTPUT_TOKENS = '99999999';
+    expect(getGenerationMaxOutputTokens()).toBe(65_536);
+    delete process.env.AI_ASSUMED_OUTPUT_TPS;
+    delete process.env.AI_GENERATION_MAX_OUTPUT_TOKENS;
   });
 });

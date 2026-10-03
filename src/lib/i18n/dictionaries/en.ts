@@ -501,6 +501,9 @@ const en: Dictionary = {
       'Validating & formatting results...',
     ],
     runStatus: {
+      partialTitle: 'Generation is incomplete',
+      partialBody: (remainingCategories: number, needsRepair: boolean) =>
+        `${remainingCategories > 0 ? `${remainingCategories} categor${remainingCategories === 1 ? 'y is' : 'ies are'} not generated yet. ` : ''}${needsRepair ? 'Document-coverage repair has not run yet. ' : ''}What was finished is kept below; the app continues automatically, or press Generate again to retry.`,
       coverageIncompleteTitle: 'Document coverage is not yet 100%',
       coverageIncompleteBody: (count: number) =>
         `The AI generated test cases but could not reach full document coverage. ${count} document item(s) are still not verified by any test case — they are listed below. Re-run Generate, or use Review & Enhance to close the gaps.`,
@@ -544,6 +547,8 @@ const en: Dictionary = {
       saveFailed: 'Unable to save to the library',
       savedSuccess: (count: number) => `Saved ${count} test cases to the project library.`,
       requestFailed: (url: string) => `Request to ${url} failed`,
+      requestTimedOut: 'The server stopped before it could answer (time limit reached). Any cases already generated are kept below — press Generate again to continue, or reduce the number of categories/documents.',
+      requestTooLarge: 'The request is too large for the server. Reduce the attached documents or the requirement text.',
       noSheet: 'The Excel file has no sheets.',
       noDataRows: 'The file has no data rows (header only or empty).',
       skippedRows: (count: number) => `Skipped ${count} blank rows in the file.`,

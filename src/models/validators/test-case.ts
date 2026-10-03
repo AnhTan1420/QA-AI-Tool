@@ -337,14 +337,24 @@ export const generateRequestSchema = z
     // Khong con bat buoc min(20) o day nua: mot minh field nay co the rong neu
     // document_context (Figma/tai lieu dinh kem) da co du lieu - xem superRefine ben duoi
     // cho rule "it nhat muc 1 (requirement) hoac muc 2 (document reader) phai co data".
-    requirement_description: z.string().default(''),
+    // Gioi han cung: input KHONG bi cat am tham (se lam mat nguon yeu cau) ma bi tu
+    // choi ro rang — nguoi dung chia nho yeu cau hoac dung tai lieu dinh kem.
+    requirement_description: z.string().max(40_000, 'Mô tả yêu cầu quá dài (tối đa 40.000 ký tự). Hãy chia nhỏ hoặc dùng tài liệu đính kèm.').default(''),
     selected_categories: z.array(testCaseCategorySchema).min(1),
     language: z.string().min(2).default('Tiếng Việt'),
     detail_level: z.enum(['concise', 'standard', 'detailed']).default('standard'),
-    retrieved_old_test_cases: z.array(retrievedTestCaseSchema).optional().default([]),
+    // RAG chi dung de hoc VAN PHONG (PHASE 1) -> toi da 20 (bang tran match_count cua /api/ai/retrieve).
+    retrieved_old_test_cases: z.array(retrievedTestCaseSchema).max(20).optional().default([]),
     // AI Document Reader: Figma design / Markdown / logic document / FS / ERD / diagram
     // da duoc atomize truoc qua /api/ai/documents/parse (xem lib/validators/document.ts).
-    document_context: z.array(parsedDocumentSchema).optional().default([]),
+    document_context: z.array(parsedDocumentSchema).max(20).optional().default([]),
+    // ── Tiep tuc (resume) do CLIENT dieu khien ──────────────────────────────
+    // Moi request Vercel co ngan sach thoi gian rieng. Khi 1 lan chay het ngan
+    // sach, server tra ve ket qua TUNG PHAN kem `progress`; client gui lai CHINH
+    // cac test case da co + cac category da xong de lam TIEP phan con lai (khong
+    // lam lai tu dau, khong tao ban ghi trung — merge khu trung theo ma/tieu de).
+    existing_test_cases: z.array(retrievedTestCaseSchema).max(500).optional().default([]),
+    completed_categories: z.array(testCaseCategorySchema).optional().default([]),
   })
   .superRefine((data, ctx) => {
     const trimmedDescription = data.requirement_description.trim();

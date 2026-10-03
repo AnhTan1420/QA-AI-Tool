@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
 import { runAIAgent } from '@/services/ai/provider';
+import { createRouteBudget } from '@/services/ai/execution-budget';
 import { buildPlaywrightCodegenPrompt, groupElementMapByPage, checkSelectorAttribution } from '@/services/ai/prompts/playwright-agent';
 import { buildPlaywrightResponseSchema } from '@/services/ai/prompts/playwright-response-schema';
 import { playwrightCodegenRequestSchema, playwrightScriptSchema } from '@/models/validators/playwright';
@@ -31,6 +32,9 @@ export const runtime = 'nodejs';
  *    không chạy được cho tới khi user "Approve & Run" hoặc "Edit / Tweak" (tự động approve).
  */
 export async function POST(req: Request) {
+  // One shared time budget for the whole request (see services/ai/execution-budget.ts):
+  // the engine stops retrying/falling back when it can no longer finish inside maxDuration.
+  const budget = createRouteBudget(maxDuration, 'playwright_codegen');
   try {
     const rawBody = await req.json();
 
@@ -39,7 +43,7 @@ export async function POST(req: Request) {
 
     // 2) Build prompt + gọi AI Provider (Gemini-only: model chain + retry/fallback)
     const promptString = buildPlaywrightCodegenPrompt(input);
-    const aiRawResult = await runAIAgent(promptString, 'playwright_codegen', buildPlaywrightResponseSchema());
+    const aiRawResult = await runAIAgent(promptString, 'playwright_codegen', buildPlaywrightResponseSchema(), { budget, label: 'playwright_codegen' });
 
     let rawJsonObject: Record<string, unknown> | null = null;
     if (typeof aiRawResult === 'string') {

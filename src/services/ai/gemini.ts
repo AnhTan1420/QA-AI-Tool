@@ -9,19 +9,18 @@
 // bi nhan ban va lech nhau (day chinh la bug cu: gemini.ts va vision.ts co 2
 // bo quy tac fallback khac nhau).
 //
-// Chien luoc cho MOI request:
+// Chien luoc cho MOI request (chi tiet quy tac: retry-policy.ts — noi DUY NHAT
+// quyet dinh retry/fallback; khong tang nao khac duoc tu y retry cung 1 request):
 //
 //   for model of [task model, AI_MODEL_PRIMARY, FALLBACK_1, FALLBACK_2]:
-//       attempt = 0
 //       repeat:
+//           moi lan thu: timeout = min(timeoutMs, ngan sach con lai)
 //           goi Gemini (Mode A: co responseSchema)
-//           ├─ OK            -> parse JSON -> validate (Zod) -> TRA VE
-//           ├─ transient     -> sleep(exponential backoff + jitter), attempt++
-//           ├─ schema loi    -> Mode B: goi lai CUNG model, BO responseSchema
-//           ├─ JSON/Zod hong -> retry cung model (lan sample sau co the dung)
-//           ├─ model unavail -> sang model ke tiep
-//           └─ auth          -> DUNG HAN (doi model cung vo ich, cung 1 API key)
-//   het model -> nem GeminiProviderError (co userMessage an toan)
+//           ├─ OK              -> parse JSON -> validate (Zod) -> TRA VE
+//           └─ loi -> classifyFailure() -> decideNext():
+//                retry_same | next_model | degrade_schema | degrade_thinking |
+//                return_salvaged | stop
+//   het model / het ngan sach -> nem GeminiProviderError (kem `failure` + userMessage an toan)
 // ============================================================================
 
 import { GoogleGenAI } from '@google/genai';
@@ -31,12 +30,15 @@ import {
   describeErrorForLog,
   extractStatus,
   GeminiBadResponseError,
+  GeminiBudgetExhaustedError,
   GeminiProviderError,
   GeminiTimeoutError,
   GeminiTruncatedResponseError,
-  isTimeoutError,
-  type GeminiErrorKind,
+  type FailureCode,
 } from './errors';
+import { classifyFailure, decideNext, extractRetryAfterMs, type PolicyState } from './retry-policy';
+import { emitAiEvent, estimateTokens } from './ai-telemetry';
+import type { ExecutionBudget } from './execution-budget';
 import {
   dedupeModels,
   getEmbeddingModel,
@@ -73,7 +75,11 @@ export type GeminiGenerateArgs = {
 
 export interface GeminiLikeClient {
   models: {
-    generateContent(args: GeminiGenerateArgs): Promise<{ text?: string | undefined }>;
+    generateContent(args: GeminiGenerateArgs): Promise<{
+      text?: string | undefined;
+      /** Real SDK responses carry the stop reason here; MAX_TOKENS = output hit maxOutputTokens. */
+      candidates?: { finishReason?: string | undefined }[] | undefined;
+    }>;
     embedContent(args: { model: string; contents: string }): Promise<{
       embeddings?: { values?: number[] }[] | undefined;
     }>;
@@ -165,6 +171,8 @@ async function callGeminiOnce(
     maxOutputTokens: number;
     timeoutMs: number;
     thinkingLevel?: GeminiThinkingLevel;
+    /** Telemetry hook: size (chars) of the raw model output, before parsing. */
+    onOutput?: (chars: number) => void;
   },
 ): Promise<unknown> {
   const controller = new AbortController();
@@ -203,13 +211,25 @@ async function callGeminiOnce(
     ]);
 
     const text = response?.text;
+    if (typeof text === 'string') opts.onOutput?.(text.length);
     if (typeof text !== 'string' || text.trim().length === 0) {
       throw new GeminiBadResponseError(`Gemini trả về phản hồi rỗng (model: ${model}).`);
     }
 
     // extractJson = Mode C: bo ```json fence, cat dung doan JSON, va va lai JSON
     // bi cat cut do cham tran maxOutputTokens truoc khi bo cuoc.
-    return extractJson(text);
+    try {
+      return extractJson(text);
+    } catch (error) {
+      // The API itself says the output hit maxOutputTokens, and the text is not repairable:
+      // that is DETERMINISTIC truncation, not a random bad sample. Classify it as such, or the
+      // retry policy would burn a resample replaying the identical request.
+      const finishReason = response?.candidates?.[0]?.finishReason;
+      if (error instanceof GeminiBadResponseError && finishReason === 'MAX_TOKENS') {
+        throw new GeminiTruncatedResponseError('Phản hồi AI bị cắt cụt (finishReason=MAX_TOKENS).', undefined);
+      }
+      throw error;
+    }
   } finally {
     clearTimeout(abortTimer);
     if (raceTimer) clearTimeout(raceTimer);
@@ -230,28 +250,41 @@ export type GeminiCallOptions<T> = {
   images?: VisionImageInput[];
   temperature?: number;
   maxOutputTokens?: number;
+  /** Timeout toi da cho MOI lan thu (se bi cat xuong con ngan sach con lai). */
   timeoutMs?: number;
   maxRetriesPerModel?: number;
   /** Cho phep thu lai KHONG kem schema khi model tu choi schema. Mac dinh: true. */
   allowSchemaDegradation?: boolean;
   /**
-   * Gioi han thinking cho model Gemini 3.x. Bo qua -> dung mac dinh cua model
-   * (gemini-3.5-flash mac dinh 'medium', kha cham voi tac vu trich xuat co cau
-   * truc). Model khong ho tro (vd 2.5) tu dong duoc bo qua; neu API van tu choi
-   * thi engine thu lai CUNG model khong kem thinkingConfig.
+   * Gioi han thinking cho model Gemini 3.x. Model khong ho tro (vd 2.5) tu dong
+   * duoc bo qua; neu API van tu choi thi engine thu lai CUNG model khong kem
+   * thinkingConfig.
    */
   thinkingLevel?: GeminiThinkingLevel;
   /**
-   * Co thu lai tren CUNG model sau khi bi TIMEOUT hay khong. Mac dinh: true.
-   * Dat false khi caller dang chay duoi ngan sach thoi gian chat: timeout o T
-   * giay thu lai voi cung T gan nhu chac chan timeout lai, tuc la dot them T
-   * giay de nhan cung ket qua thay vi sang ngay model ke tiep.
+   * Co thu lai tren CUNG model sau khi bi TIMEOUT hay khong. MAC DINH: false.
+   * Timeout o T giay thu lai voi cung T gan nhu chac chan timeout lai — tuc la
+   * dot them T giay de nhan cung ket qua. Mac dinh la sang ngay model ke tiep
+   * (neu con ngan sach). Chi bat khi caller co ly do cu the.
    */
   retryOnTimeout?: boolean;
   /**
+   * Ngan sach thoi gian CHUNG cua request (route). Moi lan thu bi cat timeout
+   * theo ngan sach con lai; het ngan sach thi DUNG NGAY thay vi bi nen tang
+   * (Vercel) giet giua chung va mat het ket qua.
+   */
+  budget?: ExecutionBudget;
+  /**
+   * Lan thu re nhat con co ich (ms). Duoi nguong nay engine khong bat dau them
+   * mot lan thu nao nua vi chac chan khong kip hoan thanh. Mac dinh min(10s, timeout).
+   */
+  minAttemptMs?: number;
+  /** Ngu canh khoi luong cho telemetry (batch_size, repair_round...). Chi so/chuoi ngan. */
+  telemetry?: Record<string, number | string>;
+  /**
    * Validate o MUC UNG DUNG. BAT BUOC o moi call path nghiep vu: HTTP 200
    * KHONG co nghia la du lieu dung. Nem loi (bat ky loai nao) neu khong hop le
-   * — engine se coi do la `bad_response` va retry.
+   * — engine se coi do la VALIDATION_ERROR/INVALID_JSON.
    */
   validate?: (raw: unknown) => T;
   /** Nhan phu cho log, vd "repair round 2/4". */
@@ -270,17 +303,28 @@ export type GeminiCallResult<T> = {
   /** true neu phai bo responseSchema moi chay duoc (Mode B). */
   schema_degraded: boolean;
   models_attempted: string[];
+  elapsed_ms: number;
+  input_tokens_est: number;
+  output_tokens_est: number;
 };
 
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_MAX_OUTPUT_TOKENS = 16384;
+const DEFAULT_MIN_ATTEMPT_MS = 10_000;
+
+/** Loi tu `validate` luon duoc quy ve phan hoi hong co kieu, de chinh sach retry xu ly dung. */
+function asBadResponse(error: unknown): Error {
+  if (error instanceof GeminiBadResponseError || error instanceof GeminiTruncatedResponseError) return error;
+  const issues = (error as { issues?: unknown } | null)?.issues;
+  const message = error instanceof Error ? error.message : 'Dữ liệu AI không hợp lệ.';
+  return new GeminiBadResponseError(message, Array.isArray(issues) ? issues : [message]);
+}
 
 /**
  * Thuc thi 1 request Gemini co kha nang tu phuc hoi. Xem so do dau file.
  *
  * KHONG bao gio "ha cap" prompt khi doi model: model B nhan CHINH XAC prompt ma
- * model A nhan (cung requirement, cung tai lieu, cung categories, cung rang buoc
- * traceability). Fallback = CUNG YEU CAU NGHIEP VU, KHAC MODEL GEMINI.
+ * model A nhan. Fallback = CUNG YEU CAU NGHIEP VU, KHAC MODEL GEMINI.
  */
 export async function generateWithGeminiResilient<T = unknown>(
   options: GeminiCallOptions<T>,
@@ -297,33 +341,84 @@ export async function generateWithGeminiResilient<T = unknown>(
   }
 
   const client = resolveClient();
+  const startedAt = Date.now();
   const maxRetries = options.maxRetriesPerModel ?? config.maxRetriesPerModel;
   const timeoutMs = options.timeoutMs ?? config.requestTimeoutMs;
+  const maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  const minAttemptMs = Math.min(options.minAttemptMs ?? DEFAULT_MIN_ATTEMPT_MS, timeoutMs);
   const allowDegradation = options.allowSchemaDegradation !== false;
+  const retryOnTimeout = options.retryOnTimeout === true;
+  const budget = options.budget;
   const scope = options.label ? `${options.task} (${options.label})` : options.task;
+  const inputTokensEst = estimateTokens(options.systemPrompt.length + options.userPrompt.length);
 
   const modelsAttempted: string[] = [];
   let totalAttempts = 0;
   let lastError: unknown;
-  let lastKind: GeminiErrorKind = 'fatal';
-  // Phan hoi bi cat cut nhung VAN va lai duoc + qua validate. Giu lai lam phao
-  // cuu sinh: neu moi luot deu that bai, tra ve no con hon tra ve rong — nhung
-  // luon kem co `truncated: true` de khong ai nham la ket qua day du.
+  let lastFailure: FailureCode = 'UNKNOWN';
+  let stopReason: FailureCode | undefined;
+  let unknownHops = 0;
+  let outputTokensEst = 0;
+  // Phan hoi bi cat cut nhung VAN va lai duoc + qua validate. Luon tra ve kem
+  // `truncated: true` de khong ai nham la ket qua day du.
   let salvaged: { data: T; model: string; schemaDegraded: boolean } | null = null;
 
-  for (let modelIndex = 0; modelIndex < chain.length; modelIndex++) {
+  const summarize = (status: 'ok' | 'failed' | 'truncated', model?: string) =>
+    emitAiEvent({
+      event: 'ai_task',
+      task: options.task,
+      label: options.label,
+      status,
+      failure: status === 'ok' ? undefined : stopReason ?? lastFailure,
+      model,
+      attempts: totalAttempts,
+      models_attempted: modelsAttempted.length,
+      elapsed_ms: Date.now() - startedAt,
+      input_tokens_est: inputTokensEst,
+      output_tokens_est: outputTokensEst,
+      remaining_budget_ms: budget ? Math.round(budget.usableMs()) : null,
+      ctx: options.telemetry,
+    });
+
+  const fail = (failure: FailureCode, message: string, cause?: unknown): never => {
+    stopReason = failure;
+    summarize('failed');
+    throw new GeminiProviderError(message, {
+      task: options.task,
+      attemptedModels: modelsAttempted,
+      lastKind: failure === 'AUTH_ERROR' ? 'auth' : lastError ? classifyGeminiError(lastError) : 'fatal',
+      lastStatus: extractStatus(lastError),
+      cause: cause ?? lastError,
+      failure,
+      elapsedMs: Date.now() - startedAt,
+    });
+  };
+
+  // Khong du ngan sach cho BAT KY lan thu huu ich nao -> dung ngay, khong goi mang.
+  if (budget && !budget.canAfford(minAttemptMs)) {
+    const err = new GeminiBudgetExhaustedError(budget.usableMs(), minAttemptMs);
+    lastError = err;
+    return fail('SERVER_BUDGET_EXHAUSTED', err.message, err);
+  }
+
+  for (let modelIndex = 0; modelIndex < chain.length && !stopReason; modelIndex++) {
     const model = chain[modelIndex];
     modelsAttempted.push(model);
-    console.info(`[Gemini] ${scope} using ${model}`);
+    const hasNextModel = modelIndex < chain.length - 1;
 
     let useSchema = Boolean(options.responseSchema);
     let useThinking = Boolean(options.thinkingLevel) && supportsThinkingLevel(model);
     let degradedForThisModel = false;
-    let attempt = 0;
+    const used = { transient: 0, badResponse: 0, rateLimit: 0 };
     let moveToNextModel = false;
 
-    while (!moveToNextModel) {
+    while (!moveToNextModel && !stopReason) {
       totalAttempts++;
+      const remainingBefore = budget ? budget.usableMs() : null;
+      const attemptTimeoutMs = remainingBefore === null ? timeoutMs : Math.max(1, Math.min(timeoutMs, remainingBefore));
+      const attemptStartedAt = Date.now();
+      let outChars = 0;
+
       try {
         const raw = await callGeminiOnce(client, model, {
           systemPrompt: options.systemPrompt,
@@ -331,15 +426,42 @@ export async function generateWithGeminiResilient<T = unknown>(
           images: options.images,
           responseSchema: useSchema ? options.responseSchema : undefined,
           temperature: options.temperature ?? DEFAULT_TEMPERATURE,
-          maxOutputTokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-          timeoutMs,
+          maxOutputTokens,
+          timeoutMs: attemptTimeoutMs,
           thinkingLevel: useThinking ? options.thinkingLevel : undefined,
+          onOutput: (chars) => {
+            outChars = chars;
+          },
         });
 
         // NEVER TRUST AI OUTPUT: HTTP 200 chi moi la dieu kien can.
-        const data = options.validate ? options.validate(raw) : (raw as T);
+        let data: T;
+        try {
+          data = options.validate ? options.validate(raw) : (raw as T);
+        } catch (validationError) {
+          throw asBadResponse(validationError);
+        }
 
-        if (attempt > 0) console.info(`[Gemini] ${scope} retry succeeded on ${model}`);
+        outputTokensEst = estimateTokens(outChars);
+        emitAiEvent({
+          event: 'ai_attempt',
+          task: options.task,
+          label: options.label,
+          model,
+          attempt: totalAttempts,
+          outcome: 'ok',
+          latency_ms: Date.now() - attemptStartedAt,
+          timeout_ms: attemptTimeoutMs,
+          input_tokens_est: inputTokensEst,
+          output_tokens_est: outputTokensEst,
+          max_output_tokens: maxOutputTokens,
+          schema_degraded: degradedForThisModel,
+          thinking: useThinking ? options.thinkingLevel : undefined,
+          truncated: false,
+          remaining_budget_ms: remainingBefore === null ? null : Math.round(remainingBefore),
+          ctx: options.telemetry,
+        });
+        summarize('ok', model);
         return {
           data,
           truncated: false,
@@ -347,99 +469,115 @@ export async function generateWithGeminiResilient<T = unknown>(
           attempts: totalAttempts,
           schema_degraded: degradedForThisModel,
           models_attempted: [...modelsAttempted],
+          elapsed_ms: Date.now() - startedAt,
+          input_tokens_est: inputTokensEst,
+          output_tokens_est: outputTokensEst,
         };
-      } catch (error) {
+      } catch (rawError) {
+        const error = rawError;
         lastError = error;
-        lastKind = classifyGeminiError(error);
+        let failure = classifyFailure(error);
+        lastFailure = failure;
         const status = extractStatus(error);
+        if (outChars > 0) outputTokensEst = estimateTokens(outChars);
 
-        // Phan hoi cat cut: thu cuu phan da va duoc (neu no qua duoc validate)
-        // truoc khi retry. Retry van chay binh thuong — ban cat cut chi la phao.
-        if (error instanceof GeminiTruncatedResponseError && !salvaged) {
+        // Phan hoi cat cut: thu cuu phan da va duoc (neu qua duoc validate).
+        if (error instanceof GeminiTruncatedResponseError && !salvaged && error.salvaged !== undefined) {
           try {
-            const partial = options.validate
-              ? options.validate(error.salvaged)
-              : (error.salvaged as T);
+            const partial = options.validate ? options.validate(error.salvaged) : (error.salvaged as T);
             salvaged = { data: partial, model, schemaDegraded: degradedForThisModel };
-            console.warn(`[Gemini] ${scope} response truncated on ${model} — salvaged partial result as fallback`);
           } catch {
             // Phan va duoc cung khong hop le -> khong co gi de cuu.
           }
         }
 
-        // (1) Auth/permission: doi model khong cuu duoc gi (cung 1 API key).
-        if (lastKind === 'auth') {
-          console.error(`[Gemini] ${scope} authentication/permission error — dừng toàn bộ model chain`);
-          throw new GeminiProviderError('Gemini authentication/permission error.', {
-            task: options.task,
-            attemptedModels: modelsAttempted,
-            lastKind,
-            lastStatus: status,
-            cause: error,
-          });
-        }
+        const thinkingRejected =
+          useThinking && status === 400 && /thinking/i.test(error instanceof Error ? error.message : '');
 
-        // (2) Model tu choi responseSchema -> thu lai CUNG model o Mode B.
-        //     KHONG tinh vao quota retry: day la doi CHE DO, khong phai retry loi.
-        if (lastKind === 'schema_incompatible' && useSchema && allowDegradation) {
-          console.warn(
-            `[Gemini] ${scope} model ${model} rejected responseSchema (${describeErrorForLog(error)}) — retrying without schema`,
-          );
-          useSchema = false;
-          degradedForThisModel = true;
-          continue;
-        }
+        const state: PolicyState = {
+          failure,
+          used,
+          maxRetries,
+          maxBadResponseRetries: 1,
+          useSchema,
+          allowSchemaDegradation: allowDegradation,
+          thinkingRejected,
+          retryOnTimeout,
+          hasSalvage: salvaged !== null,
+          hasNextModel,
+          unknownHops,
+          remainingMs: budget ? budget.usableMs() : null,
+          minAttemptMs,
+          backoffMs: computeBackoffMs(used.transient + used.badResponse + used.rateLimit, config.backoffBaseMs, config.backoffMaxMs),
+          retryAfterMs: failure === 'RATE_LIMIT' ? extractRetryAfterMs(error) : undefined,
+        };
+        // Model tu choi thinkingConfig: thu lai CUNG model khong kem no (khong tinh quota).
+        const action = thinkingRejected ? ({ type: 'degrade_thinking' } as const) : decideNext(state);
+        if (thinkingRejected) failure = 'SCHEMA_ERROR';
 
-        // (2b) Model tu choi thinkingConfig (400 nhac toi "thinking") -> thu lai
-        //      CUNG model, bo thinkingConfig. Khong tinh vao quota retry. Day la
-        //      lop bao ve de mot model moi/la khong lam hong ca chain chi vi ta
-        //      gui mot tham so toi uu toc do.
-        if (useThinking && status === 400 && /thinking/i.test(error instanceof Error ? error.message : '')) {
-          console.warn(
-            `[Gemini] ${scope} model ${model} rejected thinkingConfig (${describeErrorForLog(error)}) — retrying without it`,
-          );
-          useThinking = false;
-          continue;
-        }
+        emitAiEvent({
+          event: 'ai_attempt',
+          task: options.task,
+          label: options.label,
+          model,
+          attempt: totalAttempts,
+          outcome: 'failed',
+          failure,
+          action: action.type === 'stop' ? `stop:${action.reason}` : action.type,
+          latency_ms: Date.now() - attemptStartedAt,
+          timeout_ms: attemptTimeoutMs,
+          input_tokens_est: inputTokensEst,
+          output_tokens_est: outputTokensEst,
+          max_output_tokens: maxOutputTokens,
+          schema_degraded: degradedForThisModel,
+          thinking: useThinking ? options.thinkingLevel : undefined,
+          truncated: error instanceof GeminiTruncatedResponseError,
+          remaining_budget_ms: remainingBefore === null ? null : Math.round(remainingBefore),
+          ctx: options.telemetry,
+        });
+        console.warn(`[Gemini] ${scope} ${model}: ${describeErrorForLog(error)} -> ${action.type}`);
 
-        // (3) Model khong ton tai / khong kha dung -> sang model ke tiep ngay.
-        if (lastKind === 'model_unavailable') {
-          console.warn(`[Gemini] ${scope} model ${model} unavailable (${describeErrorForLog(error)})`);
-          moveToNextModel = true;
-          break;
+        switch (action.type) {
+          case 'degrade_schema':
+            useSchema = false;
+            degradedForThisModel = true;
+            break;
+          case 'degrade_thinking':
+            useThinking = false;
+            break;
+          case 'retry_same':
+            if (failure === 'RATE_LIMIT') used.rateLimit++;
+            else if (failure === 'INVALID_JSON' || failure === 'VALIDATION_ERROR') used.badResponse++;
+            else used.transient++;
+            await sleep(action.waitMs);
+            break;
+          case 'next_model':
+            if (failure === 'UNKNOWN') unknownHops++;
+            moveToNextModel = true;
+            break;
+          case 'return_salvaged':
+            summarize('truncated', salvaged!.model);
+            return {
+              data: salvaged!.data,
+              truncated: true,
+              model: salvaged!.model,
+              attempts: totalAttempts,
+              schema_degraded: salvaged!.schemaDegraded,
+              models_attempted: [...modelsAttempted],
+              elapsed_ms: Date.now() - startedAt,
+              input_tokens_est: inputTokensEst,
+              output_tokens_est: outputTokensEst,
+            };
+          case 'stop':
+            stopReason = action.reason;
+            break;
         }
-
-        // (4) Loi tam thoi HOAC phan hoi hong -> retry cung model neu con quota.
-        const retryable = lastKind === 'transient' || lastKind === 'bad_response';
-        const skipRetryForTimeout = options.retryOnTimeout === false && isTimeoutError(error);
-        if (retryable && !skipRetryForTimeout && attempt < maxRetries) {
-          attempt++;
-          const waitMs = computeBackoffMs(attempt - 1, config.backoffBaseMs, config.backoffMaxMs);
-          console.warn(
-            `[Gemini] ${scope} ${lastKind} failure ${status ?? ''}`.trimEnd() +
-              `, retry ${attempt}/${maxRetries} on ${model} in ${waitMs}ms`,
-          );
-          await sleep(waitMs);
-          continue;
-        }
-
-        // (5) Het quota retry hoac loi khong retry duoc -> model ke tiep.
-        console.warn(
-          `[Gemini] ${scope} ${model} failed with ${describeErrorForLog(error)}${retryable && attempt > 0 ? ' after retries' : ''}`,
-        );
-        moveToNextModel = true;
       }
-    }
-
-    if (modelIndex < chain.length - 1) {
-      console.warn(`[Gemini] ${scope} switching to ${chain[modelIndex + 1]}`);
     }
   }
 
   if (salvaged) {
-    console.error(
-      `[Gemini] ${scope} exhausted all models; returning TRUNCATED partial result from ${salvaged.model} — caller must surface this as incomplete`,
-    );
+    summarize('truncated', salvaged.model);
     return {
       data: salvaged.data,
       truncated: true,
@@ -447,46 +585,57 @@ export async function generateWithGeminiResilient<T = unknown>(
       attempts: totalAttempts,
       schema_degraded: salvaged.schemaDegraded,
       models_attempted: [...modelsAttempted],
+      elapsed_ms: Date.now() - startedAt,
+      input_tokens_est: inputTokensEst,
+      output_tokens_est: outputTokensEst,
     };
   }
 
-  console.error(`[Gemini] ${scope} exhausted all ${chain.length} configured model(s)`);
-  throw new GeminiProviderError(
-    `Gemini thất bại trên toàn bộ ${chain.length} model đã cấu hình cho tác vụ "${options.task}".`,
-    {
-      task: options.task,
-      attemptedModels: modelsAttempted,
-      lastKind,
-      lastStatus: extractStatus(lastError),
-      cause: lastError,
-    },
+  const finalFailure = stopReason ?? lastFailure;
+  if (finalFailure === 'AUTH_ERROR') return fail(finalFailure, 'Gemini authentication/permission error.');
+  return fail(
+    finalFailure,
+    `Gemini thất bại trên toàn bộ ${chain.length} model đã cấu hình cho tác vụ "${options.task}" (${finalFailure}).`,
   );
 }
 
 /**
- * Embedding (RAG) — cung di qua co che retry/timeout, nhung model chain CHI gom
- * AI_MODEL_EMBEDDING: khong the fallback sang model Flash vi so chieu vector
- * khac nhau se lam hong index vector da luu trong Supabase.
+ * Embedding (RAG) — di qua CUNG chinh sach retry (decideNext) va telemetry nhu
+ * generation; model chain CHI gom AI_MODEL_EMBEDDING vi so chieu vector khac
+ * nhau se lam hong index da luu trong Supabase.
  */
-export async function createGeminiEmbedding(content: string): Promise<number[]> {
+export async function createGeminiEmbedding(
+  content: string,
+  options: { budget?: ExecutionBudget } = {},
+): Promise<number[]> {
   const trimmed = content?.trim();
   if (!trimmed) throw new Error('Nội dung cần embedding không được rỗng.');
 
   const config = getResilienceConfig();
   const client = resolveClient();
   const model = getEmbeddingModel();
+  const startedAt = Date.now();
+  const minAttemptMs = Math.min(3_000, config.requestTimeoutMs);
+  const inputTokensEst = estimateTokens(trimmed.length);
 
   let lastError: unknown;
-  for (let attempt = 0; attempt <= config.maxRetriesPerModel; attempt++) {
+  let failure: FailureCode = 'UNKNOWN';
+  let retries = 0;
+
+  for (;;) {
+    const remaining = options.budget ? options.budget.usableMs() : null;
+    if (remaining !== null && remaining < minAttemptMs) {
+      failure = 'SERVER_BUDGET_EXHAUSTED';
+      break;
+    }
+    const timeoutMs = remaining === null ? config.requestTimeoutMs : Math.max(1, Math.min(config.requestTimeoutMs, remaining));
+    const attemptStartedAt = Date.now();
     let raceTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       const response = await Promise.race([
         client.models.embedContent({ model, contents: trimmed }),
         new Promise<never>((_, reject) => {
-          raceTimer = setTimeout(
-            () => reject(new GeminiTimeoutError(config.requestTimeoutMs, model)),
-            config.requestTimeoutMs,
-          );
+          raceTimer = setTimeout(() => reject(new GeminiTimeoutError(timeoutMs, model)), timeoutMs);
         }),
       ]);
 
@@ -494,17 +643,46 @@ export async function createGeminiEmbedding(content: string): Promise<number[]> 
       if (!Array.isArray(values) || values.length === 0) {
         throw new GeminiBadResponseError('Gemini không trả về dữ liệu embedding.');
       }
+      emitAiEvent({
+        event: 'ai_attempt', task: 'embedding', model, attempt: retries + 1, outcome: 'ok',
+        latency_ms: Date.now() - attemptStartedAt, timeout_ms: timeoutMs, input_tokens_est: inputTokensEst,
+        output_tokens_est: 0, max_output_tokens: 0, schema_degraded: false, truncated: false,
+        remaining_budget_ms: remaining === null ? null : Math.round(remaining),
+      });
       return values;
     } catch (error) {
       lastError = error;
-      const kind = classifyGeminiError(error);
-      if (kind === 'auth' || attempt >= config.maxRetriesPerModel) break;
-      if (kind !== 'transient' && kind !== 'bad_response') break;
-      const waitMs = computeBackoffMs(attempt, config.backoffBaseMs, config.backoffMaxMs);
-      console.warn(
-        `[Gemini] embedding ${kind} failure, retry ${attempt + 1}/${config.maxRetriesPerModel} in ${waitMs}ms`,
-      );
-      await sleep(waitMs);
+      failure = classifyFailure(error);
+      const action = decideNext({
+        failure,
+        used: { transient: retries, badResponse: retries, rateLimit: retries },
+        maxRetries: config.maxRetriesPerModel,
+        maxBadResponseRetries: 1,
+        useSchema: false,
+        allowSchemaDegradation: false,
+        thinkingRejected: false,
+        retryOnTimeout: true,
+        hasSalvage: false,
+        hasNextModel: false,
+        unknownHops: 0,
+        remainingMs: options.budget ? options.budget.usableMs() : null,
+        minAttemptMs,
+        backoffMs: computeBackoffMs(retries, config.backoffBaseMs, config.backoffMaxMs),
+        retryAfterMs: failure === 'RATE_LIMIT' ? extractRetryAfterMs(error) : undefined,
+      });
+      emitAiEvent({
+        event: 'ai_attempt', task: 'embedding', model, attempt: retries + 1, outcome: 'failed', failure,
+        action: action.type === 'stop' ? `stop:${action.reason}` : action.type,
+        latency_ms: Date.now() - attemptStartedAt, timeout_ms: timeoutMs, input_tokens_est: inputTokensEst,
+        output_tokens_est: 0, max_output_tokens: 0, schema_degraded: false, truncated: false,
+        remaining_budget_ms: remaining === null ? null : Math.round(remaining),
+      });
+      if (action.type !== 'retry_same') {
+        if (action.type === 'stop') failure = action.reason;
+        break;
+      }
+      retries++;
+      await sleep(action.waitMs);
     } finally {
       if (raceTimer) clearTimeout(raceTimer);
     }
@@ -516,5 +694,7 @@ export async function createGeminiEmbedding(content: string): Promise<number[]> 
     lastKind: classifyGeminiError(lastError),
     lastStatus: extractStatus(lastError),
     cause: lastError,
+    failure,
+    elapsedMs: Date.now() - startedAt,
   });
 }

@@ -238,6 +238,13 @@ GEMINI_BACKOFF_MAX_MS=8000           # backoff ceiling (jitter is always applied
 AI_REVIEW_MAX_OUTPUT_TOKENS=3072     # default 3072, clamped to 512–8192
 AI_ENHANCE_MAX_OUTPUT_TOKENS=8192    # default 8192, clamped to 1024–16384
 
+# Time budget & sizing (see "Execution budgets, batching and resume")
+AI_BUDGET_RESERVE_MS=15000            # held back per route for persistence + response
+AI_ASSUMED_OUTPUT_TPS=90              # sizes per-call timeouts from estimated output
+AI_GENERATION_MAX_OUTPUT_TOKENS=16384 # ceiling for ONE generation/repair call
+AI_GENERATION_REQUEST_TIMEOUT_MS=100000 # CEILING for one generation attempt
+# AI_GENERATION_CATEGORY_FLOOR_CAP=   # optional; unset = no cap (batching replaces it)
+
 # Document coverage repair loop (services/ai/coverage-repair.ts)
 AI_MAX_COVERAGE_REPAIR_ROUNDS=4      # hard stop; the loop also stops early if a round makes no progress
 AI_COVERAGE_REPAIR_BATCH_SIZE=35     # uncovered atoms sent per repair request, grouped by document/section
@@ -278,40 +285,46 @@ validated JSON result
 
 ### Failover behaviour
 
-Every request walks the model chain. Within each model it retries before giving up on it:
+Every request walks the model chain, but **one module decides what happens after each failure** — `services/ai/retry-policy.ts` (a pure function, unit-tested per failure class). The engine (`gemini.ts`) is the **only** layer that retries a request; workflows never replay an identical request, and the client never auto-retries.
 
 ```
-request
-  ↓
-Gemini primary          (AI_MODEL_PRIMARY)
-  ↓ 503
-retry same model        (exponential backoff + jitter)
-  ↓ 503
-Gemini fallback #1      (AI_MODEL_FALLBACK_1)
-  ↓ 503
-retry fallback #1
-  ↓ 503
-Gemini fallback #2      (AI_MODEL_FALLBACK_2)
-  ↓
-strict validation (Zod + semantic)
-  ↓
-success
+request ──► attempt (timeout = min(configured, remaining route budget))
+              │ failure
+              ▼
+        classifyFailure() ──► decideNext() ──► retry_same │ next_model │ degrade_schema │
+                                               degrade_thinking │ return_salvaged │ stop
 ```
 
-A controlled `GeminiProviderError` is returned **only** after the entire strategy is exhausted. This is graceful recovery, not a promise that Gemini never fails — a single Flash model being briefly unavailable should not surface to the user, but a total outage honestly will.
-
-Errors are classified rather than pattern-matched on one or two status codes:
-
-| Classification | Triggers | Action |
+| `FailureCode` | Typical trigger | Handling (and why) |
 |---|---|---|
-| `transient` | 408, 425, 429, 500, 502, 503, 504, 529, `ECONNRESET`, `ETIMEDOUT`, `UND_ERR_CONNECT_TIMEOUT`, `EAI_AGAIN`, timeouts, socket errors | Retry same model with backoff + jitter, then next model |
-| `schema_incompatible` | 400 mentioning `responseSchema` / `propertyOrdering` / unsupported schema field | Retry the **same** model without `responseSchema` (structured-output degradation) |
-| `bad_response` | Empty body, unparseable JSON, Zod validation failure | Retry — a different sample may be valid |
-| `model_unavailable` | 404, "model not found", deprecated model | Skip straight to the next model |
-| `auth` | 401, 403, invalid API key, permission denied | Stop immediately — another model with the same key cannot help |
-| `fatal` | Genuinely malformed request | No retry; try next model once, then fail |
+| `AUTH_ERROR` | 401 / 403 / bad key | **Stop** — another model uses the same key |
+| `REQUEST_TOO_LARGE` | 413, "input token count exceeds…" | **Stop** — deterministic; the *workflow* must send less |
+| `OUTPUT_TRUNCATED` | `finishReason: MAX_TOKENS`, or a cut-off repairable reply | **Never replayed** (same prompt + same cap truncates again). Return the validated salvage flagged `truncated`, else stop so the caller **splits** the work |
+| `SERVER_BUDGET_EXHAUSTED` | not enough route time left for another attempt | **Stop** — preserve partial progress instead of being killed mid-retry |
+| `SCHEMA_ERROR` | 400 about `responseSchema` / thinking config | Degrade (schema / thinking) once on the same model, then next model |
+| `MODEL_UNAVAILABLE` | 404 / deprecated | Next model |
+| `RATE_LIMIT` | 429 | Prefer **another model** (own quota); at most one short, server-hinted wait on the same model; on the last model, bounded backoff |
+| `TIMEOUT` | abort / socket timeout | Next model. Same-model retry only with explicit `retryOnTimeout: true` (a timeout at T almost always times out again) |
+| `TRANSIENT_PROVIDER_ERROR` | 5xx, connection reset | Retry same model with backoff + jitter (≤ `GEMINI_MAX_RETRIES_PER_MODEL`), then next model |
+| `INVALID_JSON` / `VALIDATION_ERROR` | unparseable output / Zod failure | **One** resample (sampling is non-deterministic), then next model |
+| `UNKNOWN` | unclassified 400 | Confirm on **one** other model, then stop (a bad request is not replayed across the chain) |
 
-Every request is bounded by `GEMINI_REQUEST_TIMEOUT_MS` using an `AbortController` **and** an independent racing timer, so a request can never hang indefinitely even if the SDK ignores the abort signal.
+A controlled `GeminiProviderError` (carrying `meta.failure`) is thrown **only** when the strategy is exhausted. Worst case for a persistent 503 is `(1 + retries) × models` calls; for 429 / timeout / oversize it is far less. This is graceful recovery, not a promise Gemini never fails.
+
+Every attempt is bounded by an `AbortController` **and** an independent racing timer, so a request can never hang even if the SDK ignores the abort signal.
+
+### Execution budgets, batching and resume
+
+The failure mode this addresses: one giant request → timeout / token limit / bad JSON → the *whole* task fails and finished work is lost.
+
+- **One time budget per request** (`services/ai/execution-budget.ts`). Each route builds `createRouteBudget(maxDuration)` and passes it down: route → workflow stage → engine → each attempt. An attempt's timeout is capped by what is left; the engine refuses to start an attempt it cannot finish. Document parsing, Generate, repair, Review, Enhance, Playwright and embeddings all use the same primitive.
+- **Output is planned, not hoped for** (`services/ai/output-budget.ts`). Output size is estimated (calibrated by a test against real fixtures); if it exceeds the safe share of `maxOutputTokens` the work is split *before* the call. Timeouts, `maxOutputTokens` and repair batch size are sized to the work instead of one global maximum.
+- **Generate = bounded batches** (`services/ai/generation-orchestrator.ts`). Categories are split into the fewest batches that fit; **every batch keeps the full per-category minimum** (the old built-in floor cap *lowered* it to fit one response). A batch that truncates / times out is split **once** (a half that fails again means the provider is the problem — no 1+2+4+8 fan-out) and salvaged cases are kept. Later batches are told what already exists, and merge de-duplicates by code and normalised title.
+- **Resumable without a new table.** If a pass runs out of budget, `/api/ai/generate` returns `status: "partial"` + `progress` (completed / remaining categories, `needs_repair`). The client sends back `existing_test_cases` + `completed_categories` and the next pass (fresh budget) continues from there — no restart, no duplicates, idempotent if re-sent. The UI does this automatically (bounded passes; stops the moment a pass makes no progress) and keeps partial results on screen if a later pass fails.
+- **Repair is cheaper and bounded** — prompts carry only the batch's atoms + same-section context (not every document every call); atoms that fail to get covered are not re-sent more than twice; the loop checks the budget before every batch, splits (once) instead of aborting on a bad batch, and treats an empty reply as "no contribution".
+- **Bounded input.** `requirement_description` ≤ 40 000 chars, ≤ 20 reference cases (rendered at most 6, trimmed), ≤ 20 documents, ≤ 500 resumed cases — rejected with a clear 400 rather than silently truncated.
+- **Concurrency** is bounded with one helper (`services/ai/concurrency.ts`); the RAG import also stops launching embeddings when the budget is low or the provider fails repeatedly, and reports `skippedCount`.
+- **Observability** (`services/ai/ai-telemetry.ts`): one bounded JSON line per attempt (`[ai] {...}`) and one per task — model, attempt, latency, timeout, input/output token estimates, failure code, policy action, schema degraded, truncated, remaining budget, batch/round context. Never prompts, documents, outputs or keys.
 
 ### Structured-output degradation
 
