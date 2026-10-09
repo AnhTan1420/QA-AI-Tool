@@ -49,7 +49,7 @@ function install(secondsPerCall: number) {
         clock += secondsPerCall * 1000; // each call burns wall-clock time
         const cats = (prompt.match(/MANDATORY categories: (.*)/)?.[1] ?? '').split(',').map((c) => c.trim()) as TestCaseCategory[];
         const cases: GeneratedTestCase[] = cats.flatMap((cat) =>
-          Array.from({ length: 4 }, (_, i) => goodCase(`TC_${cat}_${++serial}`, cat, { title: `${cat} case ${serial} ${i}` })),
+          Array.from({ length: 4 }, (_, i) => goodCase(`TC_${cat}_${++serial}`, cat, { title: `${cat} case ${serial} ${i}`, test_data: { email: 'nguyen.van.a@company.com', password: 'Str0ng!Pass#1', run: `${serial}` } })),
         );
         return { text: JSON.stringify({ test_cases: cases }) };
       },

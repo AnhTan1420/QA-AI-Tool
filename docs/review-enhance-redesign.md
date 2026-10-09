@@ -94,10 +94,11 @@ and the Enhance budget planner.
 | `prompts/enhance-agent.ts` | work-order prompt + schema added; legacy prompt untouched |
 | routes `review`, `enhance` | new optional request fields; v2 branch; legacy branch unchanged |
 | validators | finding/score/waiver schemas, optional result keys; enum literals mirrored (drift test) |
-| `model-registry.ts` | Review default output budget 3,072 → 5,120 (justified in `REVIEW_LIMITS`) |
+| `model-registry.ts`, `.env.example`, `README.md` | Review default output budget 3,072 → 5,120 (justified in `REVIEW_LIMITS`); docs corrected |
+| `generation-acceptance.ts` *(new)*, `generation-orchestrator.ts`, `generate/route.ts` | acceptance levers for the Generation recommendations (§I) |
 | `test-case-validation.ts` | two new `SemanticIssueCode`s |
 | hook, `review-panel.tsx`, i18n (vi/en) | send `generation_analysis`, waivers, `previous_run`; show score/findings |
-| tests | 140 new tests, seeded-defect harness, dry run; two existing tests updated (see below) |
+| tests | 164 new tests, seeded-defect harness, dry run; existing tests/fixtures updated (see below) |
 
 **Existing tests I changed (and why):** `review-route.test.ts` schema-keys assertion (the model schema now returns findings; legacy keys come from the adapter); `generate-review-enhance-pipeline.test.ts` Enhance stage (fake model now answers with patches + resolutions, and the prompt assertion is `Q02` instead of `TOO_VAGUE`); `review-fixtures.ts` recognises the new Enhance system prompt.
 
@@ -109,7 +110,7 @@ and the Enhance budget planner.
 
 | | Result |
 |---|---|
-| New unit tests + seeded-defect harness + dry run | **140 passed, 0 failed** (shim) |
+| New unit tests + seeded-defect harness + dry run | **164 passed, 0 failed** (shim; includes 24 generation-acceptance tests) |
 | Existing tests that load without zod/next (12 files, incl. `review-standards`) | all pass; 1 failure in `generation-resume` is **pre-existing** (verified on the untouched tree; my shim lacks `.rejects`) |
 | **Not run:** route tests (`review-route`, `enhance-route`, `generate-review-enhance-pipeline`, …), anything importing zod | need `npm test` in your repo. I read their assertions and adapted what I expected to break, but this is **unverified** |
 | Type-check | `tsc` with stubbed `zod`/`next` on the new files: no errors in logic once zod-derived `unknown`s are discounted; a real `tsc --noEmit` in your repo is still needed |
@@ -175,14 +176,44 @@ on mechanical findings*.
 4. May `repairDocumentCoverage` run inside Enhance? Not done; coverage is protected by rollback instead.
 5. A live (non-recorded) harness run needs real API keys and a decision on cost; only the recorded mode exists.
 
-## I. Recommendations for Generation (not applied)
+## I. Recommendations for Generation: now implemented in code (prompt untouched)
 
-Derived from the rule histogram (symptom → likely cause → lever); the same text is generated per run in `generator_recommendations`.
+Each lever moves a rule from "a wish in the prompt" to the point where output is accepted, using **the same implementations
+Review uses** (`assessCaseDetail`, `lintTestData`, `assessMappingEvidence`, `contentDuplicateKind`), so Generation and
+Review cannot drift. New module: `generation-acceptance.ts`. Wired in `generation-orchestrator.ts` (opt-in input) and
+enabled by the route from `GENERATION_ACCEPTANCE`.
 
-* Q02: merged/1-step cases → enforce min steps in `validateGeneratedTestCases`, regenerate only those cases.
-* Q04: placeholder/inconsistent data → run `lintTestData` before accepting output.
-* Q11: wrong priorities → derive priority from the persisted `risk_ranking` deterministically.
-* Q15/Q12: atom laundering and missing ids → check `assessMappingEvidence` per citation in code; reject empty ids when atoms exist.
-* Q25: duplicates across batches → batches only see an index of ~80 earlier scenarios; de-duplicate against the full suite (signature + Jaccard) after each batch.
-* Q06/Q07: unobservable results → apply the lexicon check at acceptance.
-* Generation's PHASE 0 `analysis` should be sent to Review for imported-then-regenerated suites too.
+| Rec | Lever | Mode | Behaviour |
+|---|---|---|---|
+| Q02 | min steps | `enforce` (warned in `repair`) | case below min is rejected; its category is re-queued **once**; the retry is `relax`ed (warn, never reject) so work is never lost |
+| Q04 | `lintTestData` | `enforce` (warned in `repair`) | only the Major kinds (placeholder, Luhn mismatch, invalid date undeclared, malformed email, step↔data) reject; Minor kinds stay Review's |
+| Q06/Q07 | lexicon + placeholders | `enforce` (warned in `repair`) | via `assessCaseDetail` (same code Review uses) |
+| Q11 | priority from `risk_ranking` | `repair` + `enforce` | matched scenario (similarity ≥ 0.5) overrides the model's priority; reported as `priority_derived`; no-op without an analysis |
+| Q12 | empty citations | `repair` + `enforce` | filled **only** from evidence-backed atoms (same test coverage uses); none ⇒ left empty and reported; in `enforce`, a core-category case (positive/negative/boundary/integration) that still has none is rejected |
+| Q15 | per-citation evidence | `repair` + `enforce` | a false citation of an atom **another case really exercises** is dropped (coverage cannot fall); one nobody exercises is **kept and reported** (the existing `weak_evidence_mapping` error stays visible instead of becoming a silent gap) |
+| Q25 | de-dup across batches | `repair` + `enforce` | drops only *content-certain* duplicates (identical content, or same data + near-identical title + same polarity). The 8-vs-20 boundary pair and success/failure pairs are kept |
+| PHASE 0 `analysis` → Review | hook | always | sent whenever the workspace holds one, **including imported-suite reviews** |
+
+**Modes** (`GENERATION_ACCEPTANCE`, default `repair`): `off` = kill switch; `repair` = deterministic, **no extra model calls**,
+never loses a case for quality; `enforce` = adds rejection + one regeneration, which **spends route time budget**
+(that is why it is opt-in rather than the default).
+
+**Deliberately not done:**
+* `validateGeneratedTestCases` was *not* changed to treat min-steps as an error: that would turn a thin case into
+  `validation_failed` for the whole run. Acceptance is the right place (reject → regenerate once → relax).
+* Cases produced by the **coverage-repair** pass (`repairDocumentCoverage`) do not go through acceptance yet.
+* Dropping a duplicate on title Jaccard alone: it would delete legitimate boundary pairs.
+
+**Test fixtures I had to change (they contained real duplicates):** `generate-resume.test.ts` and
+`generate-review-enhance-pipeline.test.ts` built several content-identical cases (only the title/code differed).
+Those are exactly what the new de-duplication removes, so the fixtures now vary `test_data`.
+The orchestrator tests are unaffected (acceptance is off unless the caller opts in).
+
+**Verification:** `generation-acceptance.test.ts` (24 tests, all passing here) covers every lever, the mode
+semantics, "shares Review's definitions", and a simulation of the orchestrator control flow with the real pure
+functions. **The orchestrator glue itself (≈20 lines) and the route flag were not executed** (they need zod/Gemini); run
+`npm test`, especially `generation-orchestrator`, `generate-route`, `generate-resume`.
+
+Also fixed while doing this: `.env.example` and `README.md` still documented `AI_REVIEW_MAX_OUTPUT_TOKENS=3072`; a deployment
+copying that would override the new 5,120 default and push Review's worst-case output (≈2.5k tokens) over the safe fraction.
+They now say 5120 (keep ≥ 4,700).

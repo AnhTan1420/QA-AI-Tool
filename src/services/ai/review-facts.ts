@@ -351,6 +351,29 @@ function stepsIdentical(a: GeneratedTestCase, b: GeneratedTestCase): boolean {
   );
 }
 
+/**
+ * Is `b` a duplicate of `a` that nothing in the case distinguishes?
+ *   identical  = same category, test_data, first/last action AND every step + the final result
+ *   same_data  = same category and same test_data values, near-identical title, same polarity
+ * A pair that differs by a behaviour-changing variable (different data: the 8-vs-20 character
+ * boundary pair, a negation in the title) is NEVER a duplicate here.
+ */
+export function contentDuplicateKind(a: GeneratedTestCase, b: GeneratedTestCase): 'identical' | 'same_data' | null {
+  if (a.category !== b.category) return null;
+  const sameSig = scenarioSignature(a) === scenarioSignature(b) && scenarioSignature(a).split('::')[2] !== '';
+  if (sameSig && stepsIdentical(a, b)) return 'identical';
+  const data = (c: GeneratedTestCase) => Object.values(c.test_data ?? {}).map((v) => foldText(String(v))).sort().join('|');
+  if (
+    Object.keys(a.test_data ?? {}).length > 0 &&
+    data(a) === data(b) &&
+    titleSimilarity(a.title, b.title) >= DUPLICATE_TITLE_JACCARD &&
+    !polarityDiffers(a.title, b.title)
+  ) {
+    return 'same_data';
+  }
+  return null;
+}
+
 export type DuplicatePair = {
   a: string;
   b: string;

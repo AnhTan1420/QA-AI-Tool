@@ -38,6 +38,16 @@ export type SemanticIssueCode =
   | 'enhance_still_below_standard'
   | 'enhance_revision_rolled_back'
   | 'enhance_new_case_rejected'
+  // ── generation acceptance (generation-acceptance.ts) ──
+  | 'priority_derived'
+  | 'citation_dropped'
+  | 'citation_not_exercised'
+  | 'traceability_filled'
+  | 'traceability_missing'
+  | 'acceptance_rejected'
+  | 'acceptance_relaxed'
+  | 'acceptance_quality_warning'
+  | 'duplicate_scenario_dropped'
   | 'generation_deferred'
   | 'batch_split'
   | 'repair_atoms_stuck';

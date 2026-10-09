@@ -48,8 +48,10 @@ import { getDetailLevelRules, normalizeDetailLevel } from './quality-standards';
 import { unwrapArrayResponse, validateAIJson } from './parse';
 import { mergeTestCases, normalizeGeneratedTestCases, type SemanticIssue } from './test-case-validation';
 import { countAtoms } from './source-context';
+import { acceptGeneratedBatch, categoriesToRegenerate, type AcceptanceMode } from './generation-acceptance';
 
-type QueuedBatch = { categories: TestCaseCategory[]; depth: number };
+/** `acceptanceRetry`: this batch re-requests categories whose cases failed acceptance. It is the LAST attempt: nothing is rejected again. */
+type QueuedBatch = { categories: TestCaseCategory[]; depth: number; acceptanceRetry?: boolean };
 
 export type BatchOutcome = {
   categories: TestCaseCategory[];
@@ -74,6 +76,12 @@ export type OrchestrationInput = {
   /** Cases from earlier in this run / a previous partial response. */
   existing: GeneratedTestCase[];
   budget: ExecutionBudget;
+  /**
+   * Acceptance of generated cases in code (generation-acceptance.ts). Omitted => disabled, so callers
+   * that do not opt in (and every pre-existing test) behave exactly as before. The route passes the
+   * GENERATION_ACCEPTANCE mode.
+   */
+  acceptance?: { mode: AcceptanceMode };
 };
 
 export type OrchestrationResult = {
@@ -178,7 +186,21 @@ export async function runBoundedGeneration(input: OrchestrationInput): Promise<O
       analysis ??= result.data.analysis;
       const normalized = normalizeGeneratedTestCases(result.data.test_cases, input.all_documents);
       issues.push(...normalized.issues);
-      const merged = mergeTestCases(testCases, normalized.test_cases);
+      // Acceptance (Q02/Q04/Q06/Q07/Q11/Q12/Q15/Q25) BEFORE merge: deterministic repairs, duplicate drop and,
+      // in `enforce` mode, rejection of cases that would be Major findings in Review.
+      const acceptance = input.acceptance && input.acceptance.mode !== 'off'
+        ? acceptGeneratedBatch(normalized.test_cases, {
+            mode: input.acceptance.mode,
+            detail_level: detail,
+            language: input.language,
+            documents: input.all_documents,
+            analysis,
+            existing: testCases,
+            relax: queued.acceptanceRetry,
+          })
+        : { accepted: normalized.test_cases, rejected: [], issues: [] };
+      issues.push(...acceptance.issues);
+      const merged = mergeTestCases(testCases, acceptance.accepted);
       testCases = merged.test_cases;
 
       let outcome: BatchOutcome = { categories: batch, status: 'ok', cases_added: merged.added.length };
@@ -203,7 +225,17 @@ export async function runBoundedGeneration(input: OrchestrationInput): Promise<O
           batch.forEach((c) => completed.add(c));
         }
       } else {
-        batch.forEach((c) => completed.add(c));
+        // Regenerate ONLY the categories that lost a case to acceptance, ONCE (the retry is `relax`ed:
+        // it can warn but never reject, so a model that cannot meet the bar still delivers its work).
+        const regenerate = queued.acceptanceRetry ? [] : categoriesToRegenerate(batch, merged.added, acceptance.rejected, perMin);
+        if (regenerate.length > 0) {
+          queue.unshift({ categories: regenerate, depth: queued.depth, acceptanceRetry: true });
+          totalBatches += 1;
+          outcome = { ...outcome, status: 'split' };
+          batch.filter((c) => !regenerate.includes(c)).forEach((c) => completed.add(c));
+        } else {
+          batch.forEach((c) => completed.add(c));
+        }
       }
       batches.push(outcome);
     } catch (error) {

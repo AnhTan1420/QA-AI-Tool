@@ -372,8 +372,9 @@ export function useGenerateWorkspace(projectId: string) {
         ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
-        // Generation's persisted analysis: Review checks priorities against its risk_ranking (Q11).
-        ...(reviewMode === 'generated' && analysis ? { generation_analysis: analysis } : {}),
+        // Generation's PHASE 0 analysis: Review checks priorities against its risk_ranking (Q11). Sent for imported
+        // suites too — a case only matches a risk_ranking scenario above a similarity threshold, so unrelated cases are untouched.
+        ...(analysis ? { generation_analysis: analysis } : {}),
         waivers: convergenceRef.current.waivers,
         ...(convergenceRef.current.previous_run ? { previous_run: convergenceRef.current.previous_run } : {}),
       }, t.generateWorkspace.errors.requestFailed, {
@@ -417,7 +418,7 @@ export function useGenerateWorkspace(projectId: string) {
         ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
-        ...(reviewMode === 'generated' && analysis ? { generation_analysis: analysis } : {}),
+        ...(analysis ? { generation_analysis: analysis } : {}),
       }, t.generateWorkspace.errors.requestFailed, {
         timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
         tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,

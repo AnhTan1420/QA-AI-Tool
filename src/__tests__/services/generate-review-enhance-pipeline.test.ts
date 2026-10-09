@@ -43,7 +43,7 @@ function thinNegative(): GeneratedTestCase {
 
 describe('Generate -> Review -> Enhance', () => {
   it('each stage uses its own model, and Review findings drive Enhance', async () => {
-    const generated = [...['1', '2', '3', '4'].map((n) => goodCase(`TC_P_00${n}`, 'positive')), thinNegative()];
+    const generated = [...['1', '2', '3', '4'].map((n) => goodCase(`TC_P_00${n}`, 'positive', { test_data: { email: 'nguyen.van.a@company.com', password: 'Str0ng!Pass#1', run: n } })), thinNegative()];
     const improvedNegative = goodCase('TC_N_001', 'negative', { title: 'Đăng nhập sai mật khẩu' });
 
     const { fake, calls } = fakeGemini((call) => {
@@ -140,7 +140,7 @@ describe('Generate -> Review -> Enhance', () => {
   });
 
   it('changing AI_MODEL_REVIEW moves only Review; changing AI_MODEL_ENHANCE moves only Enhance', async () => {
-    const generated = [...['1', '2', '3', '4'].map((n) => goodCase(`TC_P_00${n}`, 'positive')), thinNegative()];
+    const generated = [...['1', '2', '3', '4'].map((n) => goodCase(`TC_P_00${n}`, 'positive', { test_data: { email: 'nguyen.van.a@company.com', password: 'Str0ng!Pass#1', run: n } })), thinNegative()];
     const respond = (call: { stage: string }) =>
       call.stage === 'review'
         ? { language_detail: [], taxonomy: [], issues: [], recommendations: [] }

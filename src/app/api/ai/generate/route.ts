@@ -10,6 +10,7 @@ import { repairDocumentCoverage, MIN_REPAIR_BUDGET_MS } from '@/services/ai/cove
 import { runBoundedGeneration } from '@/services/ai/generation-orchestrator';
 import { createRouteBudget } from '@/services/ai/execution-budget';
 import { validateGeneratedTestCases, type SemanticIssue } from '@/services/ai/test-case-validation';
+import { getAcceptanceModeFromEnv } from '@/services/ai/generation-acceptance';
 
 // Cho phép Vercel Function chạy tối đa 5 phút (Vercel Pro). Vòng repair coverage
 // có thể cần vài lượt gọi Gemini nối tiếp nhau nên cần trọn hạn mức này.
@@ -77,6 +78,8 @@ export async function POST(req: Request) {
       all_documents: documents,
       existing,
       budget,
+      // Acceptance in code (GENERATION_ACCEPTANCE=off|repair|enforce, default repair): see generation-acceptance.ts.
+      acceptance: { mode: getAcceptanceModeFromEnv() },
     });
     const issues: SemanticIssue[] = [...generation.issues];
     const completedCategories = [...new Set([...input.completed_categories, ...generation.completed_categories])];
