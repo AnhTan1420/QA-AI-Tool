@@ -6,7 +6,8 @@ import { describe, it, expect } from 'vitest';
 import { buildGenerationPrompt } from '@/services/ai/prompts/generation-agent';
 import { buildReviewPrompt } from '@/services/ai/prompts/review-agent';
 import { buildEnhancePrompt } from '@/services/ai/prompts/enhance-agent';
-import { CATEGORY_VALUES, type ReviewResult, type TestCaseCategory } from '@/models/validators/test-case';
+import type { z } from 'zod';
+import { CATEGORY_VALUES, reviewModelOutputSchema, type ReviewResult, type TestCaseCategory } from '@/models/validators/test-case';
 import {
   DETAIL_LEVEL_RULES,
   TAXONOMY_DEFINITIONS,
@@ -22,6 +23,13 @@ import { planEnhancement } from '@/services/ai/enhance-merge';
 import { goodCase, vagueCase, REQUIREMENT } from '../helpers/review-fixtures';
 
 const LEVELS: DetailLevel[] = ['concise', 'standard', 'detailed'];
+
+/**
+ * Builds a model output the way production does: through the lenient schema, so omitted
+ * arrays (findings, strengths, open_questions, ...) take their defaults instead of every
+ * fixture having to repeat them.
+ */
+const modelOutput = (raw: z.input<typeof reviewModelOutputSchema>) => reviewModelOutputSchema.parse(raw);
 
 function analyze(
   cases = [goodCase('TC_A_001')],
@@ -167,9 +175,9 @@ describe('finalizeReview — the model can make findings worse, never better', (
     vagueCase('TC_V_001', 'negative'),
   ];
 
-  function run(model: Parameters<typeof finalizeReview>[0]['model_output']) {
+  function run(model: z.input<typeof reviewModelOutputSchema> | null) {
     const { analysis } = analyze(cases);
-    return finalizeReview({ model_output: model, analysis, test_cases: cases });
+    return finalizeReview({ model_output: model && modelOutput(model), analysis, test_cases: cases });
   }
 
   it('cannot upgrade a MISSING category to SUPPORTED, or a below-minimum one past PARTIALLY_SUPPORTED', () => {
@@ -261,24 +269,24 @@ describe('finalizeReview — the model can make findings worse, never better', (
     const clean = [...['1', '2', '3', '4'].map((n) => goodCase(`TC_P_00${n}`, 'positive'))];
     const { analysis } = analyze(clean, 'standard', ['positive'] as const);
     const ok = finalizeReview({
-      model_output: {
+      model_output: modelOutput({
         language_detail: [],
         taxonomy: [{ category: 'positive', status: 'SUPPORTED', evidence: 'TC_P_001 asserts /dashboard and audit log', supporting_codes: ['TC_P_001'] }],
         issues: [],
         recommendations: [],
-      },
+      }),
       analysis,
       test_cases: clean,
     });
     expect(ok.overall_status).toBe('PASS');
 
     const withMinor = finalizeReview({
-      model_output: {
+      model_output: modelOutput({
         language_detail: [],
         taxonomy: [{ category: 'positive', status: 'SUPPORTED', evidence: 'TC_P_001 asserts /dashboard', supporting_codes: ['TC_P_001'] }],
         issues: [{ test_case_code: 'TC_P_002', severity: 'Minor', area: 'consistency', description: 'title wording', evidence: 'TC_P_002 title' }],
         recommendations: [],
-      },
+      }),
       analysis,
       test_cases: clean,
     });

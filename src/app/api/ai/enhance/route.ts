@@ -34,7 +34,6 @@ import {
 import { analyzeTestCases, truncate } from '@/services/ai/review-analysis';
 import { runEnhanceWork } from '@/services/ai/enhance-orchestrator';
 import { ENHANCE_LEGACY_PROMPT_VERSION, ENHANCE_PROMPT_VERSION, MODEL_RESOLUTION_STATUSES, type EnhanceWorkOutput } from '@/services/ai/enhance-work';
-import type { ReviewFinding } from '@/services/ai/review-findings';
 import type { L0Context } from '@/services/ai/review-pipeline';
 import { applyEnhancement, isNoOpPlan, planEnhancement } from '@/services/ai/enhance-merge';
 import {
@@ -163,7 +162,7 @@ export async function POST(request: Request) {
 
       const run = await runEnhanceWork({
         cases: currentCases,
-        client_findings: review.findings as unknown as ReviewFinding[],
+        client_findings: review.findings,
         strengths: review.strengths ?? [],
         open_questions: review.open_questions ?? [],
         l0,

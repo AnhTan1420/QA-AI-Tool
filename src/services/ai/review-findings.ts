@@ -256,11 +256,22 @@ function extractQuotes(evidence: string): string[] {
 }
 
 /**
+ * A finding as it arrives from the MODEL (or from the legacy-issue adapter): every field optional, and
+ * `rule` / `fields_affected` plain strings because nothing has validated them yet. Narrowing them to
+ * RuleId / CaseField is exactly what clampSemanticFindings does, so the input type must not pretend
+ * they are already narrowed.
+ */
+export type UntrustedFinding = Partial<Omit<RawFinding, 'rule' | 'fields_affected'>> & {
+  rule?: string;
+  fields_affected?: readonly string[];
+};
+
+/**
  * Turns whatever the model returned into findings the application is willing to stand behind.
  * Returns the survivors plus a reason for every drop (surfaced in telemetry/tests, never silent).
  */
 export function clampSemanticFindings(
-  rawList: readonly Partial<RawFinding>[],
+  rawList: readonly UntrustedFinding[],
   ctx: ClampContext,
 ): { kept: RawFinding[]; dropped: ClampDrop[] } {
   const L = REVIEW_LIMITS;
@@ -272,7 +283,8 @@ export function clampSemanticFindings(
     const drop = (reason: string) => dropped.push({ reason, rule: raw.rule, issue: raw.issue ? clip(raw.issue, 60) : undefined });
 
     if (!raw.rule || !isRuleId(raw.rule)) { drop('unknown_rule'); continue; }
-    const rule = getRule(raw.rule)!;
+    const ruleId: RuleId = raw.rule;
+    const rule = getRule(ruleId)!;
     // Mechanical-only rules are produced by code. A model repeat is noise at best, a lie at worst.
     if (rule.check === 'mechanical') { drop('mechanical_rule_not_model_owned'); continue; }
 
@@ -297,9 +309,9 @@ export function clampSemanticFindings(
     // RECLASSIFY is the only action allowed to change category/priority, and only via Q08 / Q11.
     let fields = [...new Set((raw.fields_affected ?? []).filter((f): f is CaseField => (CASE_FIELDS as readonly string[]).includes(f)))];
     if (action === 'RECLASSIFY') {
-      if (raw.rule !== 'Q08' && raw.rule !== 'Q11') { drop('reclassify_requires_Q08_or_Q11'); continue; }
+      if (ruleId !== 'Q08' && ruleId !== 'Q11') { drop('reclassify_requires_Q08_or_Q11'); continue; }
       fields = fields.filter((f) => f === 'category' || f === 'priority');
-      if (fields.length === 0) fields = raw.rule === 'Q11' ? ['priority'] : ['category'];
+      if (fields.length === 0) fields = ruleId === 'Q11' ? ['priority'] : ['category'];
     } else {
       fields = fields.filter((f) => f !== 'category' && f !== 'priority');
     }
@@ -310,10 +322,10 @@ export function clampSemanticFindings(
     let severity: FindingSeverity = raw.severity && FINDING_SEVERITIES.includes(raw.severity) ? raw.severity : rule.defaultSeverity;
     // cases-only has no ground truth: omissions and contradictions cannot be PROVEN, so
     // source-proven rules and every missing-case finding are capped at Medium and never Critical.
-    if (ctx.mode === 'cases-only' && (SOURCE_PROVEN_RULES.has(raw.rule) || kind === 'missing_case')) {
+    if (ctx.mode === 'cases-only' && (SOURCE_PROVEN_RULES.has(ruleId) || kind === 'missing_case')) {
       if (confidence === 'High') confidence = 'Medium';
       if (severity === 'Critical') severity = 'Major';
-    } else if (SOURCE_PROVEN_RULES.has(raw.rule)) {
+    } else if (SOURCE_PROVEN_RULES.has(ruleId)) {
       const proven = extractQuotes(raw.evidence ?? '').some((q) => quoteInSource(q, ctx.sourceText));
       // High confidence needs a verbatim source quote the application can find. Otherwise it is an opinion.
       if (confidence === 'High' && !proven) confidence = 'Medium';
@@ -350,7 +362,7 @@ export function clampSemanticFindings(
     }
 
     const finding: RawFinding = {
-      rule: raw.rule,
+      rule: ruleId,
       kind,
       severity,
       confidence,

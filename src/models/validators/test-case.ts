@@ -193,6 +193,14 @@ export const findingKindSchema = z.enum(['defect', 'missing_case', 'hygiene', 'q
 export const findingActionSchema = z.enum(['FIX', 'ADD', 'SPLIT', 'MERGE', 'REMOVE', 'RECLASSIFY']);
 export const findingScopeSchema = z.enum(['case', 'category', 'suite']);
 export const findingConfidenceSchema = z.enum(['High', 'Medium', 'Low']);
+// Mirrors RULE_IDS in services/ai/quality-standards.ts (same cycle reason as above; same drift test).
+// A finding the APPLICATION returns always carries a catalog rule, so the output contract says so.
+// (The model-facing reviewModelOutputSchema keeps `rule` a plain string: clampSemanticFindings
+// is what rejects unknown rules there.)
+export const ruleIdSchema = z.enum([
+  'Q01', 'Q02', 'Q03', 'Q04', 'Q05', 'Q06', 'Q07', 'Q08', 'Q09', 'Q10', 'Q11', 'Q12', 'Q13', 'Q14', 'Q15',
+  'Q20', 'Q21', 'Q22', 'Q23', 'Q24', 'Q25', 'Q26', 'Q27', 'Q28',
+]);
 export const caseFieldSchema = z.enum([
   'title',
   'preconditions',
@@ -216,7 +224,7 @@ export const reviewFindingSchema = z.object({
   finding_id: z.string().min(1),
   fingerprint: z.string().min(1),
   origin: z.enum(['mechanical', 'semantic']),
-  rule: z.string().min(1),
+  rule: ruleIdSchema,
   kind: findingKindSchema,
   severity: severitySchema,
   confidence: findingConfidenceSchema,

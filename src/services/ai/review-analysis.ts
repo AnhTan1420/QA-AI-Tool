@@ -14,11 +14,12 @@
 // rules say, never better.
 // ============================================================================
 
-import type {
-  GeneratedTestCase,
-  ReviewModelOutput,
-  ReviewResult,
-  TestCaseCategory,
+import {
+  reviewModelOutputSchema,
+  type GeneratedTestCase,
+  type ReviewModelOutput,
+  type ReviewResult,
+  type TestCaseCategory,
 } from '@/models/validators/test-case';
 import type { ParsedDocument } from '@/models/validators/document';
 import { validateGeneratedTestCases } from '@/services/ai/test-case-validation';
@@ -256,12 +257,9 @@ export function finalizeReview(input: {
   test_cases: GeneratedTestCase[];
 }): ReviewResult {
   const { analysis } = input;
-  const ai: ReviewModelOutput = input.model_output ?? {
-    language_detail: [],
-    taxonomy: [],
-    issues: [],
-    recommendations: [],
-  };
+  // No model output => the schema's own defaults (every array []). Parsing {} instead of
+  // hand-writing the literal keeps this fallback in step with reviewModelOutputSchema.
+  const ai: ReviewModelOutput = input.model_output ?? reviewModelOutputSchema.parse({});
   const knownCodes = new Set(input.test_cases.map((tc) => tc.code));
 
   // 1) LANGUAGE & DETAIL — rules are facts; the model can only add findings.

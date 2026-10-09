@@ -146,9 +146,15 @@ describe('Review is bounded', () => {
     const d = json.data;
 
     expect(d.issues.length).toBeLessThanOrEqual(REVIEW_LIMITS.maxIssues);
-    expect(d.recommendations.length).toBeLessThanOrEqual(REVIEW_LIMITS.maxRecommendations);
+    // v2 returns the model's recommendations PLUS up to 3 code-derived generator-feedback lines
+    // (finalizeReviewV2: maxRecommendations + 3). The model-owned caps apply to the model's share only;
+    // generator lines are application text (clipped to 260 chars so the "-> lever" tail survives).
+    const generatorLines: string[] = d.generator_recommendations ?? [];
+    const modelRecs: string[] = d.recommendations.filter((r: string) => !generatorLines.includes(r));
+    expect(d.recommendations.length).toBeLessThanOrEqual(REVIEW_LIMITS.maxRecommendations + 3);
+    expect(modelRecs.length).toBeLessThanOrEqual(REVIEW_LIMITS.maxRecommendations);
     expect(JSON.stringify(d.issues)).not.toContain(long);
-    expect(d.recommendations.every((r: string) => r.length <= REVIEW_LIMITS.maxRecommendationChars)).toBe(true);
+    expect(modelRecs.every((r) => r.length <= REVIEW_LIMITS.maxRecommendationChars)).toBe(true);
   });
 
   it('sends compact digests and a capped requirement, not the whole input, for large suites', async () => {

@@ -7,7 +7,7 @@ import {
   type ClampContext, type RawFinding, type ReviewFinding,
 } from '@/services/ai/review-findings';
 import {
-  REVIEW_LIMITS, RULE_CATALOG, estimateReviewOutputTokens, getDetailLevelRules, ruleContext,
+  REVIEW_LIMITS, RULE_CATALOG, RULE_IDS, estimateReviewOutputTokens, getDetailLevelRules, ruleContext,
   renderRuleCatalogForPrompt, prevalenceFactor,
 } from '@/services/ai/quality-standards';
 import { SEEDED_REQUIREMENT } from '../helpers/seeded-fixture';
@@ -206,12 +206,13 @@ describe('zod enum literals mirror the constants (no drift)', () => {
     expect(m, `${name} not found`).not.toBeNull();
     return [...m![1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
   };
-  it('kinds, actions, scopes, confidences, case fields', () => {
+  it('kinds, actions, scopes, confidences, case fields, rule ids', () => {
     expect(literals('findingKindSchema')).toEqual([...FINDING_KINDS]);
     expect(literals('findingActionSchema')).toEqual([...FINDING_ACTIONS]);
     expect(literals('findingScopeSchema')).toEqual([...FINDING_SCOPES]);
     expect(literals('findingConfidenceSchema')).toEqual([...FINDING_CONFIDENCES]);
     expect(literals('caseFieldSchema')).toEqual([...CASE_FIELDS]);
+    expect(literals('ruleIdSchema')).toEqual([...RULE_IDS]);
     expect([...FINDING_SEVERITIES]).toEqual(['Critical', 'Major', 'Minor']);
   });
 });

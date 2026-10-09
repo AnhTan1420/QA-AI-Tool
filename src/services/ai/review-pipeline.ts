@@ -25,6 +25,7 @@ import {
   type ClampContext,
   type RawFinding,
   type ReviewFinding,
+  type UntrustedFinding,
   type Waiver,
 } from './review-findings';
 import {
@@ -148,7 +149,7 @@ export type FinalizeV2Input = {
 };
 
 /** Legacy `issues[]` from a model that ignored the new schema -> low-confidence findings. */
-function legacyIssuesToFindings(model: ReviewModelOutput): Partial<RawFinding>[] {
+function legacyIssuesToFindings(model: ReviewModelOutput): UntrustedFinding[] {
   return model.issues.map((i) => {
     const hasCode = Boolean(i.test_case_code?.trim());
     const taxonomy = i.area === 'taxonomy';
@@ -164,7 +165,7 @@ function legacyIssuesToFindings(model: ReviewModelOutput): Partial<RawFinding>[]
       issue: i.description,
       evidence: i.evidence,
       enhance_instruction: `Resolve: ${i.description}`,
-    } as Partial<RawFinding>;
+    } satisfies UntrustedFinding;
   });
 }
 
@@ -184,7 +185,7 @@ export function finalizeReviewV2(input: FinalizeV2Input): ReviewResult {
     waivers,
   };
 
-  const candidates: Partial<RawFinding>[] = [...(model?.findings ?? []), ...(model ? legacyIssuesToFindings(model) : [])];
+  const candidates: UntrustedFinding[] = [...(model?.findings ?? []), ...(model ? legacyIssuesToFindings(model) : [])];
   const { kept, dropped } = clampSemanticFindings(candidates, ctx);
 
   // A semantic FIX that only repeats a mechanical finding of the same rule on the same cases adds nothing.
