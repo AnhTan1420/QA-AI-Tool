@@ -277,7 +277,70 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
             </div>
           </div>
 
-          {activeReview.issues.length > 0 && (
+          {activeReview.score && (
+            <div className="rounded-xl border border-ink-200 bg-white p-3 text-sm">
+              <p className="font-bold text-ink-900">
+                {rp.scoreLabel}: {activeReview.score.score}/100
+                <span className="ml-2 text-xs font-semibold text-ink-600">{rp.verdict[activeReview.score.verdict]}</span>
+                {activeReview.score.provisional && <span className="ml-2 text-xs font-normal text-ink-500">({rp.scoreProvisional})</span>}
+              </p>
+              {activeReview.review_mode && (
+                <p className="mt-1 text-xs text-ink-500">{rp.modeLabel}: {rp.mode[activeReview.review_mode]}</p>
+              )}
+              <p className="mt-1 text-[11px] text-ink-500">
+                {activeReview.score.components.map((c) => `${c.id} ${c.value}/${c.budget}`).join(' · ')}
+              </p>
+            </div>
+          )}
+
+          {activeReview.strengths && activeReview.strengths.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-success-600">{rp.strengthsTitle}</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-ink-700">
+                {activeReview.strengths.map((s, i) => (<li key={i}>{s}</li>))}
+              </ul>
+            </div>
+          )}
+
+          {activeReview.findings && activeReview.findings.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-warning-600">{rp.findingsTitle} ({activeReview.findings.length})</p>
+              <div className="space-y-2">
+                {activeReview.findings.slice(0, 12).map((f) => (
+                  <div key={f.finding_id} className="rounded-xl border border-warning-600/20 bg-warning-50 p-3 text-sm">
+                    <p className="font-bold text-ink-900">
+                      <span className="mr-1 font-mono text-[11px] text-ink-500">{f.finding_id}</span>
+                      <span className="mr-1 font-mono text-brand-600">{f.rule}</span>
+                      {f.issue}
+                      <SeverityBadge severity={f.severity} />
+                      <span className="ml-2 text-[10px] font-semibold uppercase tracking-wide text-warning-600">{f.action}</span>
+                    </p>
+                    <p className="mt-1 text-ink-600">
+                      {f.test_case_codes.length > 0 && <span className="mr-1 font-mono text-[11px] text-brand-600">[{f.test_case_codes.slice(0, 4).join(', ')}{f.test_case_codes.length > 4 ? ', …' : ''}]</span>}
+                      {f.evidence}
+                    </p>
+                    {f.enhance_instruction && <p className="mt-1 text-xs text-ink-700">→ {f.enhance_instruction}</p>}
+                    <p className="mt-1 text-[10px] uppercase tracking-wide text-ink-500">{rp.findingOrigin[f.origin]} · {f.confidence}</p>
+                  </div>
+                ))}
+                {activeReview.findings.length > 12 && (
+                  <p className="text-xs text-ink-500">{rp.findingsMore(activeReview.findings.length - 12)}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeReview.open_questions && activeReview.open_questions.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink-500">{rp.openQuestionsTitle}</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-ink-700">
+                {activeReview.open_questions.map((q, i) => (<li key={i}>{q}</li>))}
+              </ul>
+            </div>
+          )}
+
+          {/* Legacy issues list: the findings above are a superset, so it only shows for reviews saved before v2. */}
+          {!activeReview.findings && activeReview.issues.length > 0 && (
             <div>
               <p className="mb-2 text-xs font-bold uppercase tracking-wide text-warning-600">{rp.issuesTitle}</p>
               <div className="space-y-2">

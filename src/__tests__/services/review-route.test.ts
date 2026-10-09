@@ -171,7 +171,8 @@ describe('Review does not request chain-of-thought and does not regenerate test 
     await callReview();
 
     const schema = calls[0].config.responseSchema as { properties: Record<string, { maxItems?: number }> };
-    expect(Object.keys(schema.properties).sort()).toEqual(['issues', 'language_detail', 'recommendations', 'taxonomy']);
+    // v2 contract: the model returns FINDINGS; legacy issues/language_detail are produced by the adapter from rules + findings.
+    expect(Object.keys(schema.properties).sort()).toEqual(['findings', 'open_questions', 'recommendations', 'strengths', 'taxonomy']);
     expect(Object.keys(schema.properties).join(' ')).not.toMatch(/reasoning|analysis|thought|explanation/i);
     for (const key of Object.keys(schema.properties)) expect(schema.properties[key].maxItems).toBeGreaterThan(0);
   });

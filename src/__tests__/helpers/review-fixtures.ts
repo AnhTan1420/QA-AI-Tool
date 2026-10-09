@@ -5,7 +5,7 @@
  * prove which model chain each stage used, not just assume it.
  */
 import { REVIEW_SYSTEM_PROMPT } from '@/services/ai/prompts/review-agent';
-import { ENHANCE_SYSTEM_PROMPT } from '@/services/ai/prompts/enhance-agent';
+import { ENHANCE_SYSTEM_PROMPT, ENHANCE_WORK_SYSTEM_PROMPT } from '@/services/ai/prompts/enhance-agent';
 import type { GeminiLikeClient } from '@/services/ai/gemini';
 import type { GeneratedTestCase, TestCaseCategory } from '@/models/validators/test-case';
 
@@ -21,7 +21,7 @@ export type RecordedCall = {
 
 export function stageOf(systemInstruction: string): Stage {
   if (systemInstruction === REVIEW_SYSTEM_PROMPT) return 'review';
-  if (systemInstruction === ENHANCE_SYSTEM_PROMPT) return 'enhance';
+  if (systemInstruction === ENHANCE_SYSTEM_PROMPT || systemInstruction === ENHANCE_WORK_SYSTEM_PROMPT) return 'enhance';
   if (systemInstruction.includes('professional QA Assistant')) return 'generation';
   return 'other';
 }

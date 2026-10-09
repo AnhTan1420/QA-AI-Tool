@@ -59,7 +59,21 @@ describe('Generate -> Review -> Enhance', () => {
           recommendations: [],
         };
       }
-      if (call.stage === 'enhance') return { test_cases: [improvedNegative], changes: ['TC_N_001 — expanded to 5 concrete steps'] };
+      if (call.stage === 'enhance') {
+        // Enhance v2: the findings ARE the work order and the model answers with patches + one resolution
+        // per finding. Finding ids are assigned by the application, so read them from the prompt.
+        const ids = [...call.prompt.matchAll(/\[(F-\d{3})\] (Q\d\d)/g)].map((m) => ({ id: m[1], rule: m[2] }));
+        return {
+          patches: [{ code: 'TC_N_001', set: { steps: improvedNegative.steps } }],
+          new_cases: [],
+          resolutions: ids.map(({ id, rule }) =>
+            rule === 'Q02'
+              ? { finding_id: id, status: 'FIXED', test_case_codes: ['TC_N_001'], note: '' }
+              : { finding_id: id, status: 'DECLINED', test_case_codes: [], note: 'out of scope for this scenario' },
+          ),
+          changes: ['TC_N_001 — expanded to 5 concrete steps'],
+        };
+      }
       throw new Error(`unexpected stage: ${call.stage}`);
     });
     __setGeminiClientFactoryForTests(() => fake);
@@ -119,7 +133,8 @@ describe('Generate -> Review -> Enhance', () => {
     // Review's finding reached Enhance's prompt; Enhance never saw the Review model id.
     const enhanceCall = calls[2];
     expect(enhanceCall.prompt).toContain('TC_N_001');
-    expect(enhanceCall.prompt).toContain('TOO_VAGUE');
+    expect(enhanceCall.prompt).toContain('Q02'); // the mechanical Review finding, verbatim, is Enhance's work order
+    expect(enhanceCall.prompt).toContain('Fewer than 5 steps');
     expect(enhanceCall.prompt).not.toContain('model-review');
     expect(calls[1].prompt).not.toContain('model-enhance');
   });

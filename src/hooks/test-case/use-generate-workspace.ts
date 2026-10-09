@@ -54,6 +54,14 @@ type AIEnhanceResponse = AIGenerationResponse & {
   deferred_test_cases?: string[];
   /** Set when Enhance skipped the model call (no actionable Review findings). */
   note?: string;
+  // ── Enhance v2 (work-order mode); all optional: a legacy review yields none of them ──
+  removed_test_cases?: string[];
+  resolutions?: { finding_id: string; fingerprint: string; rule: string; status: string; test_case_codes: string[]; note: string }[];
+  deferred?: { finding_id: string; rule: string; codes: string[]; reason: string }[];
+  /** Findings Enhance declined with a reason: sent back so the next Review does not re-raise them. */
+  waivers?: { fingerprint: string; rule: string; test_case_codes: string[]; evidence_hash: string; reason: string }[];
+  previous_run?: { fingerprints: string[]; resolved_fingerprints: string[] };
+  delta?: { score_before: number; score_after: number; mechanical_before: { total: number }; mechanical_after: { total: number } };
 };
 
 /** /api/ai/review response: bounded findings + the application-computed document coverage. */
@@ -115,6 +123,9 @@ export function useGenerateWorkspace(projectId: string) {
   const [testCases, setTestCases] = useState<GeneratedTestCase[]>([]);
   const [analysis, setAnalysis] = useState<GenerationAnalysis | null>(null);
   const [review, setReview] = useState<ReviewResponse | null>(null);
+  // Convergence between Review -> Enhance -> Review (see review-findings.ts): what Enhance declined
+  // (waivers) and which fingerprints the last run had. Not displayed, only sent back.
+  const convergenceRef = useRef<{ waivers: NonNullable<AIEnhanceResponse['waivers']>; previous_run?: AIEnhanceResponse['previous_run'] }>({ waivers: [] });
   const [error, setError] = useState('');
   const [errorDetails, setErrorDetails] = useState<{ path: string; message: string }[]>([]);
   const [successMessage, setSuccessMessage] = useState('');
@@ -361,6 +372,10 @@ export function useGenerateWorkspace(projectId: string) {
         ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
+        // Generation's persisted analysis: Review checks priorities against its risk_ranking (Q11).
+        ...(reviewMode === 'generated' && analysis ? { generation_analysis: analysis } : {}),
+        waivers: convergenceRef.current.waivers,
+        ...(convergenceRef.current.previous_run ? { previous_run: convergenceRef.current.previous_run } : {}),
       }, t.generateWorkspace.errors.requestFailed, {
         timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
         tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,
@@ -402,6 +417,7 @@ export function useGenerateWorkspace(projectId: string) {
         ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
         language,
         detail_level: detailLevel,
+        ...(reviewMode === 'generated' && analysis ? { generation_analysis: analysis } : {}),
       }, t.generateWorkspace.errors.requestFailed, {
         timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
         tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,
@@ -423,6 +439,12 @@ export function useGenerateWorkspace(projectId: string) {
       setWasTruncated(Boolean(enhanced.truncated));
       setRunIssues(enhanced.issues ?? []);
       setEnhanceAnalysis(enhanced.analysis ?? null);
+      // Remember what Enhance declined (with a reason) and this run's fingerprints for the next Review.
+      if (enhanced.waivers || enhanced.previous_run) {
+        const known = new Map(convergenceRef.current.waivers.map((w) => [w.fingerprint, w]));
+        for (const w of enhanced.waivers ?? []) known.set(w.fingerprint, w);
+        convergenceRef.current = { waivers: [...known.values()].slice(-50), previous_run: enhanced.previous_run };
+      }
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.enhanceFailedGeneric);
     } finally {

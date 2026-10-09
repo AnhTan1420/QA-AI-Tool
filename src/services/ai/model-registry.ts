@@ -18,6 +18,8 @@
 // tren Vercel co hieu luc ma khong phu thuoc thu tu import.
 // ============================================================================
 
+import { REVIEW_LIMITS } from './quality-standards';
+
 export type AITask =
   | 'generation'
   | 'coverage_repair'
@@ -259,7 +261,7 @@ export function getExplicitCategoryFloorCap(): number | undefined {
  * prompt/schema/limits in quality-standards.ts (REVIEW_LIMITS) instead.
  */
 export function getReviewMaxOutputTokens(): number {
-  return readIntEnv('AI_REVIEW_MAX_OUTPUT_TOKENS', 3_072, 512, 8_192);
+  return readIntEnv('AI_REVIEW_MAX_OUTPUT_TOKENS', REVIEW_LIMITS.defaultMaxOutputTokens, 512, 8_192);
 }
 
 export function getEnhanceMaxOutputTokens(): number {

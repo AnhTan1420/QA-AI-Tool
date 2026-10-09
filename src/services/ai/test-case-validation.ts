@@ -36,6 +36,8 @@ export type SemanticIssueCode =
   | 'weak_evidence_mapping'
   | 'unrequested_change_rejected'
   | 'enhance_still_below_standard'
+  | 'enhance_revision_rolled_back'
+  | 'enhance_new_case_rejected'
   | 'generation_deferred'
   | 'batch_split'
   | 'repair_atoms_stuck';

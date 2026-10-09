@@ -3,14 +3,18 @@ import { z, ZodError } from 'zod';
 import { runGeminiTask } from '@/services/ai/provider';
 import { GeminiProviderError } from '@/services/ai/errors';
 import {
+  REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_PROMPT,
   buildReviewPrompt,
   buildReviewResponseSchema,
 } from '@/services/ai/prompts/review-agent';
 import {
+  generationAnalysisSchema,
+  previousRunSchema,
   retrievedTestCaseSchema,
   reviewModelOutputSchema,
   testCaseCategorySchema,
+  waiverSchema,
   type GeneratedTestCase,
   type ReviewModelOutput,
 } from '@/models/validators/test-case';
@@ -21,7 +25,9 @@ import { getAssumedOutputTokensPerSecond, getExplicitCategoryFloorCap, getReview
 import { createRouteBudget } from '@/services/ai/execution-budget';
 import { computeAttemptTimeoutMs } from '@/services/ai/output-budget';
 import { getRequiredCategories, normalizeDetailLevel, resolvePerCategoryMin } from '@/services/ai/quality-standards';
-import { analyzeTestCases, finalizeReview } from '@/services/ai/review-analysis';
+import { analyzeTestCases } from '@/services/ai/review-analysis';
+import { detectNonStringTestData } from '@/services/ai/review-facts';
+import { finalizeReviewV2, prepareReview } from '@/services/ai/review-pipeline';
 
 // Review is one small, bounded call — it must never need Enhance-sized budgets.
 export const maxDuration = 120;
@@ -43,12 +49,24 @@ const requestSchema = z.object({
   selected_categories: z.array(testCaseCategorySchema).optional(),
   language: z.string().min(2).default('Tiếng Việt'),
   detail_level: z.enum(['concise', 'standard', 'detailed']).default('standard'),
+  /**
+   * Generation's persisted PHASE 0 analysis (test_case_sets.analysis). Optional: when present
+   * Q11 priorities are checked against its risk_ranking and ambiguous_terms ground Q13.
+   */
+  generation_analysis: generationAnalysisSchema.optional(),
+  /** Findings Enhance declined last run. Review does not re-raise them unless the evidence changed. */
+  waivers: z.array(waiverSchema).max(50).optional().default([]),
+  /** Fingerprints of the previous Review, to report fixed / new / regressed / unchanged. */
+  previous_run: previousRunSchema.optional(),
 });
 
 export async function POST(request: Request) {
   const budget = createRouteBudget(maxDuration, 'review');
   try {
-    const payload = requestSchema.parse(await request.json());
+    const body = await request.json();
+    const payload = requestSchema.parse(body);
+    // The schema coerces non-string test_data to strings, so only the RAW body can show it was wrong.
+    const nonStringCodes = detectNonStringTestData((body as { test_cases?: unknown })?.test_cases);
     const documents = payload.document_context ?? [];
     const cases = payload.test_cases as GeneratedTestCase[];
     const detailLevel = normalizeDetailLevel(payload.detail_level);
@@ -67,8 +85,24 @@ export async function POST(request: Request) {
       required_categories: requiredCategories,
       per_category_min: perCategoryMin,
       documents,
+      language: payload.language,
     });
     const coverage = computeDocumentCoverage(documents, cases);
+    // L0: facts + mechanical findings (free, exact). The model only adds what code cannot see.
+    const prepared = prepareReview({
+      test_cases: cases,
+      requirement_description: payload.requirement_description,
+      documents,
+      language: payload.language,
+      detail_level: detailLevel,
+      required_categories: requiredCategories,
+      per_category_min: perCategoryMin,
+      analysis,
+      coverage,
+      generation_analysis: payload.generation_analysis,
+      waivers: payload.waivers,
+      non_string_test_data_codes: nonStringCodes,
+    });
 
     // 2) Bounded AI pass — semantic judgment only.
     const reviewTimeoutMs = computeAttemptTimeoutMs(getReviewMaxOutputTokens(), { tokensPerSecond: getAssumedOutputTokensPerSecond() });
@@ -83,6 +117,12 @@ export async function POST(request: Request) {
         per_category_min: perCategoryMin,
         analysis,
         document_coverage: coverage,
+        language: payload.language,
+        mode: prepared.mode,
+        facts: prepared.facts,
+        mechanical_findings: prepared.mechanical,
+        grounding: prepared.grounding,
+        waivers: payload.waivers,
       }),
       responseSchema: buildReviewResponseSchema(requiredCategories.length),
       maxOutputTokens: getReviewMaxOutputTokens(),
@@ -97,8 +137,18 @@ export async function POST(request: Request) {
       validate: (raw) => validateAIJson(reviewModelOutputSchema, raw, 'review result'),
     });
 
-    // 3) Deterministic pass again — clamp, drop unevidenced findings, compute status.
-    const review = finalizeReview({ model_output: result.data, analysis, test_cases: cases });
+    // 3) Deterministic pass again — clamp, verify quotes, merge with L0, score, verdict.
+    const review = finalizeReviewV2({
+      model_output: result.data,
+      analysis,
+      test_cases: cases,
+      prepared,
+      required_categories: requiredCategories,
+      coverage,
+      waivers: payload.waivers,
+      previous_run: payload.previous_run,
+      prompt_version: REVIEW_PROMPT_VERSION,
+    });
 
     return NextResponse.json({
       success: true,

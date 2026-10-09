@@ -185,6 +185,84 @@ export const reviewOverallStatusSchema = z.enum(['PASS', 'NEEDS_IMPROVEMENT', 'F
 const severitySchema = z.enum(['Critical', 'Major', 'Minor']);
 export const reviewIssueAreaSchema = z.enum(['language_detail', 'taxonomy', 'executability', 'consistency']);
 
+// ── Findings (Review -> Enhance work orders) ──────────────────────────────
+// The enum literals mirror services/ai/review-findings.ts (FINDING_KINDS, ...). They are
+// duplicated on purpose: services import this file, so importing them here would be a
+// cycle. A unit test (review-findings.test.ts) fails if the two copies ever drift.
+export const findingKindSchema = z.enum(['defect', 'missing_case', 'hygiene', 'question']);
+export const findingActionSchema = z.enum(['FIX', 'ADD', 'SPLIT', 'MERGE', 'REMOVE', 'RECLASSIFY']);
+export const findingScopeSchema = z.enum(['case', 'category', 'suite']);
+export const findingConfidenceSchema = z.enum(['High', 'Medium', 'Low']);
+export const caseFieldSchema = z.enum([
+  'title',
+  'preconditions',
+  'test_data',
+  'steps',
+  'final_expected_result',
+  'priority',
+  'category',
+  'source_requirement_ids',
+]);
+export const gapSpecSchema = z.object({
+  category: z.string(),
+  condition: z.string(),
+  source_ref: z.string(),
+  suggested_priority: z.string().optional(),
+  risk_note: z.string().optional(),
+});
+
+/** A finding as the APPLICATION returns it (ids and fingerprint assigned by code). */
+export const reviewFindingSchema = z.object({
+  finding_id: z.string().min(1),
+  fingerprint: z.string().min(1),
+  origin: z.enum(['mechanical', 'semantic']),
+  rule: z.string().min(1),
+  kind: findingKindSchema,
+  severity: severitySchema,
+  confidence: findingConfidenceSchema,
+  action: findingActionSchema,
+  scope: findingScopeSchema,
+  test_case_codes: z.array(z.string()).default([]),
+  fields_affected: z.array(caseFieldSchema).default([]),
+  issue: z.string(),
+  evidence: z.string(),
+  enhance_instruction: z.string().default(''),
+  gap_spec: gapSpecSchema.optional(),
+  survivor_code: z.string().optional(),
+});
+export type ReviewFindingValue = z.infer<typeof reviewFindingSchema>;
+
+/** A finding Enhance declined with a reason. Review must not re-raise it unless the evidence changed. */
+export const waiverSchema = z.object({
+  fingerprint: z.string().min(1),
+  rule: z.string().min(1),
+  test_case_codes: z.array(z.string()).default([]),
+  evidence_hash: z.string().min(1),
+  reason: z.string().default(''),
+});
+
+/** Fingerprints of the previous run, so this run can report fixed / new / regressed / unchanged. */
+export const previousRunSchema = z.object({
+  fingerprints: z.array(z.string()).max(200).default([]),
+  resolved_fingerprints: z.array(z.string()).max(200).optional(),
+});
+
+export const reviewScoreSchema = z.object({
+  score: z.number(),
+  verdict: z.enum(['ACCEPT', 'ACCEPT WITH REWORK', 'REJECT / REGENERATE']),
+  provisional: z.boolean(),
+  components: z.array(
+    z.object({
+      id: z.string(),
+      budget: z.number(),
+      penalty: z.number(),
+      value: z.number(),
+      cap: z.object({ value: z.number(), reason: z.string() }).optional(),
+    }),
+  ),
+  arithmetic: z.array(z.string()),
+});
+
 export const reviewResultSchema = z.object({
   overall_status: reviewOverallStatusSchema,
   /** One deterministic line built by the application (no model tokens). */
@@ -225,6 +303,35 @@ export const reviewResultSchema = z.object({
   recommendations: z.array(z.string()),
   /** Structural errors found by deterministic validation (duplicate codes etc.). */
   structure_errors: z.array(z.string()).optional(),
+
+  // ── v2 additions: ALL optional so reviews saved before the redesign still parse ──
+  /** Mechanical (code) + semantic (model) findings: the work orders Enhance consumes. */
+  findings: z.array(reviewFindingSchema).optional(),
+  strengths: z.array(z.string()).optional(),
+  open_questions: z.array(z.string()).optional(),
+  review_mode: z.enum(['source-verified', 'requirement-only', 'cases-only']).optional(),
+  /** Computed by the application, with its arithmetic. Never model-asserted. */
+  score: reviewScoreSchema.optional(),
+  prompt_version: z.string().optional(),
+  /** Fingerprint diff against the previous run (fixed / new / regressed / unchanged). */
+  comparison: z
+    .object({ fixed: z.array(z.string()), new: z.array(z.string()), regressed: z.array(z.string()), unchanged: z.array(z.string()) })
+    .optional(),
+  /** Q-rule -> findings -> cases -> % of cases. Feeds the generator feedback loop. */
+  rule_histogram: z
+    .array(z.object({ rule: z.string(), findings: z.number(), cases: z.number(), percent_of_cases: z.number() }))
+    .optional(),
+  /** symptom -> likely cause -> lever, derived from the histogram. For the Generation owner. */
+  generator_recommendations: z.array(z.string()).optional(),
+  coverage_basis: z
+    .object({
+      cases_shown: z.number(),
+      cases_total: z.number(),
+      waived: z.number(),
+      /** Model findings the application rejected, by reason (never silent). */
+      dropped: z.record(z.string(), z.number()),
+    })
+    .optional(),
 });
 
 /**
@@ -265,6 +372,37 @@ export const reviewModelOutputSchema = z.object({
     )
     .default([]),
   recommendations: z.array(z.string()).default([]),
+  // v2: the model's semantic findings. Lenient like everything above; clampSemanticFindings
+  // (services/ai/review-findings.ts) decides what survives.
+  strengths: z.array(z.string()).default([]),
+  open_questions: z.array(z.string()).default([]),
+  findings: z
+    .array(
+      z.object({
+        rule: z.string().default(''),
+        kind: findingKindSchema.catch('defect'),
+        severity: severitySchema.catch('Minor'),
+        confidence: findingConfidenceSchema.catch('Medium'),
+        action: findingActionSchema.catch('FIX'),
+        scope: findingScopeSchema.catch('case'),
+        test_case_codes: z.array(z.string()).default([]),
+        fields_affected: z.array(z.string()).default([]),
+        issue: z.string().default(''),
+        evidence: z.string().default(''),
+        enhance_instruction: z.string().default(''),
+        gap_spec: z
+          .object({
+            category: z.string().default(''),
+            condition: z.string().default(''),
+            source_ref: z.string().default(''),
+            suggested_priority: z.string().optional(),
+            risk_note: z.string().optional(),
+          })
+          .optional(),
+        survivor_code: z.string().optional(),
+      }),
+    )
+    .default([]),
 });
 export type ReviewModelOutput = z.infer<typeof reviewModelOutputSchema>;
 

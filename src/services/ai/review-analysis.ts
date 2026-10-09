@@ -25,10 +25,12 @@ import { validateGeneratedTestCases } from '@/services/ai/test-case-validation';
 import {
   QUALITY_RULES,
   REVIEW_LIMITS,
+  findLexiconVague,
   getDetailLevelRules,
   isPlaceholder,
   isVaguePhrase,
   type DetailStatus,
+  type RuleId,
   type TaxonomyStatus,
 } from '@/services/ai/quality-standards';
 
@@ -43,10 +45,21 @@ export type DetailReasonCode =
   | 'overlong_text'
   | 'repeated_steps';
 
+export type CaseDetailReason = {
+  code: DetailReasonCode;
+  message: string;
+  /** Rule of the shared catalog (quality-standards RULE_CATALOG) this reason belongs to. */
+  rule?: RuleId;
+  /** 1-based step numbers the reason is about (when it is about steps). */
+  steps?: number[];
+  /** Case fields Enhance may change to resolve it. */
+  fields?: ('steps' | 'final_expected_result')[];
+};
+
 export type CaseDetailAssessment = {
   test_case_code: string;
   status: DetailStatus;
-  reasons: { code: DetailReasonCode; message: string }[];
+  reasons: CaseDetailReason[];
 };
 
 export type TaxonomyBaseline = {
@@ -72,7 +85,12 @@ const VAGUE_CODES: ReadonlySet<DetailReasonCode> = new Set([
   'vague_final_result',
 ]);
 
-export function assessCaseDetail(testCase: GeneratedTestCase, detailLevel: string | undefined): CaseDetailAssessment {
+export function assessCaseDetail(
+  testCase: GeneratedTestCase,
+  detailLevel: string | undefined,
+  /** input.language: selects the vague-wording lexicon (Vietnamese + English, or English). */
+  language?: string,
+): CaseDetailAssessment {
   const rules = getDetailLevelRules(detailLevel);
   const reasons: CaseDetailAssessment['reasons'] = [];
   const steps = testCase.steps ?? [];
@@ -81,17 +99,22 @@ export function assessCaseDetail(testCase: GeneratedTestCase, detailLevel: strin
     reasons.push({
       code: 'too_few_steps',
       message: `${steps.length} step(s); the standard requires at least ${rules.minSteps}.`,
+      rule: 'Q02',
+      fields: ['steps'],
     });
   }
   if (steps.length > rules.maxSteps) {
     reasons.push({
       code: 'too_many_steps',
       message: `${steps.length} steps; the standard allows at most ${rules.maxSteps}.`,
+      rule: 'Q02',
+      fields: ['steps'],
     });
   }
 
   const placeholderSteps: number[] = [];
-  const vagueSteps: number[] = [];
+  const vagueActionSteps: number[] = [];
+  const vagueExpectedSteps: number[] = [];
   const overlongSteps: number[] = [];
   const seenActions = new Map<string, number>();
   let repeated = 0;
@@ -101,7 +124,10 @@ export function assessCaseDetail(testCase: GeneratedTestCase, detailLevel: strin
     const action = step.action ?? '';
     const expected = step.expected_result ?? '';
     if (isPlaceholder(action) || isPlaceholder(expected)) placeholderSteps.push(n);
-    else if (isVaguePhrase(action) || isVaguePhrase(expected)) vagueSteps.push(n);
+    else {
+      if (isVaguePhrase(action) || findLexiconVague(action, language)) vagueActionSteps.push(n);
+      if (isVaguePhrase(expected) || findLexiconVague(expected, language)) vagueExpectedSteps.push(n);
+    }
     if (action.length > QUALITY_RULES.maxActionChars || expected.length > QUALITY_RULES.maxExpectedChars) {
       overlongSteps.push(n);
     }
@@ -114,22 +140,64 @@ export function assessCaseDetail(testCase: GeneratedTestCase, detailLevel: strin
   });
 
   if (placeholderSteps.length > 0) {
-    reasons.push({ code: 'placeholder_step', message: `Placeholder/empty action or expected result at step(s) ${placeholderSteps.join(', ')}.` });
+    reasons.push({
+      code: 'placeholder_step',
+      message: `Placeholder/empty action or expected result at step(s) ${placeholderSteps.join(', ')}.`,
+      rule: 'Q06',
+      steps: placeholderSteps,
+      fields: ['steps'],
+    });
   }
-  if (vagueSteps.length > 0) {
-    reasons.push({ code: 'vague_wording', message: `Generic wording at step(s) ${vagueSteps.join(', ')}.` });
+  if (vagueActionSteps.length > 0) {
+    reasons.push({
+      code: 'vague_wording',
+      message: `Generic wording in the action at step(s) ${vagueActionSteps.join(', ')}.`,
+      rule: 'Q03',
+      steps: vagueActionSteps,
+      fields: ['steps'],
+    });
+  }
+  if (vagueExpectedSteps.length > 0) {
+    reasons.push({
+      code: 'vague_wording',
+      message: `Generic wording in the expected result at step(s) ${vagueExpectedSteps.join(', ')}.`,
+      rule: 'Q06',
+      steps: vagueExpectedSteps,
+      fields: ['steps'],
+    });
   }
 
   const finalResult = testCase.final_expected_result ?? '';
-  if (isPlaceholder(finalResult) || finalResult.trim().length < QUALITY_RULES.minFinalExpectedChars || isVaguePhrase(finalResult)) {
-    reasons.push({ code: 'vague_final_result', message: 'final_expected_result does not state an observable end-state.' });
+  if (
+    isPlaceholder(finalResult) ||
+    finalResult.trim().length < QUALITY_RULES.minFinalExpectedChars ||
+    isVaguePhrase(finalResult) ||
+    findLexiconVague(finalResult, language)
+  ) {
+    reasons.push({
+      code: 'vague_final_result',
+      message: 'final_expected_result does not state an observable end-state.',
+      rule: 'Q07',
+      fields: ['final_expected_result'],
+    });
   }
 
   if (overlongSteps.length > 0 || finalResult.length > QUALITY_RULES.maxFinalExpectedChars) {
-    reasons.push({ code: 'overlong_text', message: 'Step or final result text is prose-length rather than a single assertion.' });
+    reasons.push({
+      code: 'overlong_text',
+      message: 'Step or final result text is prose-length rather than a single assertion.',
+      rule: 'Q02',
+      steps: overlongSteps,
+      fields: ['steps', 'final_expected_result'],
+    });
   }
   if (repeated > 0) {
-    reasons.push({ code: 'repeated_steps', message: `${repeated} action(s) repeated verbatim within the case.` });
+    reasons.push({
+      code: 'repeated_steps',
+      message: `${repeated} action(s) repeated verbatim within the case.`,
+      rule: 'Q02',
+      fields: ['steps'],
+    });
   }
 
   const status: DetailStatus = reasons.some((r) => VAGUE_CODES.has(r.code))
@@ -144,11 +212,13 @@ export function assessCaseDetail(testCase: GeneratedTestCase, detailLevel: strin
 export function analyzeTestCases(input: {
   test_cases: GeneratedTestCase[];
   detail_level: string | undefined;
+  /** input.language (selects the vague lexicon). Optional: omitted => English lexicon only. */
+  language?: string;
   required_categories: readonly TestCaseCategory[];
   per_category_min: number;
   documents?: ParsedDocument[] | null;
 }): DeterministicAnalysis {
-  const cases = input.test_cases.map((tc) => assessCaseDetail(tc, input.detail_level));
+  const cases = input.test_cases.map((tc) => assessCaseDetail(tc, input.detail_level, input.language));
 
   const counts: Record<DetailStatus, number> = { TOO_VAGUE: 0, APPROPRIATE: 0, OVER_DETAILED: 0 };
   for (const c of cases) counts[c.status]++;
