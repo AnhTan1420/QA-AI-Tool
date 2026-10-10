@@ -172,6 +172,17 @@ export function getResilienceConfig(): ResilienceConfig {
   };
 }
 
+/**
+ * Longest server-suggested 429 wait ("Please retry in 12s") the engine will SLEEP through on the
+ * same model while another model is still available. Longer hints hop to the next model instead.
+ * Default 10s (the previous hard-coded value). Raise it (e.g. 30000) when the primary is the only
+ * strong model in the chain: waiting out the quota window beats falling to a weaker/incompatible
+ * model. Always bounded by the request's remaining execution budget (retry-policy.ts canStartAfter).
+ */
+export function getMaxRateLimitWaitMs(): number {
+  return readIntEnv('GEMINI_MAX_RATE_LIMIT_WAIT_MS', 10_000, 0, 60_000);
+}
+
 /** So vong repair coverage toi da truoc khi tra ve trang thai "chua du 100%". */
 export function getMaxCoverageRepairRounds(): number {
   return readIntEnv('AI_MAX_COVERAGE_REPAIR_ROUNDS', 4, 0, 10);

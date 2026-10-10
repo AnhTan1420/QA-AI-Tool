@@ -7,7 +7,9 @@ import {
   GeminiBadResponseError,
   GeminiBudgetExhaustedError,
   GeminiTimeoutError,
+  GeminiProviderError,
   GeminiTruncatedResponseError,
+  providerErrorBody,
   type FailureCode,
 } from '@/services/ai/errors';
 import { MAX_SPLIT_DEPTH, classifyFailure, decideNext, extractRetryAfterMs, isSplittableFailure, type PolicyState } from '@/services/ai/retry-policy';
@@ -206,5 +208,30 @@ describe('safeErrorDetail — the provider message is loggable, credentials are 
     expect(detail).toContain('[redacted');
     expect(describeErrorForLog(err)).not.toContain(fakeKey);
     expect(describeErrorForLog(err)).toMatch(/^fatal\/400 \(Error\): /);
+  });
+});
+
+describe('providerErrorBody — the 503 envelope names the real cause without leaking internals', () => {
+  const make = (failure: FailureCode | undefined, lastStatus?: number) =>
+    new GeminiProviderError('x', { task: 'review', attemptedModels: ['gemini-3.5-flash', 'secret-internal-model'], lastKind: 'transient', lastStatus, failure });
+
+  it.each([
+    ['RATE_LIMIT', 429, true],
+    ['TRANSIENT_PROVIDER_ERROR', 503, true],
+    ['TIMEOUT', undefined, true],
+    ['SERVER_BUDGET_EXHAUSTED', undefined, true],
+    ['UNKNOWN', 400, false],
+    ['REQUEST_TOO_LARGE', 400, false],
+    ['AUTH_ERROR', 403, false],
+  ] as [FailureCode, number | undefined, boolean][])('%s -> retryable=%s', (failure, status, retryable) => {
+    const body = providerErrorBody(make(failure, status));
+    expect(body).toMatchObject({ success: false, failure, upstream_status: status ?? null, retryable });
+    expect(typeof body.error).toBe('string');
+  });
+
+  it('never exposes model ids; an unclassified failure is not claimed retryable', () => {
+    const body = providerErrorBody(make(undefined));
+    expect(JSON.stringify(body)).not.toMatch(/secret-internal-model|gemini-3\.5/);
+    expect(body).toMatchObject({ failure: null, retryable: false });
   });
 });

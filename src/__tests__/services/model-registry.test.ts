@@ -17,6 +17,7 @@ import {
   getGenerationMaxOutputTokens,
   getGenerationInitialAtomCap,
   getGenerationRequestTimeoutMs,
+  getMaxRateLimitWaitMs,
   getModelChain,
   getModelPool,
   getResilienceConfig,
@@ -347,5 +348,27 @@ describe('knobs for sizing AI work', () => {
     expect(getGenerationMaxOutputTokens()).toBe(65_536);
     delete process.env.AI_ASSUMED_OUTPUT_TPS;
     delete process.env.AI_GENERATION_MAX_OUTPUT_TOKENS;
+  });
+});
+
+describe('getMaxRateLimitWaitMs', () => {
+  const KEY = 'GEMINI_MAX_RATE_LIMIT_WAIT_MS';
+  const saved = process.env[KEY];
+  afterEach(() => {
+    if (saved === undefined) delete process.env[KEY];
+    else process.env[KEY] = saved;
+  });
+
+  it('defaults to the previous hard-coded 10s, parses the env, and clamps to 0..60s', () => {
+    delete process.env[KEY];
+    expect(getMaxRateLimitWaitMs()).toBe(10_000);
+    process.env[KEY] = '30000';
+    expect(getMaxRateLimitWaitMs()).toBe(30_000);
+    process.env[KEY] = '999999';
+    expect(getMaxRateLimitWaitMs()).toBe(60_000);
+    process.env[KEY] = '-5';
+    expect(getMaxRateLimitWaitMs()).toBe(0);
+    process.env[KEY] = 'not-a-number';
+    expect(getMaxRateLimitWaitMs()).toBe(10_000);
   });
 });

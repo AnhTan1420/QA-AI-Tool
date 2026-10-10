@@ -3,7 +3,7 @@
  * storms, one handling rule per failure class, bounded telemetry.
  * Everything runs through the REAL engine against a scripted fake client.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   __setGeminiClientFactoryForTests,
   createGeminiEmbedding,
@@ -18,6 +18,7 @@ const OK = '{"ok":true}';
 const KEYS = [
   'AI_MODEL_PRIMARY', 'AI_MODEL_FALLBACK_1', 'AI_MODEL_FALLBACK_2', 'AI_MODEL_FALLBACK', 'AI_MODEL_GENERATION',
   'GEMINI_BACKOFF_BASE_MS', 'GEMINI_BACKOFF_MAX_MS', 'GEMINI_MAX_RETRIES_PER_MODEL', 'GEMINI_REQUEST_TIMEOUT_MS',
+  'GEMINI_MAX_RATE_LIMIT_WAIT_MS',
 ];
 const saved: Record<string, string | undefined> = {};
 
@@ -453,5 +454,43 @@ describe('a bare 400 from a fallback model (429 on the primary, INVALID_ARGUMENT
     const error = await run().catch((e) => e);
     expect(failureOf(error)).toBe('UNKNOWN');
     expect(calls.map((c) => c.model)).toEqual([FLASH, LITE]);
+  });
+});
+
+describe('429 with a LONG server hint: GEMINI_MAX_RATE_LIMIT_WAIT_MS decides wait-on-primary vs hop', () => {
+  const HINT = http(429, 'Quota exceeded. Please retry in 12s');
+
+  it('default cap (10s): a 12s hint hops to the next model immediately', async () => {
+    const { fake, calls } = client({ m1: [{ throw: HINT }, { ok: OK }], m2: [{ ok: OK }] });
+    __setGeminiClientFactoryForTests(() => fake);
+    const result = await run();
+    expect(result.model).toBe('m2');
+    expect(calls.map((c) => c.model)).toEqual(['m1', 'm2']);
+  });
+
+  it('cap raised to 30s: waits out the 12s hint and succeeds on the SAME (primary) model', async () => {
+    process.env.GEMINI_MAX_RATE_LIMIT_WAIT_MS = '30000';
+    const { fake, calls } = client({ m1: [{ throw: HINT }, { ok: OK }], m2: [{ ok: OK }] });
+    __setGeminiClientFactoryForTests(() => fake);
+    vi.useFakeTimers();
+    try {
+      const pending = run();
+      await vi.advanceTimersByTimeAsync(13_000);
+      const result = await pending;
+      expect(result.model).toBe('m1');
+      expect(calls.map((c) => c.model)).toEqual(['m1', 'm1']); // never touched the fallback
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('is still bounded by the budget: a raised cap cannot sleep past what the request can afford', async () => {
+    process.env.GEMINI_MAX_RATE_LIMIT_WAIT_MS = '30000';
+    const { fake, calls } = client({ m1: [{ throw: HINT }, { ok: OK }], m2: [{ ok: OK }] });
+    __setGeminiClientFactoryForTests(() => fake);
+    const budget = new ExecutionBudget(20_000, { now: () => 0 }); // 20s usable: 12s wait + 10s min attempt does not fit
+    const result = await run({ budget });
+    expect(result.model).toBe('m2');
+    expect(calls.map((c) => c.model)).toEqual(['m1', 'm2']);
   });
 });

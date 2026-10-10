@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
-import { GeminiProviderError, safeErrorDetail } from '@/services/ai/errors';
+import { GeminiProviderError, providerErrorBody, safeErrorDetail } from '@/services/ai/errors';
 import { capDocumentAtomsForInitialGeneration } from '@/services/ai/prompts/generation-agent';
 import { getGenerationInitialAtomCap } from '@/services/ai/model-registry';
 import { countAtoms } from '@/services/ai/source-context';
@@ -198,11 +198,12 @@ export async function POST(req: Request) {
       console.error('❌ [ai/generate] Gemini provider error:', {
         task: error.meta.task,
         models: error.meta.attemptedModels,
+        failure: error.meta.failure,
         kind: error.meta.lastKind,
         status: error.meta.lastStatus,
         detail: safeErrorDetail(error.meta.cause),
       });
-      return NextResponse.json({ success: false, error: error.userMessage }, { status: 503 });
+      return NextResponse.json(providerErrorBody(error), { status: 503 });
     }
 
     console.error('❌ Lỗi API Generate Test Cases:', error);

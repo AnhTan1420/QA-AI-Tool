@@ -43,6 +43,7 @@ import {
   dedupeModels,
   getEmbeddingModel,
   getGeminiApiKey,
+  getMaxRateLimitWaitMs,
   getModelChain,
   getResilienceConfig,
   type AITask,
@@ -512,6 +513,7 @@ export async function generateWithGeminiResilient<T = unknown>(
           minAttemptMs,
           backoffMs: computeBackoffMs(used.transient + used.badResponse + used.rateLimit, config.backoffBaseMs, config.backoffMaxMs),
           retryAfterMs: failure === 'RATE_LIMIT' ? extractRetryAfterMs(error) : undefined,
+          maxRateLimitWaitMs: getMaxRateLimitWaitMs(),
         };
         // Model tu choi thinkingConfig: thu lai CUNG model khong kem no (khong tinh quota).
         const action = thinkingRejected ? ({ type: 'degrade_thinking' } as const) : decideNext(state);

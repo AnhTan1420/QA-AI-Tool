@@ -296,6 +296,31 @@ export class GeminiProviderError extends Error {
   }
 }
 
+/** Failures a user retrying the same action can plausibly get past (vs. a request that will be refused again). */
+const RETRYABLE_FAILURES: ReadonlySet<FailureCode> = new Set<FailureCode>([
+  'RATE_LIMIT',
+  'TRANSIENT_PROVIDER_ERROR',
+  'TIMEOUT',
+  'SERVER_BUDGET_EXHAUSTED',
+]);
+
+/**
+ * JSON body the AI routes return for a GeminiProviderError. The HTTP status stays 503 (clients and
+ * tests depend on it), but a bare 503 hid WHY: quota (429), overload (5xx), timeout and a refused
+ * request (400) all looked identical. `failure` / `upstream_status` name the real cause without
+ * exposing model ids, SDK stack traces or keys.
+ */
+export function providerErrorBody(error: GeminiProviderError) {
+  const failure = error.meta.failure ?? null;
+  return {
+    success: false as const,
+    error: error.userMessage,
+    failure,
+    upstream_status: error.meta.lastStatus ?? null,
+    retryable: failure !== null && RETRYABLE_FAILURES.has(failure),
+  };
+}
+
 /**
  * true khi loi la do QUA THOI GIAN CHO (timeout cua chinh ta, hoac AbortError do
  * abortSignal cua SDK). Tach rieng khoi 'transient' chung chung vi 1 request bi

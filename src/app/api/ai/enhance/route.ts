@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 import { runGeminiTask } from '@/services/ai/provider';
-import { GeminiProviderError, safeErrorDetail } from '@/services/ai/errors';
+import { GeminiProviderError, providerErrorBody, safeErrorDetail } from '@/services/ai/errors';
 import {
   ENHANCE_SYSTEM_PROMPT,
   ENHANCE_WORK_SYSTEM_PROMPT,
@@ -411,11 +411,12 @@ export async function POST(request: Request) {
       console.error('❌ [ai/enhance] Gemini provider error:', {
         task: error.meta.task,
         models: error.meta.attemptedModels,
+        failure: error.meta.failure,
         kind: error.meta.lastKind,
         status: error.meta.lastStatus,
         detail: safeErrorDetail(error.meta.cause),
       });
-      return NextResponse.json({ success: false, error: error.userMessage }, { status: 503 });
+      return NextResponse.json(providerErrorBody(error), { status: 503 });
     }
     console.error('❌ Lỗi API AI (enhance):', error);
     const message = error instanceof Error ? error.message : 'Lỗi không xác định';

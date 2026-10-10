@@ -231,6 +231,7 @@ GEMINI_REQUEST_TIMEOUT_MS=120000     # hard timeout per request (AbortController
 GEMINI_MAX_RETRIES_PER_MODEL=2       # retries on the SAME model before moving to the next one
 GEMINI_BACKOFF_BASE_MS=1000          # exponential backoff base
 GEMINI_BACKOFF_MAX_MS=8000           # backoff ceiling (jitter is always applied)
+GEMINI_MAX_RATE_LIMIT_WAIT_MS=10000   # longest 429 "retry in Ns" hint slept through on the same model (else hop)
 
 # Output-token budgets. Generate is large (16384), Review small, Enhance moderate.
 # Thinking tokens count against these, so Review also runs at thinkingLevel "low".

@@ -256,6 +256,7 @@ describe('Review under load', () => {
       expect(json.data.language_detail.counts.TOO_VAGUE).toBeGreaterThan(0);
     } else {
       expect(status).toBe(503);
+      expect(json).toMatchObject({ success: false, failure: expect.any(String), retryable: expect.any(Boolean) });
     }
   });
 
