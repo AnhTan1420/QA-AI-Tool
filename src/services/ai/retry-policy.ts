@@ -219,7 +219,13 @@ export function decideNext(state: PolicyState): RetryAction {
       // Last model standing: waiting is the only option.
       if (state.used.rateLimit < state.maxRetries) {
         const wait = Math.max(state.retryAfterMs ?? 0, state.backoffMs);
-        return canStartAfter(wait) ? { type: 'retry_same', waitMs: wait } : noBudget();
+        if (canStartAfter(wait)) return { type: 'retry_same', waitMs: wait };
+        // The wait does not fit. If the clock could still fund an attempt, the BLOCKER is the provider's
+        // hint (typically an exhausted quota asking for minutes/hours), not the budget. Calling that
+        // SERVER_BUDGET_EXHAUSTED made workflows treat it as "out of time, keep partial and resume" and
+        // resume straight back into a model that cannot answer. Report it as what it is.
+        if (affordable(state.minAttemptMs)) return state.hasSalvage ? { type: 'return_salvaged' } : stop('RATE_LIMIT');
+        return noBudget();
       }
       return stop('RATE_LIMIT');
     }

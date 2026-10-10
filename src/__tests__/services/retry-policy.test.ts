@@ -110,6 +110,14 @@ describe('decideNext — one rule per failure class', () => {
     expect(decideNext(state({ failure: 'RATE_LIMIT', hasNextModel: false, used: { transient: 0, badResponse: 0, rateLimit: 2 } }))).toEqual({ type: 'stop', reason: 'RATE_LIMIT' });
   });
 
+  it('RATE_LIMIT on the last model with an unaffordable hint is a RATE_LIMIT stop, not "budget exhausted", while the clock can still fund an attempt', () => {
+    const quota = { failure: 'RATE_LIMIT' as FailureCode, hasNextModel: false, retryAfterMs: 3_600_000 };
+    expect(decideNext(state({ ...quota, remainingMs: 260_000 }))).toEqual({ type: 'stop', reason: 'RATE_LIMIT' });
+    expect(decideNext(state({ ...quota, remainingMs: 260_000, hasSalvage: true }))).toEqual({ type: 'return_salvaged' });
+    // the clock itself is the blocker -> still budget exhaustion
+    expect(decideNext(state({ ...quota, remainingMs: 5_000 }))).toEqual({ type: 'stop', reason: 'SERVER_BUDGET_EXHAUSTED' });
+  });
+
   it('INVALID_JSON / VALIDATION_ERROR get exactly ONE resample, regardless of maxRetries', () => {
     for (const failure of ['INVALID_JSON', 'VALIDATION_ERROR'] as FailureCode[]) {
       expect(decideNext(state({ failure, maxRetries: 5 }))).toEqual({ type: 'retry_same', waitMs: 1_000 });

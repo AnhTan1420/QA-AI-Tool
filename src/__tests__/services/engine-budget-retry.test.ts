@@ -494,3 +494,14 @@ describe('429 with a LONG server hint: GEMINI_MAX_RATE_LIMIT_WAIT_MS decides wai
     expect(calls.map((c) => c.model)).toEqual(['m1', 'm2']);
   });
 });
+
+describe('single-model chain (e.g. the document Reader) with an exhausted quota', () => {
+  it('reports RATE_LIMIT after ONE call, not SERVER_BUDGET_EXHAUSTED, even though ~260s of budget remain', async () => {
+    const { fake, calls } = client({ m1: [{ throw: http(429, 'You exceeded your current quota. Please retry in 3600s') }] });
+    __setGeminiClientFactoryForTests(() => fake);
+    const budget = new ExecutionBudget(260_000, { now: () => 0 });
+    const error = await run({ models: ['m1'], budget }).catch((e) => e);
+    expect(failureOf(error)).toBe('RATE_LIMIT');
+    expect(calls).toHaveLength(1);
+  });
+});

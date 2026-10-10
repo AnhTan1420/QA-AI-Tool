@@ -275,7 +275,7 @@ export class GeminiProviderError extends Error {
       case 'OUTPUT_TRUNCATED':
         return 'Phản hồi của AI vượt giới hạn độ dài và bị cắt cụt. Hãy giảm số lượng yêu cầu trong một lượt.';
       case 'RATE_LIMIT':
-        return 'Gemini đang giới hạn tốc độ (quá nhiều yêu cầu). Vui lòng đợi vài giây rồi thử lại.';
+        return 'Gemini đang giới hạn tốc độ hoặc API key đã hết hạn mức (quota). Vui lòng đợi rồi thử lại; nếu lỗi lặp lại, quản trị viên cần kiểm tra gói/billing của API key.';
       case 'TIMEOUT':
         return 'Gemini phản hồi quá chậm cho yêu cầu này. Hãy thử lại hoặc giảm khối lượng công việc.';
       default:
