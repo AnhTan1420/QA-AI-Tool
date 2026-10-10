@@ -125,6 +125,23 @@ describe('decideNext — one rule per failure class', () => {
     expect(decideNext(state({ failure: 'UNKNOWN', unknownHops: 1 }))).toEqual({ type: 'stop', reason: 'UNKNOWN' });
   });
 
+  it('a bare 400 (UNKNOWN) drops thinking first, then the schema, on the SAME model, before hopping or stopping', () => {
+    const bare = { failure: 'UNKNOWN' as FailureCode, status: 400, useThinking: true, useSchema: true };
+    expect(decideNext(state(bare))).toEqual({ type: 'degrade_thinking' });
+    expect(decideNext(state({ ...bare, useThinking: false }))).toEqual({ type: 'degrade_schema' });
+    // nothing optional left to drop -> the old rule: confirm on one other model, then stop
+    expect(decideNext(state({ ...bare, useThinking: false, useSchema: false }))).toEqual({ type: 'next_model' });
+    expect(decideNext(state({ ...bare, useThinking: false, useSchema: false, hasNextModel: false }))).toEqual({ type: 'stop', reason: 'UNKNOWN' });
+    // schema degradation can be disallowed by the caller
+    expect(decideNext(state({ ...bare, useThinking: false, allowSchemaDegradation: false, hasNextModel: false }))).toEqual({ type: 'stop', reason: 'UNKNOWN' });
+  });
+
+  it('the 400 degradation does not apply to other statuses or other failure classes', () => {
+    expect(decideNext(state({ failure: 'UNKNOWN', status: 500, useThinking: true, useSchema: true, hasNextModel: false }))).toEqual({ type: 'stop', reason: 'UNKNOWN' });
+    expect(decideNext(state({ failure: 'REQUEST_TOO_LARGE', status: 400, useThinking: true, useSchema: true }))).toEqual({ type: 'stop', reason: 'REQUEST_TOO_LARGE' });
+    expect(decideNext(state({ failure: 'AUTH_ERROR', status: 400, useThinking: true }))).toEqual({ type: 'stop', reason: 'AUTH_ERROR' });
+  });
+
   it('with no next model, failures that would hop simply stop with their own reason', () => {
     expect(decideNext(state({ failure: 'MODEL_UNAVAILABLE', hasNextModel: false }))).toEqual({ type: 'stop', reason: 'MODEL_UNAVAILABLE' });
     expect(decideNext(state({ failure: 'TIMEOUT', hasNextModel: false }))).toEqual({ type: 'stop', reason: 'TIMEOUT' });
@@ -165,5 +182,29 @@ describe('which failures workflows may answer by SPLITTING the work', () => {
 
   it('a unit of work is split at most once (shared by Generate and repair)', () => {
     expect(MAX_SPLIT_DEPTH).toBe(1);
+  });
+});
+
+describe('safeErrorDetail — the provider message is loggable, credentials are not', () => {
+  it('keeps the provider explanation, collapses whitespace and caps the length', async () => {
+    const { safeErrorDetail } = await import('@/services/ai/errors');
+    expect(safeErrorDetail(new Error('[400]  Request contains\n an invalid   argument.'))).toBe('[400] Request contains an invalid argument.');
+    const long = safeErrorDetail(new Error('x'.repeat(2_000)), 100);
+    expect(long.length).toBe(100);
+    expect(long.endsWith('…')).toBe(true);
+    expect(safeErrorDetail(undefined)).toBe('');
+    expect(safeErrorDetail({ message: 'plain object' })).toBe('plain object');
+  });
+
+  it('redacts API keys, key= query params and bearer tokens', async () => {
+    const { safeErrorDetail, describeErrorForLog } = await import('@/services/ai/errors');
+    const fakeKey = `AIza${'a'.repeat(35)}`;
+    const err = Object.assign(new Error(`[400] bad https://x/y?key=${fakeKey}&alt=json Authorization: Bearer abcdefghijklmnop1234 ${fakeKey}`), { status: 400 });
+    const detail = safeErrorDetail(err);
+    expect(detail).not.toContain(fakeKey);
+    expect(detail).not.toContain('abcdefghijklmnop1234');
+    expect(detail).toContain('[redacted');
+    expect(describeErrorForLog(err)).not.toContain(fakeKey);
+    expect(describeErrorForLog(err)).toMatch(/^fatal\/400 \(Error\): /);
   });
 });

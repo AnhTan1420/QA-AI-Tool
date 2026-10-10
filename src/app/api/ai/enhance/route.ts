@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z, ZodError } from 'zod';
 import { runGeminiTask } from '@/services/ai/provider';
-import { GeminiProviderError } from '@/services/ai/errors';
+import { GeminiProviderError, safeErrorDetail } from '@/services/ai/errors';
 import {
   ENHANCE_SYSTEM_PROMPT,
   ENHANCE_WORK_SYSTEM_PROMPT,
@@ -413,6 +413,7 @@ export async function POST(request: Request) {
         models: error.meta.attemptedModels,
         kind: error.meta.lastKind,
         status: error.meta.lastStatus,
+        detail: safeErrorDetail(error.meta.cause),
       });
       return NextResponse.json({ success: false, error: error.userMessage }, { status: 503 });
     }

@@ -502,6 +502,8 @@ export async function generateWithGeminiResilient<T = unknown>(
           useSchema,
           allowSchemaDegradation: allowDegradation,
           thinkingRejected,
+          useThinking,
+          status,
           retryOnTimeout,
           hasSalvage: salvaged !== null,
           hasNextModel,

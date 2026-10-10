@@ -284,6 +284,11 @@ export class GeminiProviderError extends Error {
     if (this.meta.lastKind === 'auth') {
       return 'Cấu hình Gemini API key không hợp lệ hoặc không có quyền truy cập. Vui lòng liên hệ quản trị viên.';
     }
+    // The LAST failure was the API refusing the request itself (HTTP 400), not an outage: telling the
+    // user "temporarily unavailable, try again" would send them into a retry loop that cannot succeed.
+    if (this.meta.lastStatus === 400) {
+      return 'Gemini từ chối yêu cầu này (HTTP 400) trên model dự phòng cuối cùng. Thử lại sau ít phút; nếu lỗi lặp lại, quản trị viên cần kiểm tra cấu hình model (AI_MODEL_*) và log máy chủ.';
+    }
     if (this.meta.attemptedModels.length > 1) {
       return 'Gemini đang tạm thời không khả dụng trên tất cả model đã cấu hình. Vui lòng thử lại thao tác này.';
     }
@@ -339,10 +344,38 @@ export function classifyGeminiError(error: unknown): GeminiErrorKind {
   return 'fatal';
 }
 
+/**
+ * The provider's own explanation of a failure, made SAFE for logs: whitespace collapsed, anything
+ * that looks like a credential removed, length capped. Without it a "fatal/400" is undiagnosable:
+ * the status alone cannot say WHICH part of the request the API refused (thinking level, schema
+ * shape, model-specific limit...), which is exactly what is needed to pick the right fix.
+ * Only the provider's RESPONSE text is used - never the request (prompt, headers, payload).
+ */
+export function safeErrorDetail(error: unknown, maxChars = 300): string {
+  if (!error) return '';
+  const raw =
+    typeof error === 'string'
+      ? error
+      : error instanceof Error
+        ? error.message
+        : typeof (error as { message?: unknown }).message === 'string'
+          ? String((error as { message: string }).message)
+          : '';
+  const cleaned = raw
+    .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted-key]')
+    .replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&\s"']+/gi, '$1[redacted]')
+    .replace(/\b(bearer)\s+[A-Za-z0-9._~+/=-]{12,}/gi, '$1 [redacted]')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned.length > maxChars ? `${cleaned.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…` : cleaned;
+}
+
 /** Chuoi mo ta ngan gon, AN TOAN de dua vao log (khong chua key/header/payload). */
 export function describeErrorForLog(error: unknown): string {
   const status = extractStatus(error);
   const kind = classifyGeminiError(error);
   const name = error instanceof Error ? error.name : 'Error';
-  return status ? `${kind}/${status} (${name})` : `${kind} (${name})`;
+  const head = status ? `${kind}/${status} (${name})` : `${kind} (${name})`;
+  const detail = safeErrorDetail(error);
+  return detail ? `${head}: ${detail}` : head;
 }

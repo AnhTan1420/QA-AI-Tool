@@ -391,3 +391,67 @@ describe('finishReason=MAX_TOKENS is deterministic truncation, not a random bad 
     expect((await run()).truncated).toBe(false);
   });
 });
+
+describe('a bare 400 from a fallback model (429 on the primary, INVALID_ARGUMENT on the lite fallback)', () => {
+  const BARE_400 = () => http(400, '{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}');
+  const FLASH = 'gemini-3.5-flash';
+  const LITE = 'gemini-3.5-flash-lite';
+  const SCHEMA = { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } } };
+
+  /** FLASH is rate limited; LITE refuses the request with a culprit-less 400 while `refuses(config)` holds. */
+  function twoModelChain(refuses: (config: Record<string, unknown>) => boolean) {
+    // The reported deployment: exactly two models. Real ids matter: thinkingConfig is only sent to gemini-3*.
+    process.env.AI_MODEL_PRIMARY = FLASH;
+    process.env.AI_MODEL_FALLBACK_1 = LITE;
+    delete process.env.AI_MODEL_FALLBACK_2;
+    const calls: Call[] = [];
+    const fake: GeminiLikeClient = {
+      models: {
+        generateContent: async (args) => {
+          const config = args.config as Record<string, unknown>;
+          calls.push({ model: args.model, config });
+          if (args.model === FLASH) throw http(429, 'Too Many Requests');
+          if (refuses(config)) throw BARE_400();
+          return { text: OK };
+        },
+        embedContent: async () => ({ embeddings: [{ values: [0.1] }] }),
+      },
+    };
+    __setGeminiClientFactoryForTests(() => fake);
+    return calls;
+  }
+
+  it('recovers when the fallback only refuses thinkingConfig: retries the SAME model without it', async () => {
+    const calls = twoModelChain((c) => 'thinkingConfig' in c);
+    const result = await run({ thinkingLevel: 'low' });
+    expect(result.model).toBe(LITE);
+    expect(calls.map((c) => c.model)).toEqual([FLASH, LITE, LITE]);
+    expect('thinkingConfig' in calls[2].config).toBe(false);
+    expect(result.schema_degraded).toBe(false); // schema was kept; only the culprit was dropped
+  });
+
+  it('recovers when the fallback only refuses the schema: thinking dropped first, then schema', async () => {
+    const calls = twoModelChain((c) => 'responseSchema' in c);
+    const result = await run({ thinkingLevel: 'low', responseSchema: SCHEMA });
+    expect(result.model).toBe(LITE);
+    expect(result.schema_degraded).toBe(true);
+    expect(calls.map((c) => c.model)).toEqual([FLASH, LITE, LITE, LITE]);
+    expect('responseSchema' in calls[3].config).toBe(false);
+  });
+
+  it('is bounded: a request that is bad regardless costs at most 2 extra fast calls, then stops with a 400-specific message', async () => {
+    const calls = twoModelChain(() => true);
+    const error = await run({ thinkingLevel: 'low', responseSchema: SCHEMA }).catch((e) => e);
+    expect(failureOf(error)).toBe('UNKNOWN');
+    expect(calls.map((c) => c.model)).toEqual([FLASH, LITE, LITE, LITE]);
+    expect((error as GeminiProviderError).userMessage).toMatch(/HTTP 400/);
+    expect((error as GeminiProviderError).userMessage).not.toMatch(/tạm thời không khả dụng/);
+  });
+
+  it('a request that sends neither optional feature behaves as before (no extra calls)', async () => {
+    const calls = twoModelChain(() => true);
+    const error = await run().catch((e) => e);
+    expect(failureOf(error)).toBe('UNKNOWN');
+    expect(calls.map((c) => c.model)).toEqual([FLASH, LITE]);
+  });
+});

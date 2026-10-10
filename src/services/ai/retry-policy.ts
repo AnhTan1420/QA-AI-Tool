@@ -27,7 +27,9 @@
 //   TIMEOUT                  next model (same-model retry only if opted in)
 //   TRANSIENT_PROVIDER_ERROR retry same model with backoff, then next model
 //   INVALID_JSON / VALIDATION_ERROR  ONE resample, then next model
-//   UNKNOWN                  one other model to confirm, then stop
+//   UNKNOWN                  bare 400 while thinkingConfig / responseSchema are being sent:
+//                            drop thinking, then schema, on the SAME model (each at most once);
+//                            then one other model to confirm, then stop
 //
 // Pure function: no clock, no env, no I/O — fully unit-testable.
 // ============================================================================
@@ -151,6 +153,10 @@ export type PolicyState = {
   allowSchemaDegradation: boolean;
   /** The API rejected thinkingConfig and we are still sending it. */
   thinkingRejected: boolean;
+  /** thinkingConfig is currently part of the request (so it can be dropped). */
+  useThinking?: boolean;
+  /** HTTP status of the failure, when known. */
+  status?: number;
   retryOnTimeout: boolean;
   /** A validated partial result from a truncated response is available. */
   hasSalvage: boolean;
@@ -236,6 +242,16 @@ export function decideNext(state: PolicyState): RetryAction {
 
     case 'UNKNOWN':
     default:
+      // A 400 that names no culprit (typically a bare INVALID_ARGUMENT) while the request carries
+      // OPTIONAL features: lite/older models accept a narrower set of thinking levels and schema
+      // shapes than the flagship, and do not always say which one they refused. Both degradations
+      // are one-shot per model (the flags flip off), cost a ~1s fast-failing call, and leave
+      // validation intact (the caller still validates the output), so try them before blaming the
+      // model or the request. Thinking first: it is the cheaper loss.
+      if (state.status === 400) {
+        if (state.useThinking) return { type: 'degrade_thinking' };
+        if (state.useSchema && state.allowSchemaDegradation) return { type: 'degrade_schema' };
+      }
       // Could be model-specific, so confirm on ONE other model; a deterministic bad
       // request must not be replayed against the whole chain.
       if (state.hasNextModel && state.unknownHops < 1) return moveOn();

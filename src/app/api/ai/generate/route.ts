@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ZodError } from 'zod';
-import { GeminiProviderError } from '@/services/ai/errors';
+import { GeminiProviderError, safeErrorDetail } from '@/services/ai/errors';
 import { capDocumentAtomsForInitialGeneration } from '@/services/ai/prompts/generation-agent';
 import { getGenerationInitialAtomCap } from '@/services/ai/model-registry';
 import { countAtoms } from '@/services/ai/source-context';
@@ -200,6 +200,7 @@ export async function POST(req: Request) {
         models: error.meta.attemptedModels,
         kind: error.meta.lastKind,
         status: error.meta.lastStatus,
+        detail: safeErrorDetail(error.meta.cause),
       });
       return NextResponse.json({ success: false, error: error.userMessage }, { status: 503 });
     }
