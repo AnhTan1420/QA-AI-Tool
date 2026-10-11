@@ -12,7 +12,20 @@ import type { GeneratedTestCase } from '@/models/validators/test-case';
 // "code" thay vi theo version-id.
 // ============================================================================
 
-export type FieldChange = { label: string; from: string; to: string };
+/** One row of a step-by-step comparison. 'same' = identical in both versions. */
+export type StepDiffRow = {
+  status: 'same' | 'changed' | 'added' | 'removed';
+  from?: { step_number: number; action: string; expected_result: string };
+  to?: { step_number: number; action: string; expected_result: string };
+};
+
+export type FieldChange = {
+  label: string;
+  from: string;
+  to: string;
+  /** Only for the steps field: aligned original/updated steps, so the UI can expand the detail. */
+  steps?: StepDiffRow[];
+};
 
 export type TestCaseDiffEntry = {
   code: string;
@@ -22,6 +35,8 @@ export type TestCaseDiffEntry = {
    *  'unchanged': khong doi gi (khong hien trong UI, chi giu de dem tong so). */
   status: 'changed' | 'added' | 'unchanged';
   changes: FieldChange[];
+  /** The full new case, only for status 'added' (lets the UI show what Enhance created). */
+  after?: GeneratedTestCase;
 };
 
 /** Nhan field dung de hien thi trong diff - truyen tu i18n dictionary
@@ -38,6 +53,61 @@ export type DiffFieldLabels = {
   stepsCountSuffix: (count: number) => string;
   stepsChangedSuffix: (count: number) => string;
 };
+
+type StepLike = { step_number?: number; action?: string; expected_result?: string };
+
+function normStep(s: StepLike | undefined, fallbackNumber: number) {
+  return { step_number: s?.step_number ?? fallbackNumber, action: String(s?.action ?? ''), expected_result: String(s?.expected_result ?? '') };
+}
+
+const stepKey = (s: { action: string; expected_result: string }) => `${s.action.trim()}\u0001${s.expected_result.trim()}`;
+
+/**
+ * Aligns the original and the updated steps (longest common subsequence on action + expected result),
+ * so an inserted or deleted step does not make every later step look changed. Between two anchors, a
+ * removed step and an added step at the same position are paired into one 'changed' row.
+ */
+export function diffSteps(before: GeneratedTestCase['steps'] | undefined, after: GeneratedTestCase['steps'] | undefined): StepDiffRow[] {
+  const a = (before ?? []).map((s, i) => normStep(s, i + 1));
+  const b = (after ?? []).map((s, i) => normStep(s, i + 1));
+  const n = a.length;
+  const m = b.length;
+  // lcs[i][j] = length of the LCS of a[i..] and b[j..]
+  const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      lcs[i][j] = stepKey(a[i]) === stepKey(b[j]) ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    }
+  }
+
+  const rows: StepDiffRow[] = [];
+  let i = 0;
+  let j = 0;
+  let removed: typeof a = [];
+  let added: typeof b = [];
+  const flush = () => {
+    const pairs = Math.min(removed.length, added.length);
+    for (let k = 0; k < pairs; k++) rows.push({ status: 'changed', from: removed[k], to: added[k] });
+    for (let k = pairs; k < removed.length; k++) rows.push({ status: 'removed', from: removed[k] });
+    for (let k = pairs; k < added.length; k++) rows.push({ status: 'added', to: added[k] });
+    removed = [];
+    added = [];
+  };
+  while (i < n || j < m) {
+    if (i < n && j < m && stepKey(a[i]) === stepKey(b[j])) {
+      flush();
+      rows.push({ status: 'same', from: a[i], to: b[j] });
+      i++;
+      j++;
+    } else if (j >= m || (i < n && lcs[i + 1][j] >= lcs[i][j + 1])) {
+      removed.push(a[i++]);
+    } else {
+      added.push(b[j++]);
+    }
+  }
+  flush();
+  return rows;
+}
 
 function stepsToText(steps: GeneratedTestCase['steps']): string {
   return (steps ?? [])
@@ -81,6 +151,7 @@ function diffOneCase(before: GeneratedTestCase, after: GeneratedTestCase, labels
       label: labels.steps,
       from: labels.stepsCountSuffix((before.steps ?? []).length),
       to: labels.stepsChangedSuffix((after.steps ?? []).length),
+      steps: diffSteps(before.steps, after.steps),
     });
   }
 
@@ -98,7 +169,7 @@ export function diffTestCaseSets(before: GeneratedTestCase[], after: GeneratedTe
     if (!afterCase?.code) continue;
     const beforeCase = beforeByCode.get(afterCase.code);
     if (!beforeCase) {
-      entries.push({ code: afterCase.code, title: afterCase.title, status: 'added', changes: [] });
+      entries.push({ code: afterCase.code, title: afterCase.title, status: 'added', changes: [], after: afterCase });
       continue;
     }
     const changes = diffOneCase(beforeCase, afterCase, labels);

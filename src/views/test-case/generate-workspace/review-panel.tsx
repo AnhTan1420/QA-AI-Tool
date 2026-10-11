@@ -6,6 +6,7 @@ import type { TestCaseDiffEntry } from '@/services/test-case-diff';
 import type { Dictionary } from '@/lib/i18n/dictionaries/vi';
 import { SCROLLBAR } from './shared';
 import { TestCaseCard } from './test-case-card';
+import { AddedCaseDetail, ChangeRow } from './enhance-diff-detail';
 import { FileDropzone, AttachedFileChip } from './workspace-ui';
 import type { GenerateWorkspaceState } from '@/hooks/test-case/use-generate-workspace';
 
@@ -90,7 +91,7 @@ function EnhanceDiffPreview({ workspace, t }: { workspace: GenerateWorkspaceStat
       {changed.length === 0 ? (
         <p className="rounded-xl bg-white p-3 text-xs italic text-ink-400">{ed.noChanges}</p>
       ) : (
-        <div className={`max-h-96 space-y-2 overflow-y-auto ${SCROLLBAR}`}>
+        <div className={`max-h-[36rem] space-y-2 overflow-y-auto ${SCROLLBAR}`}>
           {changed.map((entry: TestCaseDiffEntry) => (
             <div key={entry.code} className="rounded-xl border border-brand-100 bg-white p-3 text-xs">
               <p className="font-bold text-ink-800">
@@ -100,15 +101,11 @@ function EnhanceDiffPreview({ workspace, t }: { workspace: GenerateWorkspaceStat
               {entry.status === 'changed' && (
                 <ul className="mt-2 space-y-1">
                   {entry.changes.map((c, i) => (
-                    <li key={i}>
-                      <span className="font-semibold text-ink-600">{c.label}:</span>{' '}
-                      <span className="text-danger-600 line-through">{c.from || ed.empty}</span>{' '}
-                      <span className="text-ink-400">→</span>{' '}
-                      <span className="text-success-600">{c.to || ed.empty}</span>
-                    </li>
+                    <ChangeRow key={i} change={c} ed={ed} />
                   ))}
                 </ul>
               )}
+              {entry.status === 'added' && entry.after && <AddedCaseDetail testCase={entry.after} ed={ed} />}
             </div>
           ))}
         </div>
