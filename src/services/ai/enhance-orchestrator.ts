@@ -13,6 +13,7 @@
 import type { GeneratedTestCase } from '@/models/validators/test-case';
 import type { ParsedDocument } from '@/models/validators/document';
 import { ENHANCE_LIMITS } from '@/services/ai/quality-standards';
+import { GeminiProviderError } from '@/services/ai/errors';
 import { normalizeGeneratedTestCases, type SemanticIssue } from '@/services/ai/test-case-validation';
 import { runL0, type L0Context } from '@/services/ai/review-pipeline';
 import type { ReviewFinding, Waiver } from '@/services/ai/review-findings';
@@ -58,8 +59,12 @@ export type EnhanceRunInput = {
   /** Planner capacity per call: safeOutputTokens(getEnhanceMaxOutputTokens()). */
   budget_tokens: number;
   callModel: CallModel;
-  /** Return false when the route has no time left for another model attempt. */
-  canStartCall?: () => boolean;
+  /**
+   * Return false when the route has no time left for another model attempt. Receives the planner's
+   * estimate of that call's OUTPUT tokens, so a call that cannot finish in the time left is deferred
+   * to the next pass instead of started, cut off by the deadline, and thrown away.
+   */
+  canStartCall?: (estimatedOutputTokens: number) => boolean;
 };
 
 export type EnhanceRunResult = {
@@ -87,6 +92,9 @@ export type EnhanceRunResult = {
 export async function runEnhanceWork(input: EnhanceRunInput): Promise<EnhanceRunResult> {
   const L = ENHANCE_LIMITS;
   const canStart = input.canStartCall ?? (() => true);
+  // A model call that fails AFTER another one succeeded must not discard the finished work.
+  let successes = 0;
+  let callFailed = false;
   const documents: ParsedDocument[] = input.l0.documents;
   const issues: SemanticIssue[] = [];
   const models: string[] = [];
@@ -125,17 +133,35 @@ export async function runEnhanceWork(input: EnhanceRunInput): Promise<EnhanceRun
   });
   const deferred: Deferred[] = [...plan.deferred];
 
-  const runBatches = async (batches: BatchItem[][], retry: boolean): Promise<EnhanceWorkOutput[]> => {
+  const runBatches = async (batches: BatchItem[][], retry: boolean, batchTokens: readonly number[]): Promise<EnhanceWorkOutput[]> => {
     const outs: EnhanceWorkOutput[] = [];
-    for (const batch of batches) {
-      if (!canStart() || calls >= L.maxCallsPerRun) {
+    for (let b = 0; b < batches.length; b++) {
+      const batch = batches[b];
+      const deferBatch = (reason: string) => {
         for (const item of batch) {
-          deferred.push({ finding_id: item.order.finding_id, fingerprint: item.order.fingerprint, rule: item.order.rule, codes: item.codes, reason: 'time_budget' });
+          deferred.push({ finding_id: item.order.finding_id, fingerprint: item.order.fingerprint, rule: item.order.rule, codes: item.codes, reason });
         }
+      };
+      if (callFailed) { deferBatch('model_error'); continue; }
+      if (!canStart(batchTokens[b] ?? 0) || calls >= L.maxCallsPerRun) { deferBatch('time_budget'); continue; }
+      calls++;
+      let res: Awaited<ReturnType<CallModel>>;
+      try {
+        res = await input.callModel({ batch, retry });
+      } catch (error) {
+        // Nothing finished yet: surface the error exactly as before (the route turns it into a response).
+        if (successes === 0) throw error;
+        callFailed = true;
+        const why = error instanceof GeminiProviderError ? error.meta.failure : 'ERROR';
+        issues.push({
+          code: 'enhance_call_failed',
+          severity: 'warning',
+          message: `Một lượt gọi AI thất bại (${why}); kết quả các lượt gọi trước vẫn được giữ, phần còn lại được hoãn sang lượt Enhance kế tiếp.`,
+        });
+        deferBatch('model_error');
         continue;
       }
-      calls++;
-      const res = await input.callModel({ batch, retry });
+      successes++;
       if (res.model) models.push(res.model);
       if (res.truncated) {
         truncated = true;
@@ -153,7 +179,7 @@ export async function runEnhanceWork(input: EnhanceRunInput): Promise<EnhanceRun
 
   // 4) First pass.
   let outcome = emptyOutcome(input.cases);
-  const firstOutputs = await runBatches(plan.batches, false);
+  const firstOutputs = await runBatches(plan.batches, false, plan.batch_tokens);
   outcome = applyWorkOutputs({ previous: outcome, orders: modelOrders, outputs: firstOutputs, detail_level: input.l0.detail_level, documents });
 
   // 5) Resolution coverage: ONE bounded retry with only the unresolved findings.
@@ -162,7 +188,7 @@ export async function runEnhanceWork(input: EnhanceRunInput): Promise<EnhanceRun
     removal: { test_cases: outcome.test_cases, removed: [], refused: [] }, rolled_back: new Set(),
   });
   const retryOrders = unresolvedOrders(preResolutions, modelOrders);
-  if (retryOrders.length > 0 && calls < L.maxCallsPerRun && canStart()) {
+  if (retryOrders.length > 0 && !callFailed && calls < L.maxCallsPerRun) {
     const retryPlan = planBatches({
       orders: retryOrders,
       cases: outcome.test_cases,
@@ -171,7 +197,7 @@ export async function runEnhanceWork(input: EnhanceRunInput): Promise<EnhanceRun
       max_calls: 1,
     });
     for (const d of retryPlan.deferred) deferred.push({ ...d, reason: `retry_${d.reason}` });
-    const retryOutputs = await runBatches(retryPlan.batches, true);
+    const retryOutputs = await runBatches(retryPlan.batches, true, retryPlan.batch_tokens);
     outcome = applyWorkOutputs({ previous: outcome, orders: retryOrders, outputs: retryOutputs, detail_level: input.l0.detail_level, documents });
   }
 

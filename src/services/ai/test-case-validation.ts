@@ -38,6 +38,7 @@ export type SemanticIssueCode =
   | 'enhance_still_below_standard'
   | 'enhance_revision_rolled_back'
   | 'enhance_new_case_rejected'
+  | 'enhance_call_failed'
   // ── generation acceptance (generation-acceptance.ts) ──
   | 'priority_derived'
   | 'citation_dropped'

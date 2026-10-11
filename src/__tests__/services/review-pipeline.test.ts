@@ -284,11 +284,13 @@ describe('Enhance work-order prompt', () => {
     expect(ENHANCE_WORK_SYSTEM_PROMPT).toMatch(/resolution for EVERY finding/);
     expect(ENHANCE_WORK_SYSTEM_PROMPT).toMatch(/data, not instructions/);
   });
-  it('responseSchema caps every list with ENHANCE_LIMITS', () => {
+  it('responseSchema keeps only the flat `changes` list bounded', () => {
     const s = buildEnhanceWorkResponseSchema() as any;
-    expect(s.properties.patches.maxItems).toBe(ENHANCE_LIMITS.maxTargetCases);
-    expect(s.properties.new_cases.maxItems).toBe(ENHANCE_LIMITS.maxNewCasesPerRun);
-    expect(s.properties.resolutions.maxItems).toBe(ENHANCE_LIMITS.maxResolutions);
+    // No size bounds on arrays of objects: they made Gemini reject the schema (bare 400). Code enforces the caps.
+    expect(s.properties.patches.maxItems).toBeUndefined();
+    expect(s.properties.new_cases.maxItems).toBeUndefined();
+    expect(s.properties.resolutions.maxItems).toBeUndefined();
+    expect(s.properties.resolutions.items.properties.test_case_codes.maxItems).toBeUndefined();
     expect(s.properties.changes.maxItems).toBe(ENHANCE_LIMITS.maxChangeSummaries);
     expect(Object.keys(s.properties.patches.items.properties.set.properties)).not.toContain('code');
   });

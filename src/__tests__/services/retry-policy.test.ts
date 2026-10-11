@@ -135,14 +135,15 @@ describe('decideNext — one rule per failure class', () => {
     expect(decideNext(state({ failure: 'UNKNOWN', unknownHops: 1 }))).toEqual({ type: 'stop', reason: 'UNKNOWN' });
   });
 
-  it('a bare 400 (UNKNOWN) drops thinking first, then the schema, on the SAME model, before hopping or stopping', () => {
+  it('a bare 400 (UNKNOWN) drops the schema first (keeping thinking low), then thinking, on the SAME model, before hopping or stopping', () => {
     const bare = { failure: 'UNKNOWN' as FailureCode, status: 400, useThinking: true, useSchema: true };
-    expect(decideNext(state(bare))).toEqual({ type: 'degrade_thinking' });
-    expect(decideNext(state({ ...bare, useThinking: false }))).toEqual({ type: 'degrade_schema' });
+    expect(decideNext(state(bare))).toEqual({ type: 'degrade_schema' });
+    expect(decideNext(state({ ...bare, useSchema: false }))).toEqual({ type: 'degrade_thinking' });
     // nothing optional left to drop -> the old rule: confirm on one other model, then stop
     expect(decideNext(state({ ...bare, useThinking: false, useSchema: false }))).toEqual({ type: 'next_model' });
     expect(decideNext(state({ ...bare, useThinking: false, useSchema: false, hasNextModel: false }))).toEqual({ type: 'stop', reason: 'UNKNOWN' });
-    // schema degradation can be disallowed by the caller
+    // schema degradation can be disallowed by the caller: then thinking is the only thing left to drop
+    expect(decideNext(state({ ...bare, allowSchemaDegradation: false }))).toEqual({ type: 'degrade_thinking' });
     expect(decideNext(state({ ...bare, useThinking: false, allowSchemaDegradation: false, hasNextModel: false }))).toEqual({ type: 'stop', reason: 'UNKNOWN' });
   });
 

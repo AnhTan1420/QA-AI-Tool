@@ -129,6 +129,10 @@ function validateWorkOutput(raw: unknown): EnhanceWorkOutput {
 
 /** A model attempt is only worth starting when this much time is left. */
 const ENHANCE_MIN_CALL_MS = 20_000;
+/** Fixed latency of a call (connection, prompt processing) before the first output token. */
+const ENHANCE_CALL_OVERHEAD_MS = 10_000;
+/** AI_ASSUMED_OUTPUT_TPS is deliberately pessimistic (it sizes timeouts); real Flash output is faster. */
+const ENHANCE_SPEED_MARGIN = 1.5;
 
 export async function POST(request: Request) {
   const budget = createRouteBudget(maxDuration, 'enhance');
@@ -177,7 +181,9 @@ export async function POST(request: Request) {
           exclude_fingerprints: payload.exclude_fingerprints,
         },
         budget_tokens: budgetTokens,
-        canStartCall: () => budget.canAfford(ENHANCE_MIN_CALL_MS),
+        // Worth starting only if it can FINISH: a call cut off by the deadline loses its whole output.
+        canStartCall: (estimatedTokens) =>
+          budget.canAfford(Math.max(ENHANCE_MIN_CALL_MS, ENHANCE_CALL_OVERHEAD_MS + (estimatedTokens / (getAssumedOutputTokensPerSecond() * ENHANCE_SPEED_MARGIN)) * 1000)),
         callModel: async ({ batch, retry }) => {
           const res = await runGeminiTask<EnhanceWorkOutput>({
             task: 'enhance',

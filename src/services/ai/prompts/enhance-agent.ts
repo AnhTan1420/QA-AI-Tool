@@ -266,7 +266,16 @@ OUTPUT (JSON object, exactly these keys):
 "set" may contain: title, preconditions, test_data_entries [ {"field","value"} ] (the COMPLETE test_data), steps [ {"step_number","action","expected_result"} ] (the COMPLETE list), final_expected_result, priority, category, source_requirement_ids. Include ONLY fields named in fields_affected. One resolution per finding listed above. "changes" has at most ${L.maxChangeSummaries} entries. Return ONLY the JSON object.`;
 }
 
-/** Gemini responseSchema for work-order mode. Every list is capped (mirrors ENHANCE_LIMITS). */
+/**
+ * Gemini responseSchema for work-order mode.
+ *
+ * Deliberately NO maxItems on arrays of objects (patches, new_cases, resolutions) or on the nested code
+ * lists. Gemini 3 answered a bare 400 INVALID_ARGUMENT to this schema while it carried them (arrays of
+ * objects that themselves hold arrays of objects, each with a size bound, make the constrained-decoding
+ * grammar too big), and only a schema-free retry worked, costing every call two doomed attempts. The caps
+ * are enforced where they matter, in code (enhance-work.ts planning, enhance-verify.ts applyWorkOutputs)
+ * and stated in the prompt. Only the flat string list `changes` keeps its bound.
+ */
 export function buildEnhanceWorkResponseSchema(): Record<string, unknown> {
   const L = ENHANCE_LIMITS;
   const STRING = { type: 'STRING' };
@@ -276,7 +285,6 @@ export function buildEnhanceWorkResponseSchema(): Record<string, unknown> {
     properties: {
       patches: {
         type: 'ARRAY',
-        maxItems: L.maxTargetCases,
         items: {
           type: 'OBJECT',
           properties: {
@@ -313,18 +321,16 @@ export function buildEnhanceWorkResponseSchema(): Record<string, unknown> {
       },
       new_cases: {
         type: 'ARRAY',
-        maxItems: L.maxNewCasesPerRun,
         items: { type: 'OBJECT', properties: { finding_id: STRING, test_case: caseItem }, required: ['finding_id', 'test_case'], propertyOrdering: ['finding_id', 'test_case'] },
       },
       resolutions: {
         type: 'ARRAY',
-        maxItems: L.maxResolutions,
         items: {
           type: 'OBJECT',
           properties: {
             finding_id: STRING,
             status: { type: 'STRING', enum: ['FIXED', 'ADDED', 'SPLIT', 'PARTIAL', 'DECLINED'] },
-            test_case_codes: { type: 'ARRAY', maxItems: L.maxTargetCases, items: STRING },
+            test_case_codes: { type: 'ARRAY', items: STRING },
             note: STRING,
           },
           required: ['finding_id', 'status', 'test_case_codes', 'note'],

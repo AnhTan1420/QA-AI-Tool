@@ -28,7 +28,7 @@
 //   TRANSIENT_PROVIDER_ERROR retry same model with backoff, then next model
 //   INVALID_JSON / VALIDATION_ERROR  ONE resample, then next model
 //   UNKNOWN                  bare 400 while thinkingConfig / responseSchema are being sent:
-//                            drop thinking, then schema, on the SAME model (each at most once);
+//                            drop the schema, then thinking, on the SAME model (each at most once);
 //                            then one other model to confirm, then stop
 //
 // Pure function: no clock, no env, no I/O — fully unit-testable.
@@ -253,10 +253,14 @@ export function decideNext(state: PolicyState): RetryAction {
       // shapes than the flagship, and do not always say which one they refused. Both degradations
       // are one-shot per model (the flags flip off), cost a ~1s fast-failing call, and leave
       // validation intact (the caller still validates the output), so try them before blaming the
-      // model or the request. Thinking first: it is the cheaper loss.
+      // model or the request. SCHEMA first: dropping thinkingConfig is NOT free on Gemini 3, which cannot
+      // switch thinking off and falls back to its (high) default level. Observed in production: after the
+      // thinking level was dropped, the model spent ~11k of 12k output tokens thinking, emitted ~650
+      // tokens of JSON and hit MAX_TOKENS (OUTPUT_TRUNCATED), discarding the whole call. The schema, by
+      // contrast, is the usual culprit and losing it costs nothing the validator does not already cover.
       if (state.status === 400) {
-        if (state.useThinking) return { type: 'degrade_thinking' };
         if (state.useSchema && state.allowSchemaDegradation) return { type: 'degrade_schema' };
+        if (state.useThinking) return { type: 'degrade_thinking' };
       }
       // Could be model-specific, so confirm on ONE other model; a deterministic bad
       // request must not be replayed against the whole chain.

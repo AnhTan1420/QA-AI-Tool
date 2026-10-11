@@ -9,6 +9,7 @@ import {
 } from '@/services/ai/enhance-work';
 import { applyPatchSet, applyWorkOutputs, emptyOutcome, executeRemovals } from '@/services/ai/enhance-verify';
 import { runEnhanceWork, type CallModel } from '@/services/ai/enhance-orchestrator';
+import { GeminiProviderError } from '@/services/ai/errors';
 import { SEEDED_CTX, buildCleanSuite } from '../helpers/seeded-fixture';
 
 const raw = (over: Partial<RawFinding> = {}): RawFinding => ({
@@ -360,6 +361,46 @@ describe('orchestrator: resolution coverage, retry, declines, rollback, budget',
     expect(r.truncated).toBe(true);
     expect(r.issues.some((i) => i.code === 'truncated_response')).toBe(true);
     expect(r.unresolved).toHaveLength(1);
+  });
+
+  describe('a later model call must not discard the finished ones', () => {
+    const MANY_BROKEN = () => {
+      const s = JSON.parse(JSON.stringify(clean)) as GeneratedTestCase[];
+      for (const i of [2, 3, 4, 5, 6]) s[i].steps = s[i].steps.slice(0, 2).map((x, k) => ({ ...x, step_number: k + 1 }));
+      return s;
+    };
+    const TIGHT = { budget_tokens: 700 };
+
+    it('call 1 succeeds, call 2 throws: call 1 is kept, the rest is deferred with a reason, nothing is thrown', async () => {
+      let n = 0;
+      const r = await base(MANY_BROKEN(), async (a) => {
+        n++;
+        if (n === 2) throw new GeminiProviderError('boom', { task: 'enhance', attemptedModels: ['m'], lastKind: 'bad_response', failure: 'OUTPUT_TRUNCATED', elapsedMs: 1 });
+        return fixQ02(a);
+      }, TIGHT);
+      expect(r.plan.batches).toBeGreaterThan(1);
+      expect(r.revised_codes.length).toBeGreaterThan(0);
+      expect(r.deferred.some((d) => d.reason === 'model_error')).toBe(true);
+      expect(r.issues.some((i) => i.code === 'enhance_call_failed' && /OUTPUT_TRUNCATED/.test(i.message))).toBe(true);
+      expect(n).toBe(2); // no third attempt after a failure, and no retry stage on a broken run
+    });
+
+    it('the FIRST call failing still throws, so the route reports the error as before', async () => {
+      await expect(base(MANY_BROKEN(), async () => { throw new Error('provider down'); }, TIGHT)).rejects.toThrow('provider down');
+    });
+
+    it('canStartCall gets the planner estimate and can defer a call that would not finish in time', async () => {
+      const seen: number[] = [];
+      let n = 0;
+      const r = await base(MANY_BROKEN(), async (a) => { n++; return fixQ02(a); }, {
+        ...TIGHT,
+        canStartCall: (tokens: number) => { seen.push(tokens); return seen.length === 1; },
+      });
+      expect(seen.every((t) => t > 0)).toBe(true);
+      expect(n).toBe(1);
+      expect(r.deferred.some((d) => d.reason === 'time_budget')).toBe(true);
+      expect(r.revised_codes.length).toBeGreaterThan(0);
+    });
   });
 
   it('never exceeds maxCallsPerRun, whatever the model does', async () => {

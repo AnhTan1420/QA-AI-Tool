@@ -242,6 +242,65 @@ describe('Gemini 3.x compatibility', () => {
   });
 });
 
+describe('schema rejection memory (a model that refused this schema is not asked again)', () => {
+  const BARE_400 = () => http(400, '{"error":{"code":400,"message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}');
+  const MODEL = 'gemini-3-flash-preview';
+  const SCHEMA = { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } } };
+  const OTHER_SCHEMA = { type: 'OBJECT', properties: { other: { type: 'STRING' } } };
+
+  function schemaHater() {
+    process.env.AI_MODEL_PRIMARY = MODEL;
+    delete process.env.AI_MODEL_FALLBACK_1;
+    delete process.env.AI_MODEL_FALLBACK_2;
+    const calls: Call[] = [];
+    __setGeminiClientFactoryForTests(() => ({
+      models: {
+        generateContent: async (args) => {
+          const config = args.config as Record<string, unknown>;
+          calls.push({ model: args.model, config });
+          if ('responseSchema' in config) throw BARE_400();
+          return { text: OK };
+        },
+        embedContent: async () => ({ embeddings: [{ values: [0.1] }] }),
+      },
+    }));
+    return calls;
+  }
+
+  it('the first call pays for the detour; the second call goes straight to schema-free', async () => {
+    const calls = schemaHater();
+    const first = await run({ task: 'enhance', thinkingLevel: 'low', responseSchema: SCHEMA });
+    expect(first.schema_degraded).toBe(true);
+    expect(calls).toHaveLength(2); // schema+thinking -> thinking only
+    expect('thinkingConfig' in calls[1].config).toBe(true);
+
+    calls.length = 0;
+    const second = await run({ task: 'enhance', thinkingLevel: 'low', responseSchema: SCHEMA });
+    expect(second.schema_degraded).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect('responseSchema' in calls[0].config).toBe(false);
+    expect('thinkingConfig' in calls[0].config).toBe(true);
+  });
+
+  it('is keyed by task and by schema: a different schema or task still gets tried with its schema', async () => {
+    const calls = schemaHater();
+    await run({ task: 'enhance', responseSchema: SCHEMA });
+    calls.length = 0;
+    await run({ task: 'enhance', responseSchema: OTHER_SCHEMA });
+    expect('responseSchema' in calls[0].config).toBe(true);
+    calls.length = 0;
+    await run({ task: 'review', responseSchema: SCHEMA });
+    expect('responseSchema' in calls[0].config).toBe(true);
+  });
+
+  it('forgets after the TTL, so a Google-side fix is picked up without a redeploy', async () => {
+    const { isSchemaRejected, rememberSchemaRejected, SCHEMA_REJECTION_TTL_MS } = await import('@/services/ai/schema-memory');
+    rememberSchemaRejected('enhance', MODEL, SCHEMA, 1_000);
+    expect(isSchemaRejected('enhance', MODEL, SCHEMA, 1_000 + SCHEMA_REJECTION_TTL_MS - 1)).toBe(true);
+    expect(isSchemaRejected('enhance', MODEL, SCHEMA, 1_000 + SCHEMA_REJECTION_TTL_MS + 1)).toBe(false);
+  });
+});
+
 describe('telemetry', () => {
   it('emits one bounded event per attempt and one task summary, with sizes and outcome but no prompt content', async () => {
     const events: AiEvent[] = [];
@@ -431,13 +490,15 @@ describe('a bare 400 from a fallback model (429 on the primary, INVALID_ARGUMENT
     expect(result.schema_degraded).toBe(false); // schema was kept; only the culprit was dropped
   });
 
-  it('recovers when the fallback only refuses the schema: thinking dropped first, then schema', async () => {
+  it('recovers when the fallback only refuses the schema: the schema is dropped FIRST and thinking low is kept', async () => {
     const calls = twoModelChain((c) => 'responseSchema' in c);
     const result = await run({ thinkingLevel: 'low', responseSchema: SCHEMA });
     expect(result.model).toBe(LITE);
     expect(result.schema_degraded).toBe(true);
-    expect(calls.map((c) => c.model)).toEqual([FLASH, LITE, LITE, LITE]);
-    expect('responseSchema' in calls[3].config).toBe(false);
+    expect(calls.map((c) => c.model)).toEqual([FLASH, LITE, LITE]);
+    expect('responseSchema' in calls[2].config).toBe(false);
+    // Gemini 3 cannot turn thinking off: dropping the level means the (high) default, which burns the output budget.
+    expect('thinkingConfig' in calls[2].config).toBe(true);
   });
 
   it('is bounded: a request that is bad regardless costs at most 2 extra fast calls, then stops with a 400-specific message', async () => {

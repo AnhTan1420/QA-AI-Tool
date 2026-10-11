@@ -38,6 +38,7 @@ import {
 } from './errors';
 import { classifyFailure, decideNext, extractRetryAfterMs, type PolicyState } from './retry-policy';
 import { emitAiEvent, estimateTokens } from './ai-telemetry';
+import { __resetSchemaMemoryForTests, isSchemaRejected, rememberSchemaRejected } from './schema-memory';
 import type { ExecutionBudget } from './execution-budget';
 import {
   dedupeModels,
@@ -114,6 +115,8 @@ export function __setGeminiClientFactoryForTests(
   factory: ((apiKey: string) => GeminiLikeClient) | null,
 ): void {
   clientFactoryOverride = factory;
+  // A test must not inherit what an earlier test taught the engine about schema rejections.
+  __resetSchemaMemoryForTests();
 }
 
 function resolveClient(): GeminiLikeClient {
@@ -407,9 +410,11 @@ export async function generateWithGeminiResilient<T = unknown>(
     modelsAttempted.push(model);
     const hasNextModel = modelIndex < chain.length - 1;
 
-    let useSchema = Boolean(options.responseSchema);
+    // A schema this model already rejected (same task, same schema) is not sent again for a while.
+    const knownRejected = Boolean(options.responseSchema) && isSchemaRejected(options.task, model, options.responseSchema);
+    let useSchema = Boolean(options.responseSchema) && !knownRejected;
     let useThinking = Boolean(options.thinkingLevel) && supportsThinkingLevel(model);
-    let degradedForThisModel = false;
+    let degradedForThisModel = knownRejected;
     const used = { transient: 0, badResponse: 0, rateLimit: 0 };
     let moveToNextModel = false;
 
@@ -462,6 +467,8 @@ export async function generateWithGeminiResilient<T = unknown>(
           remaining_budget_ms: remainingBefore === null ? null : Math.round(remainingBefore),
           ctx: options.telemetry,
         });
+        // The schema was the problem: it only worked once dropped. Remember, so the next call skips the detour.
+        if (degradedForThisModel && options.responseSchema && !knownRejected) rememberSchemaRejected(options.task, model, options.responseSchema);
         summarize('ok', model);
         return {
           data,
