@@ -265,18 +265,18 @@ export function getExplicitCategoryFloorCap(): number | undefined {
  * maxOutputTokens, so these are deliberately not one shared number):
  *
  *   Generate -> large   (gemini.ts DEFAULT_MAX_OUTPUT_TOKENS = 16_384)
- *   Enhance  -> moderate (returns only revised/new cases, not the whole suite)
- *   Review   -> small   (returns compact evaluation metadata only)
+ *   Enhance  -> moderate (returns patches + up to maxNewCasesPerRun full new cases; 12_288 default)
+ *   Review   -> medium  (findings + strengths + taxonomy; 10_240 default, see REVIEW_LIMITS)
  *
- * Do NOT raise the Review budget to "fix" long Review output — shrink the
- * prompt/schema/limits in quality-standards.ts (REVIEW_LIMITS) instead.
+ * If Review output is truncated, shrink REVIEW_LIMITS in quality-standards.ts before raising this:
+ * the per-attempt timeout grows with it.
  */
 export function getReviewMaxOutputTokens(): number {
-  return readIntEnv('AI_REVIEW_MAX_OUTPUT_TOKENS', REVIEW_LIMITS.defaultMaxOutputTokens, 512, 8_192);
+  return readIntEnv('AI_REVIEW_MAX_OUTPUT_TOKENS', REVIEW_LIMITS.defaultMaxOutputTokens, 512, 16_384);
 }
 
 export function getEnhanceMaxOutputTokens(): number {
-  return readIntEnv('AI_ENHANCE_MAX_OUTPUT_TOKENS', 8_192, 1_024, 16_384);
+  return readIntEnv('AI_ENHANCE_MAX_OUTPUT_TOKENS', 12_288, 1_024, 16_384);
 }
 
 /**

@@ -236,8 +236,8 @@ GEMINI_MAX_RATE_LIMIT_WAIT_MS=10000   # longest 429 "retry in Ns" hint slept thr
 # Output-token budgets. Generate is large (16384), Review small, Enhance moderate.
 # Thinking tokens count against these, so Review also runs at thinkingLevel "low".
 # Don't raise the Review budget to hide a verbose prompt — shrink REVIEW_LIMITS instead.
-AI_REVIEW_MAX_OUTPUT_TOKENS=5120     # default 5120, clamped to 512–8192 (keep >= 4700; see REVIEW_LIMITS)
-AI_ENHANCE_MAX_OUTPUT_TOKENS=8192    # default 8192, clamped to 1024–16384
+AI_REVIEW_MAX_OUTPUT_TOKENS=10240    # default 10240, clamped to 512–16384 (keep >= 10000; see REVIEW_LIMITS)
+AI_ENHANCE_MAX_OUTPUT_TOKENS=12288   # default 12288, clamped to 1024–16384
 GENERATION_ACCEPTANCE=repair         # off | repair (default) | enforce — see services/ai/generation-acceptance.ts
 
 # Time budget & sizing (see "Execution budgets, batching and resume")

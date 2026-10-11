@@ -157,7 +157,7 @@ describe('model-registry', () => {
     process.env.AI_REVIEW_MAX_OUTPUT_TOKENS = '1';
     expect(getReviewMaxOutputTokens()).toBe(512);
     process.env.AI_REVIEW_MAX_OUTPUT_TOKENS = '999999';
-    expect(getReviewMaxOutputTokens()).toBe(8192);
+    expect(getReviewMaxOutputTokens()).toBe(16384);
     delete process.env.AI_REVIEW_MAX_OUTPUT_TOKENS;
     delete process.env.AI_ENHANCE_MAX_OUTPUT_TOKENS;
   });

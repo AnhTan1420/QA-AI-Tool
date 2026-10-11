@@ -306,7 +306,7 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
             <div>
               <p className="mb-2 text-xs font-bold uppercase tracking-wide text-warning-600">{rp.findingsTitle} ({activeReview.findings.length})</p>
               <div className="space-y-2">
-                {activeReview.findings.slice(0, 12).map((f) => (
+                {activeReview.findings.slice(0, 30).map((f) => (
                   <div key={f.finding_id} className="rounded-xl border border-warning-600/20 bg-warning-50 p-3 text-sm">
                     <p className="font-bold text-ink-900">
                       <span className="mr-1 font-mono text-[11px] text-ink-500">{f.finding_id}</span>
@@ -323,8 +323,8 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
                     <p className="mt-1 text-[10px] uppercase tracking-wide text-ink-500">{rp.findingOrigin[f.origin]} · {f.confidence}</p>
                   </div>
                 ))}
-                {activeReview.findings.length > 12 && (
-                  <p className="text-xs text-ink-500">{rp.findingsMore(activeReview.findings.length - 12)}</p>
+                {activeReview.findings.length > 30 && (
+                  <p className="text-xs text-ink-500">{rp.findingsMore(activeReview.findings.length - 30)}</p>
                 )}
               </div>
             </div>
@@ -401,7 +401,7 @@ export function ReviewPanel({ workspace }: { workspace: GenerateWorkspaceState }
             className="btn border border-brand-200 bg-brand-50 text-brand-700 hover:bg-brand-100 focus-visible:ring-brand-300"
           >
             {workspace.isEnhancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {workspace.isEnhancing ? rp.enhancingLabel : rp.enhanceButton}
+            {workspace.isEnhancing ? (workspace.enhanceProgress ? rp.enhancingProgress(workspace.enhanceProgress.round, workspace.enhanceProgress.remaining) : rp.enhancingLabel) : rp.enhanceButton}
           </button>
         )}
       </div>

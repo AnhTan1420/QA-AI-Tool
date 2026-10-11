@@ -122,13 +122,13 @@ describe('Review uses the Generate standard and checks both required dimensions'
 });
 
 describe('Review is bounded', () => {
-  it('uses the small Review token budget with low thinking, not the generation budget', async () => {
+  it('uses the bounded Review token budget with low thinking, not the generation budget', async () => {
     const { fake, calls } = fakeGemini(() => modelAnswer);
     __setGeminiClientFactoryForTests(() => fake);
     await callReview();
 
     expect(calls[0].config.maxOutputTokens).toBe(getReviewMaxOutputTokens());
-    expect(calls[0].config.maxOutputTokens as number).toBeLessThanOrEqual(8192);
+    expect(calls[0].config.maxOutputTokens as number).toBeLessThanOrEqual(12288);
     expect(calls[0].config.maxOutputTokens as number).toBeLessThan(16384);
     // Thinking tokens count against maxOutputTokens, so Review must ask for minimal thinking.
     expect(JSON.stringify(calls[0].config.thinkingConfig ?? {})).toMatch(/low/i);
@@ -166,7 +166,7 @@ describe('Review is bounded', () => {
     const { prompt } = calls[0];
     expect(prompt).toContain(`${REVIEW_LIMITS.maxCasesInPrompt} of 120 shown`);
     expect(prompt.match(/^TC_P_\d+ \[/gm)?.length).toBe(REVIEW_LIMITS.maxCasesInPrompt);
-    expect(prompt.length).toBeLessThan(40_000);
+    expect(prompt.length).toBeLessThan(60_000);
   });
 });
 
@@ -190,7 +190,7 @@ describe('Review does not request chain-of-thought and does not regenerate test 
 
     expect(calls[0].systemInstruction).toBe(REVIEW_SYSTEM_PROMPT);
     expect(REVIEW_SYSTEM_PROMPT).toContain(
-      'Evaluate the supplied test cases against the configured generation-quality rules and required taxonomy. Return only concise, evidence-backed findings. Do not perform unnecessary analysis, do not rewrite the test case, and do not output hidden reasoning.',
+      'Evaluate the supplied test cases against the configured generation-quality rules and required taxonomy. Return thorough, evidence-backed findings. Do not perform unnecessary analysis, do not rewrite the test case, and do not output hidden reasoning.',
     );
     expect(REVIEW_SYSTEM_PROMPT).toMatch(/do not rewrite/i);
     expect(REVIEW_SYSTEM_PROMPT).toMatch(/do not invent/i);
@@ -265,7 +265,7 @@ describe('Review under load', () => {
     const { fake, calls } = fakeGemini(() => modelAnswer);
     __setGeminiClientFactoryForTests(() => fake);
     await callReview({ test_cases: many });
-    expect(calls[0].prompt.length).toBeLessThan(40_000);
+    expect(calls[0].prompt.length).toBeLessThan(60_000);
   });
 
   it('has the shared time budget and a timeout sized to the small output (not the generation 100s)', async () => {

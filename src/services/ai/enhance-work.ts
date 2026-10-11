@@ -25,7 +25,7 @@ import {
   type ReviewFinding,
 } from '@/services/ai/review-findings';
 
-export const ENHANCE_PROMPT_VERSION = 'enhance-2.0.0';
+export const ENHANCE_PROMPT_VERSION = 'enhance-2.1.0';
 export const ENHANCE_LEGACY_PROMPT_VERSION = 'enhance-1.0.0';
 
 export type WorkOrder = ReviewFinding;
@@ -92,6 +92,16 @@ export type SelectionOptions = {
   selected_fingerprints?: readonly string[];
   /** Default 'Major': Critical and Major are applied, Minor stays advisory. */
   min_severity?: FindingSeverity;
+  /**
+   * Apply EVERY executable finding: no severity floor and no low-confidence filter. Questions (need the
+   * requirement owner) and MERGE (cannot be done safely in code) stay advisory: they cannot be executed.
+   */
+  force_all?: boolean;
+  /**
+   * Findings already handled by an earlier pass of the same multi-pass run (fixed, declined, rolled back).
+   * They are reported as advisory instead of being sent to the model again.
+   */
+  exclude_fingerprints?: readonly string[];
 };
 
 export type Advisory = { order: WorkOrder; reason: string };
@@ -99,11 +109,14 @@ export type Advisory = { order: WorkOrder; reason: string };
 export function selectWorkOrders(orders: readonly WorkOrder[], options: SelectionOptions = {}): { actionable: WorkOrder[]; advisory: Advisory[] } {
   const floor = SEV_RANK[options.min_severity ?? 'Major'];
   const picked = options.selected_fingerprints ? new Set(options.selected_fingerprints) : null;
+  const excluded = options.exclude_fingerprints ? new Set(options.exclude_fingerprints) : null;
   const actionable: WorkOrder[] = [];
   const advisory: Advisory[] = [];
   for (const o of orders) {
     if (o.kind === 'question') { advisory.push({ order: o, reason: 'question: needs the requirement owner' }); continue; }
     if (o.action === 'MERGE') { advisory.push({ order: o, reason: 'MERGE is advisory: cases cannot be combined safely in code' }); continue; }
+    if (excluded?.has(o.fingerprint)) { advisory.push({ order: o, reason: 'already handled in an earlier pass' }); continue; }
+    if (options.force_all) { actionable.push(o); continue; }
     if (picked) {
       if (!picked.has(o.fingerprint)) advisory.push({ order: o, reason: 'not selected' });
       else actionable.push(o);

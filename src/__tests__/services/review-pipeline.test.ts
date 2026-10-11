@@ -8,7 +8,7 @@ import {
   dataBlock, selectCasesForReview, shownCodesFor,
 } from '@/services/ai/prompts/review-agent';
 import { ENHANCE_WORK_SYSTEM_PROMPT, buildEnhanceWorkPrompt, buildEnhanceWorkResponseSchema } from '@/services/ai/prompts/enhance-agent';
-import { REVIEW_LIMITS, ENHANCE_LIMITS, getDetailLevelRules } from '@/services/ai/quality-standards';
+import { REVIEW_LIMITS, ENHANCE_LIMITS, estimateReviewOutputTokens, getDetailLevelRules } from '@/services/ai/quality-standards';
 import { assignIds, computeFingerprint } from '@/services/ai/review-findings';
 import { SEEDED_CTX, SEEDED_REQUIREMENT, buildCleanSuite } from '../helpers/seeded-fixture';
 import { goodCase } from '../helpers/review-fixtures';
@@ -93,7 +93,7 @@ describe('Review prompt: bounded size and case selection', () => {
     const p = prep(many, { documents: [] }).prompt;
     expect(p.match(/^TC_P_\d+ \[/gm)).toHaveLength(REVIEW_LIMITS.maxCasesInPrompt);
     expect(p).toContain(`${REVIEW_LIMITS.maxCasesInPrompt} of 250 shown`);
-    expect(p.length).toBeLessThan(45_000);
+    expect(p.length).toBeLessThan(60_000);
   });
   it('selection order: Critical, negative/boundary, flagged, per-category sample; findings about unseen cases are forbidden', () => {
     const cases = buildCleanSuite().concat(Array.from({ length: 60 }, (_, i) => ({ ...goodCase(`TC_Z_${i}`, 'positive'), priority: 'Normal' as const })));
@@ -104,6 +104,22 @@ describe('Review prompt: bounded size and case selection', () => {
     expect(shown.some((c) => c.category === 'negative')).toBe(true);
     const { promptInput } = prep(cases);
     expect(shownCodesFor(promptInput).size).toBe(REVIEW_LIMITS.maxCasesInPrompt);
+  });
+});
+
+describe('Review depth contract (v2.1)', () => {
+  it('asks for a thorough, evidence-backed review with strengths, missing coverage and specific recommendations', () => {
+    for (const needle of ['DEPTH', 'WHAT is wrong', 'PROOF', 'WHY it matters', 'exact FIX', '4 to 6', 'Missing coverage', 'ADD finding', 'do not output a score']) {
+      expect(REVIEW_SYSTEM_PROMPT).toContain(needle);
+    }
+    expect(REVIEW_SYSTEM_PROMPT).not.toMatch(/concise, evidence-backed/);
+  });
+  it('allows enough room for a detailed review while staying inside the output budget', () => {
+    expect(REVIEW_LIMITS.maxSemanticFindings).toBeGreaterThanOrEqual(10);
+    expect(REVIEW_LIMITS.maxSemanticAdds).toBeGreaterThanOrEqual(4);
+    expect(REVIEW_LIMITS.maxStrengths).toBeGreaterThanOrEqual(5);
+    expect(REVIEW_LIMITS.maxRecommendations).toBeGreaterThanOrEqual(4);
+    expect(estimateReviewOutputTokens()).toBeLessThanOrEqual(Math.floor(REVIEW_LIMITS.defaultMaxOutputTokens * 0.55));
   });
 });
 
@@ -137,6 +153,19 @@ describe('finalizeReviewV2', () => {
     expect(r.strengths!.join('|')).toMatch(/13\/13 cases have no finding/);
     expect(r.prompt_version).toBe(REVIEW_PROMPT_VERSION);
     expect(r.coverage_basis).toMatchObject({ cases_shown: 13, cases_total: 13 });
+  });
+
+  it('adds code-derived strengths (supported categories) and says when the model saw only a subset', () => {
+    const confirmed = [['positive', 'TC_LOGIN_001'], ['negative', 'TC_LOGIN_005'], ['boundary', 'TC_LOGIN_010']].map(([category, code]) => ({
+      category, status: 'SUPPORTED' as const, evidence: `${code} exercises it`, supporting_codes: [code],
+    }));
+    const full = run(buildCleanSuite(), emptyModel({ taxonomy: confirmed as never }));
+    expect(full.strengths!.join('|')).toMatch(/3\/3 required categories are fully supported/);
+    expect(full.summary).not.toMatch(/model reviewed/);
+
+    const big = buildCleanSuite().concat(Array.from({ length: 70 }, (_, i) => goodCase(`TC_BIG_${i}`, 'positive')));
+    const partial = run(big, emptyModel());
+    expect(partial.summary).toMatch(new RegExp(`model reviewed ${REVIEW_LIMITS.maxCasesInPrompt}/${big.length} cases`));
   });
 
   it('keeps every legacy key so existing consumers work', () => {
@@ -262,5 +291,13 @@ describe('Enhance work-order prompt', () => {
     expect(s.properties.resolutions.maxItems).toBe(ENHANCE_LIMITS.maxResolutions);
     expect(s.properties.changes.maxItems).toBe(ENHANCE_LIMITS.maxChangeSummaries);
     expect(Object.keys(s.properties.patches.items.properties.set.properties)).not.toContain('code');
+  });
+});
+
+describe('Enhance quality bar (v2.1)', () => {
+  it('requires complete, executable output for every touched case and real ADD cases with specific notes', () => {
+    for (const needle of ['QUALITY BAR', 'complete and executable', 'ADD cases are real test cases', 'behaviour-changing variable', 'Resolution notes are specific']) {
+      expect(ENHANCE_WORK_SYSTEM_PROMPT).toContain(needle);
+    }
   });
 });

@@ -230,9 +230,15 @@ export function finalizeReviewV2(input: FinalizeV2Input): ReviewResult {
   for (const f of scored) f.test_case_codes.forEach((c) => flagged.add(c));
   const clean = total - flagged.size;
 
+  const supportedCategories = legacy.taxonomy.filter((t) => t.status === 'SUPPORTED').length;
   const strengths = [
     ...(model?.strengths ?? []).map((s) => clip(s, REVIEW_LIMITS.maxStrengthChars)).filter(Boolean).slice(0, REVIEW_LIMITS.maxStrengths),
     ...(clean > 0 ? [`${clean}/${total} cases have no finding from the code checks`] : []),
+    // Facts computed by code, so they cost no output tokens and cannot be hallucinated.
+    ...(supportedCategories > 0 ? [`${supportedCategories}/${legacy.taxonomy.length} required categories are fully supported (application ceiling applied)`] : []),
+    ...(input.coverage && input.coverage.total_atoms > 0 && input.coverage.coverage_percent >= 50
+      ? [`Document coverage ${input.coverage.coverage_percent}% (${input.coverage.covered_atoms}/${input.coverage.total_atoms} atoms)`]
+      : []),
   ];
 
   const questions = [
@@ -250,6 +256,8 @@ export function finalizeReviewV2(input: FinalizeV2Input): ReviewResult {
     legacy.summary,
     `${scored.length} finding(s): ${sev.Critical} Critical, ${sev.Major} Major, ${sev.Minor} Minor`,
     `score ${score.score}/100${score.provisional ? ' (provisional)' : ''} → ${score.verdict}`,
+    // The score is only as complete as the review behind it: say so when the model saw a subset.
+    prepared.shown_codes.size < total ? `model reviewed ${prepared.shown_codes.size}/${total} cases (the rest by code checks only)` : '',
   ]
     .filter(Boolean)
     .join(' · ');

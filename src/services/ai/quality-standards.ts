@@ -252,41 +252,42 @@ export function isVaguePhrase(value: string): boolean {
  * (Budget = getReviewMaxOutputTokens in model-registry; default below.)
  *
  * TOKEN-COST JUSTIFICATION (see estimateReviewOutputTokens(); a test pins it):
- *   before: 5 issues + 5 language_detail + 5 recs + taxonomy ≈ 2.1k worst-case visible tokens
- *           against a 3,072 budget (SAFE_OUTPUT_FRACTION 0.55 => 1.7k safe): already over.
- *   now:    6 semantic findings (clustered, each with an instruction, 3 may carry a gap_spec)
- *           + 3 strengths + 2 questions + 2 recs ≈ 2.5k worst case against a 5,120 budget
- *           (safe 2.8k). Mechanical findings are produced by code and cost ZERO output
- *           tokens, which is why the model's list stays this small.
+ *   v2.0: 6 findings + 3 strengths + 2 recs  ≈ 2.5k visible tokens / 5,120 budget. Safe, but the result
+ *         read as thin: a handful of one-line findings for a suite of dozens of cases.
+ *   v2.1: 10 semantic findings (each with a longer instruction, 4 may carry a gap_spec) + 6 strengths
+ *         + 4 questions + 5 recommendations + 4 taxonomy rows ≈ 5.5k visible tokens against a 10,240
+ *         budget (safe 5.6k). Mechanical findings are still produced by code at ZERO output tokens.
+ *   The per-attempt timeout scales with this budget (computeAttemptTimeoutMs), so raising a limit
+ *   here also raises the worst-case latency; keep estimate <= 55% of the budget.
  */
 export const REVIEW_LIMITS = {
   /** Legacy `issues[]` adapter output (UI keeps rendering it). */
-  maxIssues: 5,
-  maxLanguageDetailIssues: 5,
-  maxRecommendations: 2,
-  maxEvidenceChars: 120,
-  maxDescriptionChars: 160,
-  maxRecommendationChars: 160,
-  maxSupportingCodes: 3,
+  maxIssues: 8,
+  maxLanguageDetailIssues: 8,
+  maxRecommendations: 5,
+  maxEvidenceChars: 160,
+  maxDescriptionChars: 240,
+  maxRecommendationChars: 240,
+  maxSupportingCodes: 5,
   /** Cases sent to the model as digests; the rest are covered deterministically. */
-  maxCasesInPrompt: 40,
-  maxActionCharsInPrompt: 90,
-  maxStepsInPrompt: 4,
-  maxRequirementChars: 6_000,
-  maxUncoveredAtomsInPrompt: 10,
+  maxCasesInPrompt: 60,
+  maxActionCharsInPrompt: 110,
+  maxStepsInPrompt: 6,
+  maxRequirementChars: 10_000,
+  maxUncoveredAtomsInPrompt: 20,
 
   // ── Findings contract (L1: model) ───────────────────────────────────────
-  maxSemanticFindings: 6,
+  maxSemanticFindings: 10,
   /** Of those, at most this many may be ADD (each carries a gap_spec = more tokens). */
-  maxSemanticAdds: 3,
-  maxStrengths: 3,
-  maxStrengthChars: 100,
-  maxOpenQuestions: 2,
-  maxOpenQuestionChars: 140,
-  maxCodesPerFinding: 6,
-  maxIssueChars: 120,
-  maxInstructionChars: 160,
-  maxGapFieldChars: 80,
+  maxSemanticAdds: 4,
+  maxStrengths: 6,
+  maxStrengthChars: 160,
+  maxOpenQuestions: 4,
+  maxOpenQuestionChars: 180,
+  maxCodesPerFinding: 8,
+  maxIssueChars: 160,
+  maxInstructionChars: 260,
+  maxGapFieldChars: 120,
 
   // ── L0 (code) caps: free of output tokens, bounded for payload/prompt size ─
   /** Mechanical findings kept in the result (after clustering). */
@@ -309,7 +310,7 @@ export const REVIEW_LIMITS = {
   maxWaiversInPrompt: 12,
 
   /** Default output-token budget for ONE Review call (model-registry reads this). */
-  defaultMaxOutputTokens: 5_120,
+  defaultMaxOutputTokens: 10_240,
 } as const;
 
 export const ENHANCE_LIMITS = {
@@ -317,18 +318,18 @@ export const ENHANCE_LIMITS = {
   maxTargetCases: 12,
   /** Legacy: new cases allowed per required category that Review found unsupported. */
   maxNewCasesPerCategory: 2,
-  maxChangeSummaries: 8,
-  maxChangeSummaryChars: 160,
+  maxChangeSummaries: 12,
+  maxChangeSummaryChars: 240,
   maxFindingsInPrompt: 12,
 
   // ── Work-order contract ─────────────────────────────────────────────────
   /** Findings sent to the model in one call. */
   maxFindingsPerCall: 16,
   /** New cases (ADD + SPLIT) per RUN, all calls together. */
-  maxNewCasesPerRun: 8,
+  maxNewCasesPerRun: 10,
   /** New cases the model may return for one SPLIT finding. */
   maxNewCasesPerSplit: 2,
-  maxResolutionNoteChars: 160,
+  maxResolutionNoteChars: 240,
   maxResolutions: 24,
   /** Model calls per run, INCLUDING the single bounded retry for unresolved findings. */
   maxCallsPerRun: 3,

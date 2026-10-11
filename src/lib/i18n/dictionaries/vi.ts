@@ -557,6 +557,7 @@ const vi = {
       reviewNoImportedCases: 'Chưa import file test case nào.',
       needReviewBeforeEnhance: 'Cần chạy Review trước khi Enhance',
       enhanceFailedGeneric: 'Enhance thất bại',
+      enhancePassFailed: (round: number, message: string) => `Lượt Enhance ${round} thất bại (${message}). Giữ lại kết quả các lượt trước — bạn có thể áp dụng hoặc chạy lại.`,
       enhanceAppliedSuccess: (count: number) => `Đã áp dụng enhance cho ${count} test case!`,
       readOldCasesFailed: 'Đọc file thất bại',
       embedFailed: 'Đã nạp file để dùng ngay, nhưng lưu lại cho RAG (dùng lại lần sau) thất bại.',
@@ -700,6 +701,7 @@ const vi = {
       reviewingLabel: 'Đang review...',
       enhanceButton: 'Enhance with AI',
       enhancingLabel: 'Đang enhance...',
+      enhancingProgress: (round: number, remaining: number) => remaining > 0 ? `Đang enhance… lượt ${round} (còn ${remaining} case)` : `Đang enhance… lượt ${round}`,
     },
     enhanceDiff: {
       title: 'Xem trước kết quả Enhance',

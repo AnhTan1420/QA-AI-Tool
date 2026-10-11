@@ -41,6 +41,22 @@ describe('selection policy', () => {
     expect(actionable).toHaveLength(1);
     expect(actionable[0].severity).toBe('Minor');
   });
+  it('force_all applies EVERY executable finding (any severity, any confidence); question and MERGE still cannot run', () => {
+    const { actionable, advisory } = selectWorkOrders(all, { force_all: true });
+    expect(actionable).toHaveLength(4); // Critical, Major, Minor, Low-confidence Major
+    expect(actionable.some((o) => o.confidence === 'Low')).toBe(true);
+    expect(actionable.some((o) => o.severity === 'Minor')).toBe(true);
+    const reasons = advisory.map((a) => a.reason).join('|');
+    expect(reasons).toContain('question: needs the requirement owner');
+    expect(reasons).toContain('MERGE is advisory');
+    expect(advisory).toHaveLength(2);
+  });
+  it('exclude_fingerprints keeps findings an earlier pass handled out of the model call, even with force_all', () => {
+    const skip = all.filter((o) => o.severity === 'Critical').map((o) => o.fingerprint);
+    const { actionable, advisory } = selectWorkOrders(all, { force_all: true, exclude_fingerprints: skip });
+    expect(actionable.some((o) => skip.includes(o.fingerprint))).toBe(false);
+    expect(advisory.some((a) => a.reason === 'already handled in an earlier pass')).toBe(true);
+  });
   it('REMOVE is executed by the application, the rest by the model; most severe first', () => {
     const o = orders(raw({ severity: 'Major' }), raw({ action: 'REMOVE', survivor_code: 'TC_LOGIN_001', fields_affected: [] }), raw({ severity: 'Critical' }));
     const { actionable } = selectWorkOrders(o);

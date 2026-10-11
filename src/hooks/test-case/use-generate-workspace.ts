@@ -17,6 +17,7 @@ import { MAX_INLINE_BASE64_UPLOAD_BYTES, formatMb } from '@/lib/utils/upload-lim
 import { findPotentialDuplicates } from '@/services/test-case-similarity';
 import { diffTestCaseSets, type TestCaseDiffEntry } from '@/services/test-case-diff';
 import { VALID_CATEGORY_VALUES } from '@/views/test-case/generate-workspace/shared';
+import { advanceContinuation, initialContinuation, shouldContinue, MAX_ENHANCE_ROUNDS } from '@/services/ai/enhance-continuation';
 
 /** Trang thai ket thuc cua 1 luot goi AI co rang buoc do phu tai lieu. */
 export type AIRunStatus = 'completed' | 'partial' | 'coverage_incomplete' | 'validation_failed';
@@ -52,6 +53,8 @@ type AIEnhanceResponse = AIGenerationResponse & {
   rejected_changes?: { code: string; reason: string }[];
   /** Cases with findings that did not fit this pass's cap — run Review/Enhance again. */
   deferred_test_cases?: string[];
+  /** Model calls this pass made (0 = nothing was sent). */
+  model_calls?: number;
   /** Set when Enhance skipped the model call (no actionable Review findings). */
   note?: string;
   // ── Enhance v2 (work-order mode); all optional: a legacy review yields none of them ──
@@ -139,6 +142,8 @@ export function useGenerateWorkspace(projectId: string) {
   const [importedReview, setImportedReview] = useState<ReviewResponse | null>(null);
   const [isReviewing, setIsReviewing] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
+  /** Multi-pass Enhance progress: which pass is running and how many cases still wait for one. */
+  const [enhanceProgress, setEnhanceProgress] = useState<{ round: number; remaining: number } | null>(null);
   const [reviewError, setReviewError] = useState('');
   const [showImportedCases, setShowImportedCases] = useState(false);
 
@@ -407,49 +412,94 @@ export function useGenerateWorkspace(projectId: string) {
 
     setIsEnhancing(true);
     setReviewError('');
+    setEnhanceProgress({ round: 1, remaining: 0 });
+    // "Enhance everything": one request is bounded (call cap + route time budget), so the client drives
+    // as many bounded passes as needed. Each pass runs on the previous pass's output with a fresh server
+    // budget; enhance-continuation decides what is finished / still owed and when to stop.
+    let current = casesToEnhance;
+    let last: AIEnhanceResponse | null = null;
+    let continuation = initialContinuation(reviewToUse.findings ?? []);
+    let totalRepairRounds = 0;
+    let anyTruncated = false;
+    let failure = '';
+    const waivers = new Map(convergenceRef.current.waivers.map((w) => [w.fingerprint, w]));
     try {
-      // Enhance runs on its own endpoint/model chain (AI_MODEL_ENHANCE) and receives
-      // the structured Review findings, not the review conversation.
-      const enhanced = await postJson<AIEnhanceResponse>('/api/ai/enhance', {
-        requirement_description: getEffectiveRequirementDescription(),
-        test_cases: casesToEnhance,
-        review_result: reviewToUse,
-        document_context: documents,
-        ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
-        language,
-        detail_level: detailLevel,
-        ...(analysis ? { generation_analysis: analysis } : {}),
-      }, t.generateWorkspace.errors.requestFailed, {
-        timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
-        tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,
-      });
+      for (let round = 1; round <= MAX_ENHANCE_ROUNDS; round++) {
+        setEnhanceProgress((p) => ({ round, remaining: p?.remaining ?? 0 }));
+        let pass: AIEnhanceResponse;
+        try {
+          // Enhance runs on its own endpoint/model chain (AI_MODEL_ENHANCE) and receives
+          // the structured Review findings, not the review conversation.
+          pass = await postJson<AIEnhanceResponse>('/api/ai/enhance', {
+            requirement_description: getEffectiveRequirementDescription(),
+            test_cases: current,
+            review_result: { ...reviewToUse, findings: continuation.findings },
+            document_context: documents,
+            ...(reviewMode === 'generated' ? { selected_categories: selectedCategories } : {}),
+            language,
+            detail_level: detailLevel,
+            force_all: true,
+            exclude_fingerprints: continuation.exclude,
+            ...(analysis ? { generation_analysis: analysis } : {}),
+          }, t.generateWorkspace.errors.requestFailed, {
+            timedOutMessage: t.generateWorkspace.errors.requestTimedOut,
+            tooLargeMessage: t.generateWorkspace.errors.requestTooLarge,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : t.generateWorkspace.errors.enhanceFailedGeneric;
+          // First pass failed: nothing to show. Later pass failed: keep what earlier passes produced.
+          if (!last) throw err;
+          failure = t.generateWorkspace.errors.enhancePassFailed(round, message);
+          break;
+        }
 
+        last = pass;
+        current = pass.test_cases;
+        totalRepairRounds += pass.repair_rounds ?? 0;
+        anyTruncated = anyTruncated || Boolean(pass.truncated);
+        for (const w of pass.waivers ?? []) waivers.set(w.fingerprint, w);
+        setEnhanceProgress({ round, remaining: pass.deferred_test_cases?.length ?? 0 });
+
+        const outcome = {
+          resolutions: pass.resolutions ?? [],
+          revised: pass.revised_test_cases ?? [],
+          added: pass.added_test_cases ?? [],
+          removed: pass.removed_test_cases ?? [],
+          deferred_codes: pass.deferred_test_cases ?? [],
+          model_calls: pass.model_calls,
+        };
+        continuation = advanceContinuation(continuation, outcome);
+        // Only work-order passes (they report resolutions) can be continued safely.
+        if (outcome.resolutions.length === 0 || !shouldContinue({ round: outcome, roundsDone: round })) break;
+      }
+
+      if (!last) return;
       // KHONG ghi de testCases/importedReviewCases ngay - giu lai o pendingEnhance
       // de nguoi dung xem diff truoc/sau va tu quyet dinh Áp dụng hay Hủy (xem
       // applyEnhancement/discardEnhancement o duoi).
       setPendingEnhance({
         scope: reviewMode,
         before: casesToEnhance,
-        after: enhanced.test_cases,
-        coverage: enhanced.document_coverage,
-        status: enhanced.status,
-        deferredCount: enhanced.deferred_test_cases?.length ?? 0,
+        after: current,
+        coverage: last.document_coverage,
+        status: last.status,
+        deferredCount: last.deferred_test_cases?.length ?? 0,
       });
-      setRepairRounds(enhanced.repair_rounds ?? 0);
-      setProviderWarning(enhanced.provider_warning ?? '');
-      setWasTruncated(Boolean(enhanced.truncated));
-      setRunIssues(enhanced.issues ?? []);
-      setEnhanceAnalysis(enhanced.analysis ?? null);
-      // Remember what Enhance declined (with a reason) and this run's fingerprints for the next Review.
-      if (enhanced.waivers || enhanced.previous_run) {
-        const known = new Map(convergenceRef.current.waivers.map((w) => [w.fingerprint, w]));
-        for (const w of enhanced.waivers ?? []) known.set(w.fingerprint, w);
-        convergenceRef.current = { waivers: [...known.values()].slice(-50), previous_run: enhanced.previous_run };
+      setRepairRounds(totalRepairRounds);
+      setProviderWarning(last.provider_warning ?? '');
+      setWasTruncated(anyTruncated);
+      setRunIssues(last.issues ?? []);
+      setEnhanceAnalysis(last.analysis ?? null);
+      if (failure) setReviewError(failure);
+      // Remember what Enhance declined (with a reason) and the last pass's fingerprints for the next Review.
+      if (waivers.size > 0 || last.previous_run) {
+        convergenceRef.current = { waivers: [...waivers.values()].slice(-50), previous_run: last.previous_run ?? convergenceRef.current.previous_run };
       }
     } catch (err) {
       setReviewError(err instanceof Error ? err.message : t.generateWorkspace.errors.enhanceFailedGeneric);
     } finally {
       setIsEnhancing(false);
+      setEnhanceProgress(null);
     }
   }
 
@@ -809,7 +859,7 @@ export function useGenerateWorkspace(projectId: string) {
     reviewMode, setReviewMode: changeReviewMode,
     importedReviewCases, groupedImportedCases,
     importedReviewFileName, importedReview,
-    isReviewing, isEnhancing, reviewError,
+    isReviewing, isEnhancing, enhanceProgress, reviewError,
     showImportedCases, setShowImportedCases,
     handleReviewImportFile, clearImportedReviewFile, exportImportedExcel,
     runReview, runEnhance,

@@ -558,6 +558,7 @@ const en: Dictionary = {
       reviewNoImportedCases: 'No test case file imported yet.',
       needReviewBeforeEnhance: 'Run Review before Enhance',
       enhanceFailedGeneric: 'Enhance failed',
+      enhancePassFailed: (round: number, message: string) => `Enhance pass ${round} failed (${message}). Results from earlier passes are kept — apply them or run again.`,
       enhanceAppliedSuccess: (count: number) => `Applied enhance to ${count} test case(s)!`,
       readOldCasesFailed: 'Could not read the file',
       embedFailed: 'Loaded for this generation, but saving it for future RAG retrieval failed.',
@@ -701,6 +702,7 @@ const en: Dictionary = {
       reviewingLabel: 'Reviewing...',
       enhanceButton: 'Enhance with AI',
       enhancingLabel: 'Enhancing...',
+      enhancingProgress: (round: number, remaining: number) => remaining > 0 ? `Enhancing… pass ${round} (${remaining} case(s) left)` : `Enhancing… pass ${round}`,
     },
     enhanceDiff: {
       title: 'Preview Enhance result',

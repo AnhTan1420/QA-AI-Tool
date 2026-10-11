@@ -73,6 +73,10 @@ const requestSchema = z.object({
    */
   selected_fingerprints: z.array(z.string()).max(100).optional(),
   min_severity: z.enum(['Critical', 'Major', 'Minor']).optional(),
+  /** Apply every executable finding (any severity, any confidence). See SelectionOptions.force_all. */
+  force_all: z.boolean().optional(),
+  /** Multi-pass runs: findings an earlier pass already handled. */
+  exclude_fingerprints: z.array(z.string()).max(500).optional(),
 });
 
 const enhanceModelOutputSchema = z.object({
@@ -166,7 +170,12 @@ export async function POST(request: Request) {
         strengths: review.strengths ?? [],
         open_questions: review.open_questions ?? [],
         l0,
-        selection: { selected_fingerprints: payload.selected_fingerprints, min_severity: payload.min_severity },
+        selection: {
+          selected_fingerprints: payload.selected_fingerprints,
+          min_severity: payload.min_severity,
+          force_all: payload.force_all,
+          exclude_fingerprints: payload.exclude_fingerprints,
+        },
         budget_tokens: budgetTokens,
         canStartCall: () => budget.canAfford(ENHANCE_MIN_CALL_MS),
         callModel: async ({ batch, retry }) => {
