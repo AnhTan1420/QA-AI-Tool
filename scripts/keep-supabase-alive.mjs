@@ -25,7 +25,7 @@ async function keepSupabaseAlive() {
     // Query an existing table to generate database activity.
     // Replace 'your_table' with a real table in your project.
     const { error } = await supabase
-      .from('your_table')
+      .from('profiles')
       .select('*')
       .limit(1);
 
