@@ -1,34 +1,43 @@
-// Ping Supabase định kỳ để dự án free-tier không bị Supabase tự "pause"
-// sau 7 ngày không có hoạt động nào. Chỉ cần 1 query nhẹ (SELECT ... LIMIT 1)
-// là đủ được tính là "activity" — không ghi/xóa gì, không tốn quota đáng kể.
-//
-// Cần 2 biến môi trường (đặt làm GitHub Actions secrets):
-//   SUPABASE_URL              — giống NEXT_PUBLIC_SUPABASE_URL trong .env.local
-//   SUPABASE_SERVICE_ROLE_KEY — service role key (bỏ qua RLS, đảm bảo query
-//                                luôn chạy được kể cả khi chưa đăng nhập)
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.SUPABASE_URL;
+const supabaseUrl = process.env.SUPABASE_URL;
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-if (!url || !serviceRoleKey) {
-  console.error("Thiếu SUPABASE_URL hoặc SUPABASE_SERVICE_ROLE_KEY trong env.");
+if (!supabaseUrl || !serviceRoleKey) {
+  console.error(
+    'Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY GitHub Secrets.'
+  );
   process.exit(1);
 }
 
-const supabase = createClient(url, serviceRoleKey, {
-  auth: { persistSession: false },
+const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
 });
 
-const { error, count } = await supabase
-  .from("tests")
-  .select("id", { count: "exact", head: true })
-  .limit(1);
+async function keepSupabaseAlive() {
+  console.log('Starting Supabase keep-alive check...');
 
-if (error) {
-  console.error("Ping Supabase thất bại:", error.message);
-  process.exit(1);
+  try {
+    // Query an existing table to generate database activity.
+    // Replace 'your_table' with a real table in your project.
+    const { error } = await supabase
+      .from('your_table')
+      .select('*')
+      .limit(1);
+
+    if (error) {
+      throw error;
+    }
+
+    console.log('Supabase keep-alive successful.');
+  } catch (error) {
+    console.error('Supabase keep-alive failed:', error.message);
+    process.exit(1);
+  }
 }
 
-console.log(`Ping Supabase OK — bảng "tests" hiện có ${count ?? "?"} dòng. (${new Date().toISOString()})`);
+keepSupabaseAlive();
