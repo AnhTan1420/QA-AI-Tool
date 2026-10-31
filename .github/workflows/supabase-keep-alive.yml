@@ -1,25 +1,38 @@
 
-# Ping Supabase every day to help prevent the free-tier project from pausing.
-# Can also be triggered manually from the Actions tab.
-name: Supabase keep-alive
+name: Supabase Keep Alive
 
 on:
   schedule:
-    # Every day at 03:00 UTC (10:00 AM Vietnam time).
+    # Every day at 03:00 UTC (10:00 AM Vietnam time)
     - cron: "0 3 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   ping:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Install @supabase/supabase-js
+      - name: Verify keep-alive script exists
+        run: |
+          if [ ! -f scripts/keep-supabase-alive.mjs ]; then
+            echo "::error::Missing scripts/keep-supabase-alive.mjs"
+            echo "Available scripts:"
+            ls -la scripts/ || true
+            exit 1
+          fi
+
+      - name: Install Supabase SDK
         run: npm install @supabase/supabase-js --no-save
 
       - name: Ping Supabase
